@@ -1,0 +1,45 @@
+[project]
+name = "cta-ghost-ledger"
+version = "0.1.0"
+description = "Replayable record of scheduled CTA bus and 'L' trips that ran, were flagged canceled, or silently never showed up"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "psycopg[binary]>=3.2",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.0",
+    "pytest>=8.0",
+    "ruff>=0.12",
+    "sqlfluff>=3.0",
+]
+
+[project.scripts]
+ghost-ledger = "cta_ghost_ledger.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cta_ghost_ledger"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "DTZ"]
+
+[tool.ruff.lint.per-file-ignores]
+# CTA timestamps are naive Chicago-local on purpose; tests assert that.
+"tests/**" = ["DTZ001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

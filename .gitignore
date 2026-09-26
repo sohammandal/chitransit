@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[codz]
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.sqlfluff_cache/
+
+# Secrets — keys live in ~/.secrets or .env, never in git
+.env
+.env.*
+!.env.example
+
+# Local data and engines
+data/*
+!data/.gitkeep
+*.duckdb
+*.duckdb.wal
+*.parquet
+
+# dbt (week 3+)
+target/
+dbt_packages/
+logs/
+
+# Dagster (week 2+)
+.dagster/
+tmp*/
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/
