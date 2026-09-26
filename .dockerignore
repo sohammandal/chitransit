@@ -1,0 +1,16 @@
+.git
+.venv
+.env
+.env.*
+!.env.example
+data
+docs
+tests
+scripts
+**/__pycache__
+.ruff_cache
+.pytest_cache
+.sqlfluff_cache
+.DS_Store
+infra/terraform
+CLAUDE.md

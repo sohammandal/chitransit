@@ -110,12 +110,18 @@ cta-ghost-ledger/
 ├── src/ghost_ledger/           # The one Python package
 │   ├── bustracker.py           # Bus Tracker v3 client: retries, DST-safe timestamps
 │   ├── config.py               # dev/prod settings (GHOST_LEDGER_ENV), quota guard
-│   └── cli.py                  # Smoke-test CLI (ghost-ledger routes | vehicles | check-db)
+│   ├── ingest/                 # Poller: sweeps into Postgres, one transaction each
+│   ├── monitor.py              # Timeliness metrics for CloudWatch alarms
+│   └── cli.py                  # ghost-ledger env | routes | vehicles | poll | monitor | check-db
 ├── db/migrations/              # Postgres schema as dbmate migrations (make migrate)
-├── scripts/                    # Spikes and one-off checks, not imported by the package
+├── infra/box/                  # Prod box: cloud-init template and the pull-based deploy.sh
+├── .github/workflows/          # CI: lint + tests with Postgres; image to GHCR on main
+├── scripts/                    # Spikes and run checks (check_run.py), not imported by the package
 ├── tests/                      # pytest
 ├── data/                       # Local data (gitignored)
-├── compose.yml                 # Postgres 17 (wal_level=logical, port 5433) + dbmate; prod adds compose.prod.yml
+├── compose.yml                 # Postgres 17 (wal_level=logical, port 5433) + dbmate
+├── compose.prod.yml            # Prod layer: tuned Postgres on 127.0.0.1, migrate, poller, monitor
+├── Dockerfile                  # The prod image (code, migrations, dbmate, deploy files)
 ├── Makefile                    # Common commands
 ├── pyproject.toml              # Project, ruff and pytest config
 ├── .sqlfluff                   # SQL lint rules
@@ -124,7 +130,7 @@ cta-ghost-ledger/
 └── .env.example                # Every setting, documented
 ```
 
-Folders follow the pipeline, and each one appears when its week starts: `ingest/` (poller), `cdc/` (Debezium config), `transform/` (dbt), `infra/` (Lightsail) and `dashboard/`.
+Folders follow the pipeline, and each one appears when its week starts: `cdc/` (Debezium config), `transform/` (dbt), `infra/terraform/` and `dashboard/` are still to come.
 
 ---
 
@@ -193,7 +199,11 @@ The same code runs in two environments, chosen by `GHOST_LEDGER_ENV` (default `d
 | Make | `make migrate` | `make migrate ENV=prod CONFIRM=prod` (refuses without `CONFIRM`; `db-reset` always refuses) |
 | Compose | `compose.yml` | `compose.yml` + `compose.prod.yml` |
 
-`make env` prints the resolved settings with secrets redacted, including the daily API-call estimate. Dev and prod share one API key (100k calls/day): once prod polls 24/7, set `POLL_ROUTES=79,9` for dev.
+`make env` prints the resolved settings with secrets redacted, including the daily API-call estimate. `make poll` runs the poller and `make monitor` prints the monitor's metrics once.
+
+**Rehearsing prod locally:** `make rehearse` builds the image and runs the real deploy path (`infra/box/deploy.sh` + `compose.prod.yml`) as project `ghost-ledger-rehearsal`, with a throwaway env file in `data/rehearsal/`, two routes and metrics to the log. `make rehearse-logs`, `make rehearse-psql`, `make rehearse-down`.
+
+**Deploying:** prod is pull-based. CI pushes `ghcr.io/sohammandal/ghost-ledger:main` after tests pass on `main`; a timer on the box runs `deploy.sh` every 5 minutes, which redeploys only when the image changed. Dev and prod share one API key (100k calls/day): once prod polls 24/7, set `POLL_ROUTES=79,9` for dev.
 
 ### What Happens If Hooks Fail?
 

@@ -84,6 +84,15 @@ def test_all_routes_at_30_s_fits_the_budget(tmp_path):
     assert get_settings({}, root=tmp_path).vehicle_calls_per_day() == 13 * 2_880
 
 
+def test_metrics_go_to_the_log_in_dev_and_cloudwatch_in_prod(tmp_path):
+    assert get_settings({}, root=tmp_path).metrics_sink == "log"
+    prod = {"GHOST_LEDGER_ENV": "prod", "DATABASE_URL": "postgresql://g:p@db/g"}
+    assert get_settings(prod, root=tmp_path).metrics_sink == "cloudwatch"
+    assert get_settings({**prod, "METRICS_SINK": "log"}, root=tmp_path).metrics_sink == "log"
+    with pytest.raises(ConfigError, match="METRICS_SINK"):
+        get_settings({"METRICS_SINK": "statsd"}, root=tmp_path)
+
+
 def test_redacted_url_hides_the_password():
     assert redacted_url("postgresql://ghost:s3cret@localhost:5433/db") == (
         "postgresql://ghost:***@localhost:5433/db"

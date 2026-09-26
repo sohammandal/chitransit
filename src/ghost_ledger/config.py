@@ -44,6 +44,8 @@ class Settings:
     poll_routes: tuple[str, ...] | None
     # A bus missing from the feed this long loses its assignment (docs/PLAN.md)
     assignment_grace_minutes: int
+    # Where `ghost-ledger monitor` sends metrics: CloudWatch in prod, the log in dev
+    metrics_sink: Literal["log", "cloudwatch"] = "log"
 
     @property
     def is_prod(self) -> bool:
@@ -94,6 +96,10 @@ def get_settings(environ: Mapping[str, str] | None = None, root: Path = REPO_ROO
 
     routes = tuple(r.strip() for r in v.get("POLL_ROUTES", "").split(",") if r.strip())
 
+    sink = v.get("METRICS_SINK", "cloudwatch" if env == "prod" else "log").strip()
+    if sink not in ("log", "cloudwatch"):
+        raise ConfigError(f"METRICS_SINK must be log or cloudwatch, got {sink!r}.")
+
     settings = Settings(
         env=env,  # type: ignore[arg-type]
         bus_api_key=v.get("CTA_BUS_TRACKER_API_KEY") or None,
@@ -102,6 +108,7 @@ def get_settings(environ: Mapping[str, str] | None = None, root: Path = REPO_ROO
         poll_interval_seconds=interval,
         poll_routes=routes or None,
         assignment_grace_minutes=grace,
+        metrics_sink=sink,  # type: ignore[arg-type]
     )
     calls = settings.vehicle_calls_per_day()
     if calls > MAX_VEHICLE_CALLS_PER_DAY:

@@ -1,0 +1,80 @@
+# Prod layer over compose.yml. deploy.sh runs, from /opt/ghost-ledger on the box:
+#   docker compose -p ghost-ledger -f compose.yml -f compose.prod.yml \
+#     --env-file /etc/ghost-ledger/prod.env up -d --remove-orphans
+# Every variable below comes from that env file (written by `make prod-secrets`), never
+# from the repo. ENV_FILE and IMAGE can be overridden for the local rehearsal.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+x-app: &app
+  image: ${IMAGE:-ghcr.io/sohammandal/ghost-ledger:main}
+  env_file: ["${ENV_FILE:-/etc/ghost-ledger/prod.env}"]
+  restart: always
+  logging: *logging
+
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in the prod env file}
+    # Tuned for a 2 GB box shared with the poller, monitor and (week 2) Debezium
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=4
+      - -c
+      - max_wal_senders=4
+      - -c
+      - max_slot_wal_keep_size=2GB
+      - -c
+      - shared_buffers=384MB
+      - -c
+      - effective_cache_size=1GB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - max_wal_size=2GB
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - log_min_duration_statement=2000
+    # Only reachable from the box itself (the laptop uses an SSH tunnel)
+    ports: !override
+      - "127.0.0.1:5432:5432"
+    shm_size: 256mb
+    restart: always
+    logging: *logging
+
+  # One-shot: apply db/migrations (baked into the image) before the poller starts
+  migrate:
+    <<: *app
+    entrypoint: ["dbmate", "up"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  poller:
+    <<: *app
+    command: ["poll"]
+    # SIGTERM lets the current sweep finish and commit
+    stop_grace_period: 40s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  monitor:
+    <<: *app
+    command: ["monitor"]
+    depends_on:
+      postgres:
+        condition: service_healthy

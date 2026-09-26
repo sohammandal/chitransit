@@ -91,6 +91,16 @@ def cmd_poll(args: argparse.Namespace) -> None:
         Poller(settings, client).run(stop=stop, max_sweeps=args.sweeps)
 
 
+def cmd_monitor(args: argparse.Namespace) -> None:
+    from ghost_ledger import monitor
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    stop = threading.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: stop.set())
+    monitor.run(get_settings(), dry_run=args.dry_run, stop=stop, once=args.once)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="ghost-ledger")
     sub = parser.add_subparsers(required=True)
@@ -106,6 +116,10 @@ def main() -> None:
     poll = sub.add_parser("poll", help="Run the bus poller (Ctrl-C stops after the sweep)")
     poll.add_argument("--sweeps", type=int, default=None, help="stop after N sweeps")
     poll.set_defaults(func=cmd_poll)
+    mon = sub.add_parser("monitor", help="Publish timeliness metrics every 60 s")
+    mon.add_argument("--dry-run", action="store_true", help="log metrics, send nothing")
+    mon.add_argument("--once", action="store_true", help="one round, then exit")
+    mon.set_defaults(func=cmd_monitor)
     sub.add_parser("check-db", help="Check Postgres, WAL level and ops schema").set_defaults(
         func=cmd_check_db
     )
