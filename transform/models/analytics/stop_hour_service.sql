@@ -10,9 +10,9 @@
 -- hour_start is the clock hour (Chicago); trips after midnight keep their service_date.
 -- Grain: (service_date, rt, direction, stop_id, hour_start).
 with pattern_ends as (
-    select pid, min(seq) as first_seq, max(seq) as last_seq
+    select pid, valid_from, valid_to, min(seq) as first_seq, max(seq) as last_seq
     from {{ ref('stg_pattern_stops') }}
-    group by pid
+    group by all
 ),
 
 passes as (
@@ -25,7 +25,10 @@ passes as (
         date_diff('second', lag(p.passed_at) over stop_line, p.passed_at) / 60.0 as headway_min
     from {{ ref('int_stop_passes') }} as p
     inner join {{ ref('stg_patterns') }} as pt on p.pid = pt.pid
-    inner join pattern_ends as e on p.pid = e.pid
+    inner join pattern_ends as e
+        on
+            p.pid = e.pid and p.passed_at >= e.valid_from
+            and (e.valid_to is null or p.passed_at < e.valid_to)
     where p.seq not in (e.first_seq, e.last_seq)
     window stop_line as (partition by p.service_date, p.rt, pt.direction, p.stop_id order by p.passed_at)
 ),

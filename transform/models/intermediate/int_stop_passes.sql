@@ -3,7 +3,8 @@
 -- to the distance covered. Only forward progress counts: a report behind the furthest point
 -- the bus already reached on this trip (pdist can jump back, e.g. to 0 at the terminal) is
 -- skipped, and report pairs more than 5 minutes apart (the bus dropped out of the feed) are
--- not interpolated. Grain: (service_date, rt, pid, start_s, vid, seq).
+-- not interpolated. Stops come from the pattern version in force at the report (SCD2).
+-- Grain: (service_date, rt, pid, start_s, vid, seq).
 with positions as (
     select
         vid,
@@ -54,6 +55,8 @@ from moving as m
 inner join {{ ref('stg_pattern_stops') }} as s
     on
         m.pid = s.pid
+        and m.observed_at >= s.valid_from
+        and (s.valid_to is null or m.observed_at < s.valid_to)
         -- inclusive at both ends so terminals count; a stop exactly on a report shared by two
         -- steps keeps its earliest pass (qualify below)
         and s.pdist >= m.pdist

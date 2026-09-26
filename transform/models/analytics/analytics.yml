@@ -8,30 +8,39 @@ models:
     columns:
       - name: status
         description: >
-          ran | likely_ran (not seen, but its bus ran the block trips before and after, or a
-          single report) | flagged (CTA announced it canceled, dyn=1) | silent (not seen, not
-          announced, while the feed and this trip's prediction samples were watching) |
-          missing (not seen while watched; announcement unknown) | unknown (not watched, or a
+          ran | likely_ran (single report, or the block's bus was on this pattern under another
+          key or reappeared at the trip's far end) | flagged (CTA announced it canceled, dyn=1,
+          at a stop it serves) | silent (not seen, not announced, one of its stops sampled
+          before it was due) | missing (same, stops not sampled) | unknown (not watched, or a
           detour on the route) | pending (not over yet). See the model header for the order.
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: [ran, likely_ran, flagged, silent, missing, unknown, pending]
-      - name: matched_on
-        description: "pattern: same pid and start; route: same route and start (bus on a detour pattern)."
-      - name: flagged
-        description: CTA flagged the trip canceled in at least one sampled prediction (even if it then ran).
-      - name: sweep_coverage
-        description: Share of the trip's scheduled minutes with a fully successful sweep.
-      - name: flags_sampled
-        description: This trip's first or middle stop was sampled for predictions in the 30 minutes before it was due.
       - name: reason
-        description: "Why a trip isn't ran/flagged: not_watched, detour, tracker_gap, single_report, flags_not_sampled."
+        description: "Why: not_watched, detour, single_report, miskeyed, tracker_gap, flags_not_sampled."
         data_tests:
           - accepted_values:
               arguments:
-                values: [not_watched, detour, tracker_gap, single_report, flags_not_sampled]
+                values: [not_watched, detour, single_report, miskeyed, tracker_gap, flags_not_sampled]
+      - name: ghost_evidence
+        description: >
+          For silent/missing trips, what the block's bus was doing (int_missing_trip_evidence):
+          bus_elsewhere and reappeared_same_end are physical evidence it did not run the trip.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [bus_elsewhere, reappeared_same_end, reappeared_elsewhere, bus_not_seen_again, no_block_bus]
+      - name: strict_evidence
+        description: Silent/missing with physical evidence the block's bus did not run it. The conservative ghost count.
+      - name: gap_ratio
+        description: >
+          Wait at the trip's middle stop between the buses before and after it over the scheduled
+          headway: the impact riders felt. Not evidence the trip didn't run (a bus with a dead
+          tracker leaves the same hole in our data).
+      - name: flags_sampled
+        description: One of the trip's own stops was sampled for predictions in the 30 minutes before it was due there.
 
   - name: route_hour_delivery
     description: >

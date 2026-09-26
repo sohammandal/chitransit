@@ -60,7 +60,7 @@ def load(src: str, days: int) -> dict:
                 count(*) filter (where status in ('ran', 'likely_ran')) as ran,
                 count(*) filter (where status = 'flagged') as flagged,
                 count(*) filter (where status = 'silent') as silent,
-                count(*) filter (where status = 'silent' and gap_confirmed) as confirmed,
+                count(*) filter (where status = 'silent' and strict_evidence) as strict_n,
                 count(*) filter (where status = 'missing') as missing,
                 count(*) filter (where status = 'unknown') as unknown
             from {trips} where service_date = ? group by rt
@@ -89,7 +89,7 @@ def render(data: dict) -> str:
     total = {d: sum(counts.get((d, s), 0) for s, _, _ in STATUSES) for d in days}
     tot = {s: counts.get((latest, s), 0) for s, _, _ in STATUSES}
     known = tot["ran"] + tot["flagged"] + tot["silent"] + tot["missing"]
-    confirmed = sum(r[5] for r in data["routes"])
+    strict = sum(r[5] for r in data["routes"])
 
     tiles = [
         (
@@ -101,8 +101,8 @@ def render(data: dict) -> str:
         ("Announced canceled", f"{tot['flagged']:,}", "CTA marked them canceled (dyn=1)"),
         (
             "Silent ghosts",
-            f"{tot['silent']:,}",
-            f"{confirmed:,} confirmed by a gap at the stops; never announced",
+            f"{strict:,}–{tot['silent']:,}",
+            "never announced; strict (its bus seen elsewhere or never left) to lenient",
         ),
         ("Missing", f"{tot['missing']:,}", "not seen; CTA's flags weren't sampled"),
         ("Unknown", f"{tot['unknown']:,}", "not watched, or a detour on the route"),
@@ -142,10 +142,10 @@ def render(data: dict) -> str:
     rows = "".join(
         "<tr>"
         f"<td>{html.escape(str(rt))}</td><td>{sched:,}</td><td>{pct(ran, ran + fl + si + mi)}</td>"
-        f"<td>{fl}</td><td>{si} <span class=sub>({co})</span></td><td>{mi}</td><td>{un}</td>"
+        f"<td>{fl}</td><td>{st}–{si}</td><td>{mi}</td><td>{un}</td>"
         f"<td>{pct(bun, passes)}</td><td>{pct(gaps, passes)}</td>"
         "</tr>"
-        for rt, sched, ran, fl, si, co, mi, un, passes, bun, gaps in data["routes"]
+        for rt, sched, ran, fl, si, st, mi, un, passes, bun, gaps in data["routes"]
     )
     page = Template((Path(__file__).parent / "dashboard.html").read_text())
     return page.substitute(

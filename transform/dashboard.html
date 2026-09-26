@@ -65,18 +65,20 @@ footer { color: var(--muted); font-size: 12px; }
   <h2>Routes, $latest_short <span class="sub">— sorted by missing trips</span></h2>
   <div class="tbl"><table>
     <thead><tr><th>Route</th><th>Scheduled</th><th>Delivered</th><th>Announced</th>
-      <th>Silent (confirmed)</th><th>Missing</th><th>Unknown</th><th>Bunched</th><th>Gaps</th></tr></thead>
+      <th>Silent (strict–lenient)</th><th>Missing</th><th>Unknown</th><th>Bunched</th><th>Gaps</th></tr></thead>
     <tbody>$rows</tbody>
   </table></div>
-  <p class="sub">A trip is a <b>silent ghost</b> only after every other explanation is ruled out: no bus
-  reported it (matched on pattern and start, or route and start for detours); the feed was
-  swept for ≥ 90% of it; no detour ran on the route within the hour; its bus did not run the
-  block trips before and after it without leaving a gap; CTA's predictions at one of its own
-  stops were sampled before it was due and never flagged it. <b>Confirmed</b> means other buses'
-  stop passes show the hole it left (the wait at its middle stop was ≥ 1.5× the scheduled
-  headway). <b>Missing</b>: the same, but its stops weren't sampled, so we can't say whether CTA
-  announced it. Delivered = ran ÷ (ran + announced + silent + missing). Bunched: headway under
-  25% of scheduled; gaps: over 2×; as a share of stop passes, terminals excluded.</p>
+  <p class="sub">A trip is a <b>silent ghost</b> only after the innocent explanations are ruled out: no
+  bus reported it (matched on pattern and start, or route and start for detours, including a bus
+  on its pattern under another trip key); the feed was swept for ≥ 90% of it; no detour ran on
+  the route within the hour; its block's bus did not vanish and reappear at the trip's far end
+  (a dead tracker); CTA's predictions at one of its own stops were sampled before it was due and
+  never flagged it. <b>Strict</b> counts only ghosts with physical evidence the bus didn't run it:
+  it was seen doing something else during the trip, or reappeared where the trip started.
+  <b>Lenient</b> counts all. <b>Missing</b>: the same, but its stops weren't sampled, so we can't
+  say whether CTA announced it. Delivered = ran ÷ (ran + announced + silent + missing).
+  Bunched: headway under 25% of scheduled; gaps: over 2×; as a share of stop passes, terminals
+  excluded.</p>
 </section>
 <footer>Personal analysis of CTA Bus Tracker data. Not affiliated with CTA.</footer>
 </main>

@@ -26,6 +26,12 @@ models:
     description: Scheduled departures per stop. Grain (service_date, trip_id, stop_sequence).
   - name: int_detour_windows
     description: Times a route ran patterns its GTFS schedule lacks (detours), widened an hour each side.
+  - name: int_trip_matches
+    description: Observed trip explaining each scheduled trip (pid+start, else route+start). Grain (service_date, trip_id), matched only.
+  - name: int_missing_trip_evidence
+    description: >
+      For unmatched trips, where the block's bus was during and after the trip (seen
+      elsewhere, on this pattern, reappeared at the far or same end). Grain (service_date, trip_id).
   - name: int_trip_service_gaps
     description: >
       Wait at each trip's middle scheduled stop between the buses just before and after its

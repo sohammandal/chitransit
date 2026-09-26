@@ -44,79 +44,201 @@ unit_tests:
           - {vid: "1", observed_at: "2026-09-26 10:11:40-05", rt: "9", pid: 10, pdist: 3000, stsd: "2026-09-26", stst: 36000}
       - input: ref('stg_pattern_stops')
         rows:
-          - {pid: 10, seq: 1, stop_id: "A", pdist: 0}
-          - {pid: 10, seq: 2, stop_id: "B", pdist: 500}
-          - {pid: 10, seq: 3, stop_id: "C", pdist: 1000}
-          - {pid: 10, seq: 4, stop_id: "D", pdist: 1100}
-          - {pid: 10, seq: 5, stop_id: "E", pdist: 2000}
+          - {pid: 10, valid_from: "-infinity", valid_to: null, seq: 1, stop_id: "A", pdist: 0}
+          - {pid: 10, valid_from: "-infinity", valid_to: null, seq: 2, stop_id: "B", pdist: 500}
+          - {pid: 10, valid_from: "-infinity", valid_to: null, seq: 3, stop_id: "C", pdist: 1000}
+          - {pid: 10, valid_from: "-infinity", valid_to: null, seq: 4, stop_id: "D", pdist: 1100}
+          - {pid: 10, valid_from: "-infinity", valid_to: null, seq: 5, stop_id: "E", pdist: 2000}
     expect:
       rows:
         - {seq: 1, stop_id: "A", passed_at: "2026-09-26 10:00:00-05"}
         - {seq: 2, stop_id: "B", passed_at: "2026-09-26 10:00:20-05"}
         - {seq: 3, stop_id: "C", passed_at: "2026-09-26 10:00:40-05"}
 
+  - name: stop_passes_use_the_pattern_version_in_force
+    description: >
+      A pid's stop list can change (SCD2). A step is interpolated against the version valid
+      when it starts: stop A sits at 500 ft before 10:05 and at 800 ft after.
+    model: int_stop_passes
+    overrides:
+      vars: {start_date: "2026-09-26", end_date: "2026-09-26"}
+    given:
+      - input: ref('stg_bus_positions')
+        rows:
+          - {vid: "1", observed_at: "2026-09-26 10:00:00-05", rt: "9", pid: 10, pdist: 0, stsd: "2026-09-26", stst: 36000}
+          - {vid: "1", observed_at: "2026-09-26 10:00:40-05", rt: "9", pid: 10, pdist: 1000, stsd: "2026-09-26", stst: 36000}
+          - {vid: "2", observed_at: "2026-09-26 10:10:00-05", rt: "9", pid: 10, pdist: 0, stsd: "2026-09-26", stst: 36600}
+          - {vid: "2", observed_at: "2026-09-26 10:10:40-05", rt: "9", pid: 10, pdist: 1000, stsd: "2026-09-26", stst: 36600}
+      - input: ref('stg_pattern_stops')
+        rows:
+          - {pid: 10, valid_from: "-infinity", valid_to: "2026-09-26 10:05:00-05", seq: 1, stop_id: "A", pdist: 500}
+          - {pid: 10, valid_from: "2026-09-26 10:05:00-05", valid_to: null, seq: 1, stop_id: "A", pdist: 800}
+    expect:
+      rows:
+        - {vid: "1", stop_id: "A", passed_at: "2026-09-26 10:00:20-05"}
+        - {vid: "2", stop_id: "A", passed_at: "2026-09-26 10:10:32-05"}
+
+  - name: trip_matches_pattern_then_route
+    description: >
+      Same pid and a GTFS start 0-120 s after the bus's stst matches; among leftovers, same
+      route and start matches a bus on a detour pid; 200 s off matches nothing; of two trips
+      at the same minute on different patterns, only the one whose pattern ran matches.
+    model: int_trip_matches
+    given:
+      - input: ref('int_scheduled_trips')
+        rows:
+          - {service_date: "2026-09-26", trip_id: "T1", feed_id: "f", rt: "9", direction: "North", block_id: "b1", pid: 10, start_s: 36000, end_s: 37200, scheduled_start: "2026-09-26 10:00:00-05", scheduled_end: "2026-09-26 10:20:00-05"}
+          - {service_date: "2026-09-26", trip_id: "T2", feed_id: "f", rt: "9", direction: "North", block_id: "b2", pid: 10, start_s: 37800, end_s: 39000, scheduled_start: "2026-09-26 10:30:00-05", scheduled_end: "2026-09-26 10:50:00-05"}
+          - {service_date: "2026-09-26", trip_id: "T6", feed_id: "f", rt: "9", direction: "North", block_id: "b6", pid: 10, start_s: 45000, end_s: 46200, scheduled_start: "2026-09-26 12:30:00-05", scheduled_end: "2026-09-26 12:50:00-05"}
+          - {service_date: "2026-09-26", trip_id: "T12", feed_id: "f", rt: "9", direction: "North", block_id: "b12", pid: 10, start_s: 50000, end_s: 51200, scheduled_start: "2026-09-26 13:53:00-05", scheduled_end: "2026-09-26 14:13:00-05"}
+          - {service_date: "2026-09-26", trip_id: "T13", feed_id: "f", rt: "9", direction: "North", block_id: "b13", pid: 11, start_s: 50000, end_s: 51200, scheduled_start: "2026-09-26 13:53:00-05", scheduled_end: "2026-09-26 14:13:00-05"}
+      - input: ref('int_observed_trips')
+        rows:
+          - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 35950, first_seen_at: "2026-09-26 10:00:00-05", n_reports: 5, first_vid: "A", last_vid: "A"}
+          - {service_date: "2026-09-26", rt: "9", pid: 99, start_s: 37790, first_seen_at: "2026-09-26 10:30:00-05", n_reports: 3, first_vid: "B", last_vid: "B"}
+          - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 44800, first_seen_at: "2026-09-26 12:27:00-05", n_reports: 4, first_vid: "C", last_vid: "C"}
+          - {service_date: "2026-09-26", rt: "9", pid: 11, start_s: 49990, first_seen_at: "2026-09-26 13:53:00-05", n_reports: 6, first_vid: "E", last_vid: "E"}
+      - input: ref('stg_patterns')
+        rows:
+          - {pid: 10, rt: "9", direction: "North"}
+          - {pid: 11, rt: "9", direction: "North"}
+          - {pid: 99, rt: "9", direction: "North"}
+    expect:
+      rows:
+        - {trip_id: "T1", matched_on: "pattern", observed_pid: 10}
+        - {trip_id: "T2", matched_on: "route", observed_pid: 99}
+        - {trip_id: "T13", matched_on: "pattern", observed_pid: 11}
+
+  - name: missing_trip_evidence_is_physical
+    description: >
+      Where the block's bus was decides between a dead tracker and a ghost: reappearing at the
+      far end means it drove the trip; at the same end, it sat; seen elsewhere during the trip,
+      it didn't run it; seen on the trip's own pattern, it ran it under another key.
+    model: int_missing_trip_evidence
+    given:
+      - input: ref('int_scheduled_trips')
+        rows:
+          - {service_date: "2026-09-26", trip_id: "P1", feed_id: "f", rt: "9", direction: "North", block_id: "E1", pid: 10, start_s: 39600, end_s: 40800, scheduled_start: "2026-09-26 11:00:00-05", scheduled_end: "2026-09-26 11:20:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X1", feed_id: "f", rt: "9", direction: "North", block_id: "E1", pid: 10, start_s: 41400, end_s: 42600, scheduled_start: "2026-09-26 11:30:00-05", scheduled_end: "2026-09-26 11:50:00-05"}
+          - {service_date: "2026-09-26", trip_id: "P2", feed_id: "f", rt: "9", direction: "North", block_id: "E2", pid: 10, start_s: 43200, end_s: 44400, scheduled_start: "2026-09-26 12:00:00-05", scheduled_end: "2026-09-26 12:20:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X2", feed_id: "f", rt: "9", direction: "North", block_id: "E2", pid: 10, start_s: 45000, end_s: 46200, scheduled_start: "2026-09-26 12:30:00-05", scheduled_end: "2026-09-26 12:50:00-05"}
+          - {service_date: "2026-09-26", trip_id: "P3", feed_id: "f", rt: "9", direction: "North", block_id: "E3", pid: 10, start_s: 46800, end_s: 48000, scheduled_start: "2026-09-26 13:00:00-05", scheduled_end: "2026-09-26 13:20:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X3", feed_id: "f", rt: "9", direction: "North", block_id: "E3", pid: 10, start_s: 48600, end_s: 49800, scheduled_start: "2026-09-26 13:30:00-05", scheduled_end: "2026-09-26 13:50:00-05"}
+          - {service_date: "2026-09-26", trip_id: "P4", feed_id: "f", rt: "9", direction: "North", block_id: "E4", pid: 10, start_s: 50400, end_s: 51600, scheduled_start: "2026-09-26 14:00:00-05", scheduled_end: "2026-09-26 14:20:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X4", feed_id: "f", rt: "9", direction: "North", block_id: "E4", pid: 10, start_s: 52200, end_s: 53400, scheduled_start: "2026-09-26 14:30:00-05", scheduled_end: "2026-09-26 14:50:00-05"}
+          - {service_date: "2026-09-26", trip_id: "P6", feed_id: "f", rt: "9", direction: "North", block_id: "E6", pid: 10, start_s: 57600, end_s: 58800, scheduled_start: "2026-09-26 16:00:00-05", scheduled_end: "2026-09-26 16:20:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X6", feed_id: "f", rt: "9", direction: "North", block_id: "E6", pid: 10, start_s: 59400, end_s: 60600, scheduled_start: "2026-09-26 16:30:00-05", scheduled_end: "2026-09-26 16:50:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X5", feed_id: "f", rt: "9", direction: "North", block_id: "E5", pid: 10, start_s: 55800, end_s: 57000, scheduled_start: "2026-09-26 15:30:00-05", scheduled_end: "2026-09-26 15:50:00-05"}
+      - input: ref('int_trip_matches')
+        rows:
+          - {service_date: "2026-09-26", trip_id: "P1", matched_on: "pattern", n_reports: 5, first_vid: "V1", last_vid: "V1"}
+          - {service_date: "2026-09-26", trip_id: "P2", matched_on: "pattern", n_reports: 5, first_vid: "V2", last_vid: "V2"}
+          - {service_date: "2026-09-26", trip_id: "P3", matched_on: "pattern", n_reports: 5, first_vid: "V3", last_vid: "V3"}
+          - {service_date: "2026-09-26", trip_id: "P4", matched_on: "pattern", n_reports: 5, first_vid: "V4", last_vid: "V4"}
+          - {service_date: "2026-09-26", trip_id: "P6", matched_on: "pattern", n_reports: 5, first_vid: "V6", last_vid: "V6"}
+      - input: ref('int_scheduled_departures')
+        rows:
+          - {service_date: "2026-09-26", trip_id: "X1", stop_id: "A", stop_sequence: 1, departs_at: "2026-09-26 11:30:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X1", stop_id: "B", stop_sequence: 2, departs_at: "2026-09-26 11:50:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X2", stop_id: "A", stop_sequence: 1, departs_at: "2026-09-26 12:30:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X2", stop_id: "B", stop_sequence: 2, departs_at: "2026-09-26 12:50:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X3", stop_id: "A", stop_sequence: 1, departs_at: "2026-09-26 13:30:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X3", stop_id: "B", stop_sequence: 2, departs_at: "2026-09-26 13:50:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X4", stop_id: "A", stop_sequence: 1, departs_at: "2026-09-26 14:30:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X4", stop_id: "B", stop_sequence: 2, departs_at: "2026-09-26 14:50:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X6", stop_id: "A", stop_sequence: 1, departs_at: "2026-09-26 16:30:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X6", stop_id: "B", stop_sequence: 2, departs_at: "2026-09-26 16:50:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X5", stop_id: "A", stop_sequence: 1, departs_at: "2026-09-26 15:30:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X5", stop_id: "B", stop_sequence: 2, departs_at: "2026-09-26 15:50:00-05"}
+      - input: ref('stg_gtfs_stops')
+        rows:
+          - {feed_id: "f", stop_id: "A", lat: 41.0, lon: -87.6}
+          - {feed_id: "f", stop_id: "B", lat: 41.05, lon: -87.6}
+      - input: ref('stg_bus_positions')
+        rows:
+          # V1 invisible during X1, next seen at the far end (B): drove it with a dead tracker
+          - {vid: "V1", observed_at: "2026-09-26 11:52:00-05", rt: "9", pid: 12, pdist: 100, lat: 41.05, lon: -87.6}
+          # V2 invisible during X2, next seen back at A: sat there
+          - {vid: "V2", observed_at: "2026-09-26 12:58:00-05", rt: "9", pid: 10, pdist: 100, lat: 41.0, lon: -87.6}
+          # V3 seen during X3 on another pattern: didn't run it, tracker worked
+          - {vid: "V3", observed_at: "2026-09-26 13:40:00-05", rt: "9", pid: 20, pdist: 100, lat: 41.02, lon: -87.65}
+          # V4 seen during X4 on X4's own pattern under another key: ran it, mis-keyed
+          - {vid: "V4", observed_at: "2026-09-26 14:40:00-05", rt: "9", pid: 10, pdist: 100, lat: 41.02, lon: -87.6}
+          # V6 never seen again
+    expect:
+      rows:
+        - {trip_id: "X1", block_vid: "V1", evidence: "reappeared_far_end"}
+        - {trip_id: "X2", block_vid: "V2", evidence: "reappeared_same_end"}
+        - {trip_id: "X3", block_vid: "V3", evidence: "bus_elsewhere"}
+        - {trip_id: "X4", block_vid: "V4", evidence: "bus_on_this_pattern"}
+        - {trip_id: "X5", block_vid: null, evidence: "no_block_bus"}
+        - {trip_id: "X6", block_vid: "V6", evidence: "bus_not_seen_again"}
+
   - name: trip_status_rules
     description: >
-      One trip per rule: ran on pid+start (GTFS start 0-120 s after the bus's stst) and on
-      route+start for a detour pid; flagged only by a flag at a stop the trip serves; silent
-      only when one of its own stops was sampled in the 30 min before it was due there
-      (gap_confirmed when other buses' passes show the hole); missing when watched but only
-      other stops were sampled; unknown when not watched or near a detour; likely_ran for a
-      tracker gap in the block or a single report.
+      Status is the first rule that applies: ran (2+ reports), flagged only by a flag at a stop
+      the trip serves, unknown when not watched or near a detour, likely_ran for a single report
+      or physical evidence the bus drove it, then silent when its stops were sampled, else
+      missing. strict_evidence marks silent/missing trips with physical evidence the bus didn't run it.
     model: trip_status
     overrides:
       vars: {as_of: "2026-09-27 06:00:00-05"}
     given:
       - input: ref('int_scheduled_trips')
         rows:
-          - {service_date: "2026-09-26", trip_id: "T1", feed_id: "f", rt: "9", direction: "North", block_id: "b1", pid: 10, start_s: 36000, end_s: 36120, scheduled_start: "2026-09-26 10:00:00-05", scheduled_end: "2026-09-26 10:02:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T2", feed_id: "f", rt: "9", direction: "North", block_id: "b2", pid: 10, start_s: 37800, end_s: 37920, scheduled_start: "2026-09-26 10:30:00-05", scheduled_end: "2026-09-26 10:32:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T3", feed_id: "f", rt: "9", direction: "North", block_id: "b3", pid: 10, start_s: 39600, end_s: 39720, scheduled_start: "2026-09-26 11:00:00-05", scheduled_end: "2026-09-26 11:02:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T4", feed_id: "f", rt: "9", direction: "North", block_id: "b4", pid: 10, start_s: 41400, end_s: 41520, scheduled_start: "2026-09-26 11:30:00-05", scheduled_end: "2026-09-26 11:32:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T5", feed_id: "f", rt: "9", direction: "North", block_id: "b5", pid: 10, start_s: 43200, end_s: 43320, scheduled_start: "2026-09-26 12:00:00-05", scheduled_end: "2026-09-26 12:02:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T6", feed_id: "f", rt: "9", direction: "North", block_id: "b6", pid: 10, start_s: 45000, end_s: 45120, scheduled_start: "2026-09-26 12:30:00-05", scheduled_end: "2026-09-26 12:32:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T7", feed_id: "f", rt: "9", direction: "North", block_id: "b7", pid: 10, start_s: 46800, end_s: 46920, scheduled_start: "2026-09-26 13:00:00-05", scheduled_end: "2026-09-26 13:02:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T8a", feed_id: "f", rt: "9", direction: "North", block_id: "B", pid: 10, start_s: 48600, end_s: 48720, scheduled_start: "2026-09-26 13:30:00-05", scheduled_end: "2026-09-26 13:32:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T8", feed_id: "f", rt: "9", direction: "North", block_id: "B", pid: 10, start_s: 50400, end_s: 50520, scheduled_start: "2026-09-26 14:00:00-05", scheduled_end: "2026-09-26 14:02:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T8c", feed_id: "f", rt: "9", direction: "North", block_id: "B", pid: 10, start_s: 52200, end_s: 52320, scheduled_start: "2026-09-26 14:30:00-05", scheduled_end: "2026-09-26 14:32:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T9", feed_id: "f", rt: "8", direction: "North", block_id: "b9", pid: 20, start_s: 54000, end_s: 54120, scheduled_start: "2026-09-26 15:00:00-05", scheduled_end: "2026-09-26 15:02:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T10", feed_id: "f", rt: "9", direction: "North", block_id: "b10", pid: 10, start_s: 55800, end_s: 55920, scheduled_start: "2026-09-26 15:30:00-05", scheduled_end: "2026-09-26 15:32:00-05"}
-          # block C: same bus before and after, but T11 left a hole -> a dropped trip, not a gap
-          - {service_date: "2026-09-26", trip_id: "T11a", feed_id: "f", rt: "9", direction: "North", block_id: "C", pid: 10, start_s: 57600, end_s: 57720, scheduled_start: "2026-09-26 16:00:00-05", scheduled_end: "2026-09-26 16:02:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T11", feed_id: "f", rt: "9", direction: "North", block_id: "C", pid: 10, start_s: 59400, end_s: 59520, scheduled_start: "2026-09-26 16:30:00-05", scheduled_end: "2026-09-26 16:32:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T11c", feed_id: "f", rt: "9", direction: "North", block_id: "C", pid: 10, start_s: 61200, end_s: 61320, scheduled_start: "2026-09-26 17:00:00-05", scheduled_end: "2026-09-26 17:02:00-05"}
-      - input: ref('int_observed_trips')
+          - {service_date: "2026-09-26", trip_id: "R1", feed_id: "f", rt: "9", direction: "North", block_id: "bR1", pid: 10, start_s: 28800, end_s: 30000, scheduled_start: "2026-09-26 08:00:00-05", scheduled_end: "2026-09-26 08:02:00-05"}
+          - {service_date: "2026-09-26", trip_id: "F1", feed_id: "f", rt: "9", direction: "North", block_id: "bF1", pid: 10, start_s: 30600, end_s: 31800, scheduled_start: "2026-09-26 08:30:00-05", scheduled_end: "2026-09-26 08:32:00-05"}
+          - {service_date: "2026-09-26", trip_id: "F2", feed_id: "f", rt: "9", direction: "North", block_id: "bF2", pid: 10, start_s: 32400, end_s: 33600, scheduled_start: "2026-09-26 09:00:00-05", scheduled_end: "2026-09-26 09:02:00-05"}
+          - {service_date: "2026-09-26", trip_id: "U1", feed_id: "f", rt: "9", direction: "North", block_id: "bU1", pid: 10, start_s: 34200, end_s: 35400, scheduled_start: "2026-09-26 09:30:00-05", scheduled_end: "2026-09-26 09:32:00-05"}
+          - {service_date: "2026-09-26", trip_id: "U2", feed_id: "f", rt: "8", direction: "North", block_id: "bU2", pid: 10, start_s: 36000, end_s: 37200, scheduled_start: "2026-09-26 10:00:00-05", scheduled_end: "2026-09-26 10:02:00-05"}
+          - {service_date: "2026-09-26", trip_id: "L1", feed_id: "f", rt: "9", direction: "North", block_id: "bL1", pid: 10, start_s: 37800, end_s: 39000, scheduled_start: "2026-09-26 10:30:00-05", scheduled_end: "2026-09-26 10:32:00-05"}
+          - {service_date: "2026-09-26", trip_id: "L2", feed_id: "f", rt: "9", direction: "North", block_id: "bL2", pid: 10, start_s: 39600, end_s: 40800, scheduled_start: "2026-09-26 11:00:00-05", scheduled_end: "2026-09-26 11:02:00-05"}
+          - {service_date: "2026-09-26", trip_id: "L3", feed_id: "f", rt: "9", direction: "North", block_id: "bL3", pid: 10, start_s: 41400, end_s: 42600, scheduled_start: "2026-09-26 11:30:00-05", scheduled_end: "2026-09-26 11:32:00-05"}
+          - {service_date: "2026-09-26", trip_id: "S1", feed_id: "f", rt: "9", direction: "North", block_id: "bS1", pid: 10, start_s: 43200, end_s: 44400, scheduled_start: "2026-09-26 12:00:00-05", scheduled_end: "2026-09-26 12:02:00-05"}
+          - {service_date: "2026-09-26", trip_id: "S2", feed_id: "f", rt: "9", direction: "North", block_id: "bS2", pid: 10, start_s: 45000, end_s: 46200, scheduled_start: "2026-09-26 12:30:00-05", scheduled_end: "2026-09-26 12:32:00-05"}
+          - {service_date: "2026-09-26", trip_id: "M1", feed_id: "f", rt: "9", direction: "North", block_id: "bM1", pid: 10, start_s: 46800, end_s: 48000, scheduled_start: "2026-09-26 13:00:00-05", scheduled_end: "2026-09-26 13:02:00-05"}
+      - input: ref('int_trip_matches')
         rows:
-          # T1: same pid, bus stst 50 s before the GTFS first departure
-          - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 35950, first_seen_at: "2026-09-26 10:00:10-05", n_reports: 5, first_vid: "A", last_vid: "A"}
-          # T2: detour pid 99, 10 s before
-          - {service_date: "2026-09-26", rt: "9", pid: 99, start_s: 37790, first_seen_at: "2026-09-26 10:30:10-05", n_reports: 3, first_vid: "B", last_vid: "B"}
-          # 200 s before T6: outside the 120 s tolerance, so T6 stays unmatched
-          - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 44800, first_seen_at: "2026-09-26 12:27:00-05", n_reports: 4, first_vid: "C", last_vid: "C"}
-          # block B: bus V ran the trips before and after T8
-          - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 48590, first_seen_at: "2026-09-26 13:30:00-05", n_reports: 5, first_vid: "V", last_vid: "V"}
-          - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 52190, first_seen_at: "2026-09-26 14:30:00-05", n_reports: 5, first_vid: "V", last_vid: "V"}
-          - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 57590, first_seen_at: "2026-09-26 16:00:00-05", n_reports: 5, first_vid: "W", last_vid: "W"}
-          - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 61190, first_seen_at: "2026-09-26 17:00:00-05", n_reports: 5, first_vid: "W", last_vid: "W"}
-          # T10: seen once
-          - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 55790, first_seen_at: "2026-09-26 15:30:00-05", n_reports: 1, first_vid: "D", last_vid: "D"}
-      - input: ref('stg_patterns')
-        rows:
-          - {pid: 10, rt: "9", direction: "North"}
-          - {pid: 99, rt: "9", direction: "North"}
-          - {pid: 20, rt: "8", direction: "North"}
+          - {service_date: "2026-09-26", trip_id: "R1", matched_on: "pattern", n_reports: 5, first_vid: "A"}
+          - {service_date: "2026-09-26", trip_id: "L1", matched_on: "pattern", n_reports: 1, first_vid: "D"}
       - input: ref('int_trip_flags')
         rows:
-          # T3's flag, at a stop T3 serves
-          - {service_date: "2026-09-26", rt: "9", direction: "North", start_s: 39590, stop_id: "S2", first_flagged_at: "2026-09-26 10:40:00-05", n_flagged_samples: 2}
-          # same route and start as T7 but at a stop T7 doesn't serve: must not flag T7
-          - {service_date: "2026-09-26", rt: "9", direction: "North", start_s: 46790, stop_id: "ELSEWHERE", first_flagged_at: "2026-09-26 12:50:00-05", n_flagged_samples: 1}
+          # F1's flag, at a stop F1 serves
+          - {service_date: "2026-09-26", rt: "9", direction: "North", start_s: 30590, stop_id: "SF1", first_flagged_at: "2026-09-26 08:20:00-05", n_flagged_samples: 2}
+          # same route and start as F2, at a stop F2 doesn't serve: not F2's flag
+          - {service_date: "2026-09-26", rt: "9", direction: "North", start_s: 32390, stop_id: "ELSEWHERE", first_flagged_at: "2026-09-26 08:50:00-05", n_flagged_samples: 1}
+      - input: ref('int_scheduled_departures')
+        rows:
+          - {service_date: "2026-09-26", trip_id: "R1", stop_id: "SR1", stop_sequence: 1, departs_at: "2026-09-26 08:00:00-05"}
+          - {service_date: "2026-09-26", trip_id: "F1", stop_id: "SF1", stop_sequence: 1, departs_at: "2026-09-26 08:30:00-05"}
+          - {service_date: "2026-09-26", trip_id: "F2", stop_id: "SF2", stop_sequence: 1, departs_at: "2026-09-26 09:00:00-05"}
+          - {service_date: "2026-09-26", trip_id: "U1", stop_id: "SU1", stop_sequence: 1, departs_at: "2026-09-26 09:30:00-05"}
+          - {service_date: "2026-09-26", trip_id: "U2", stop_id: "SU2", stop_sequence: 1, departs_at: "2026-09-26 10:00:00-05"}
+          - {service_date: "2026-09-26", trip_id: "L1", stop_id: "SL1", stop_sequence: 1, departs_at: "2026-09-26 10:30:00-05"}
+          - {service_date: "2026-09-26", trip_id: "L2", stop_id: "SL2", stop_sequence: 1, departs_at: "2026-09-26 11:00:00-05"}
+          - {service_date: "2026-09-26", trip_id: "L3", stop_id: "SL3", stop_sequence: 1, departs_at: "2026-09-26 11:30:00-05"}
+          - {service_date: "2026-09-26", trip_id: "S1", stop_id: "SS1", stop_sequence: 1, departs_at: "2026-09-26 12:00:00-05"}
+          - {service_date: "2026-09-26", trip_id: "S2", stop_id: "SS2", stop_sequence: 1, departs_at: "2026-09-26 12:30:00-05"}
+          - {service_date: "2026-09-26", trip_id: "M1", stop_id: "SM1", stop_sequence: 1, departs_at: "2026-09-26 13:00:00-05"}
       - input: ref('int_feed_minutes')
         rows:
+          - {minute: "2026-09-26 09:00:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 09:01:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 09:02:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 10:00:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 10:01:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 10:02:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 10:30:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 10:31:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 10:32:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 11:00:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 11:01:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 11:02:00-05", swept: true, predictions_sampled: false}
           - {minute: "2026-09-26 11:30:00-05", swept: true, predictions_sampled: false}
           - {minute: "2026-09-26 11:31:00-05", swept: true, predictions_sampled: false}
           - {minute: "2026-09-26 11:32:00-05", swept: true, predictions_sampled: false}
           - {minute: "2026-09-26 12:00:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 12:01:00-05", swept: true, predictions_sampled: false}
           - {minute: "2026-09-26 12:02:00-05", swept: true, predictions_sampled: false}
           - {minute: "2026-09-26 12:30:00-05", swept: true, predictions_sampled: false}
           - {minute: "2026-09-26 12:31:00-05", swept: true, predictions_sampled: false}
@@ -124,57 +246,42 @@ unit_tests:
           - {minute: "2026-09-26 13:00:00-05", swept: true, predictions_sampled: false}
           - {minute: "2026-09-26 13:01:00-05", swept: true, predictions_sampled: false}
           - {minute: "2026-09-26 13:02:00-05", swept: true, predictions_sampled: false}
-          - {minute: "2026-09-26 14:00:00-05", swept: true, predictions_sampled: false}
-          - {minute: "2026-09-26 14:01:00-05", swept: true, predictions_sampled: false}
-          - {minute: "2026-09-26 14:02:00-05", swept: true, predictions_sampled: false}
-          - {minute: "2026-09-26 15:00:00-05", swept: true, predictions_sampled: false}
-          - {minute: "2026-09-26 15:01:00-05", swept: true, predictions_sampled: false}
-          - {minute: "2026-09-26 15:02:00-05", swept: true, predictions_sampled: false}
-          - {minute: "2026-09-26 15:30:00-05", swept: true, predictions_sampled: false}
-          - {minute: "2026-09-26 15:31:00-05", swept: true, predictions_sampled: false}
-          - {minute: "2026-09-26 15:32:00-05", swept: true, predictions_sampled: false}
-          - {minute: "2026-09-26 16:30:00-05", swept: true, predictions_sampled: false}
-          - {minute: "2026-09-26 16:31:00-05", swept: true, predictions_sampled: false}
-          - {minute: "2026-09-26 16:32:00-05", swept: true, predictions_sampled: false}
-      - input: ref('int_scheduled_departures')
-        rows:
-          # the stops each trip serves and when (only what the rules read)
-          - {service_date: "2026-09-26", trip_id: "T3", stop_id: "S2", stop_sequence: 1, departs_at: "2026-09-26 11:01:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T4", stop_id: "S1", stop_sequence: 1, departs_at: "2026-09-26 11:30:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T6", stop_id: "S2", stop_sequence: 1, departs_at: "2026-09-26 12:31:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T7", stop_id: "S1", stop_sequence: 1, departs_at: "2026-09-26 13:00:00-05"}
-          - {service_date: "2026-09-26", trip_id: "T9", stop_id: "R1", stop_sequence: 1, departs_at: "2026-09-26 15:00:00-05"}
       - input: ref('stg_prediction_samples')
         rows:
-          # T4: its stop S1 sampled 10 min before it was due there
-          - {poll_id: 1, fetched_at: "2026-09-26 11:20:00-05", stop_id: "S1"}
-          # T6: its stop S2 sampled 11 min before it was due there
-          - {poll_id: 2, fetched_at: "2026-09-26 12:20:00-05", stop_id: "S2"}
-          # T7's window only saw another stop
-          - {poll_id: 3, fetched_at: "2026-09-26 12:50:00-05", stop_id: "X"}
-          - {poll_id: 4, fetched_at: "2026-09-26 14:50:00-05", stop_id: "R1"}
-      - input: ref('int_trip_service_gaps')
-        rows:
-          - {service_date: "2026-09-26", trip_id: "T4", gap_ratio: 2.1}
-          - {service_date: "2026-09-26", trip_id: "T6", gap_ratio: 1.1}
-          - {service_date: "2026-09-26", trip_id: "T11", gap_ratio: 2.0}
+          - {poll_id: 0, fetched_at: "2026-09-26 07:50:00-05", stop_id: "SR1"}
+          - {poll_id: 1, fetched_at: "2026-09-26 08:20:00-05", stop_id: "SF1"}
+          - {poll_id: 2, fetched_at: "2026-09-26 08:50:00-05", stop_id: "SF2"}
+          - {poll_id: 3, fetched_at: "2026-09-26 09:20:00-05", stop_id: "SU1"}
+          - {poll_id: 4, fetched_at: "2026-09-26 09:50:00-05", stop_id: "SU2"}
+          - {poll_id: 5, fetched_at: "2026-09-26 10:20:00-05", stop_id: "SL1"}
+          - {poll_id: 6, fetched_at: "2026-09-26 10:50:00-05", stop_id: "SL2"}
+          - {poll_id: 7, fetched_at: "2026-09-26 11:20:00-05", stop_id: "SL3"}
+          - {poll_id: 8, fetched_at: "2026-09-26 11:50:00-05", stop_id: "SS1"}
+          - {poll_id: 9, fetched_at: "2026-09-26 12:20:00-05", stop_id: "SS2"}
       - input: ref('int_detour_windows')
         rows:
-          - {service_date: "2026-09-26", rt: "8", pid: 77, window_start: "2026-09-26 14:30:00-05", window_end: "2026-09-26 16:00:00-05"}
+          - {service_date: "2026-09-26", rt: "8", pid: 77, window_start: "2026-09-26 09:30:00-05", window_end: "2026-09-26 11:00:00-05"}
+      - input: ref('int_missing_trip_evidence')
+        rows:
+          - {service_date: "2026-09-26", trip_id: "F2", evidence: "bus_elsewhere"}
+          - {service_date: "2026-09-26", trip_id: "L2", evidence: "reappeared_far_end"}
+          - {service_date: "2026-09-26", trip_id: "L3", evidence: "bus_on_this_pattern"}
+          - {service_date: "2026-09-26", trip_id: "S1", evidence: "reappeared_same_end"}
+          - {service_date: "2026-09-26", trip_id: "S2", evidence: "no_block_bus"}
+          - {service_date: "2026-09-26", trip_id: "M1", evidence: "bus_elsewhere"}
+      - input: ref('int_trip_service_gaps')
+        rows:
+          - {service_date: "2026-09-26", trip_id: "S1", gap_ratio: 2.1}
     expect:
       rows:
-        - {trip_id: "T1", status: "ran", reason: null, gap_confirmed: false}
-        - {trip_id: "T2", status: "ran", reason: null, gap_confirmed: false}
-        - {trip_id: "T3", status: "flagged", reason: null, gap_confirmed: false}
-        - {trip_id: "T4", status: "silent", reason: null, gap_confirmed: true}
-        - {trip_id: "T5", status: "unknown", reason: "not_watched", gap_confirmed: false}
-        - {trip_id: "T6", status: "silent", reason: null, gap_confirmed: false}
-        - {trip_id: "T7", status: "missing", reason: "flags_not_sampled", gap_confirmed: false}
-        - {trip_id: "T8a", status: "ran", reason: null, gap_confirmed: false}
-        - {trip_id: "T8", status: "likely_ran", reason: "tracker_gap", gap_confirmed: false}
-        - {trip_id: "T8c", status: "ran", reason: null, gap_confirmed: false}
-        - {trip_id: "T9", status: "unknown", reason: "detour", gap_confirmed: false}
-        - {trip_id: "T10", status: "likely_ran", reason: "single_report", gap_confirmed: false}
-        - {trip_id: "T11a", status: "ran", reason: null, gap_confirmed: false}
-        - {trip_id: "T11", status: "missing", reason: "flags_not_sampled", gap_confirmed: true}
-        - {trip_id: "T11c", status: "ran", reason: null, gap_confirmed: false}
+        - {trip_id: "R1", status: "ran", reason: null, strict_evidence: false}
+        - {trip_id: "F1", status: "flagged", reason: null, strict_evidence: false}
+        - {trip_id: "F2", status: "silent", reason: null, strict_evidence: true}
+        - {trip_id: "U1", status: "unknown", reason: "not_watched", strict_evidence: false}
+        - {trip_id: "U2", status: "unknown", reason: "detour", strict_evidence: false}
+        - {trip_id: "L1", status: "likely_ran", reason: "single_report", strict_evidence: false}
+        - {trip_id: "L2", status: "likely_ran", reason: "tracker_gap", strict_evidence: false}
+        - {trip_id: "L3", status: "likely_ran", reason: "miskeyed", strict_evidence: false}
+        - {trip_id: "S1", status: "silent", reason: null, strict_evidence: true}
+        - {trip_id: "S2", status: "silent", reason: null, strict_evidence: false}
+        - {trip_id: "M1", status: "missing", reason: "flags_not_sampled", strict_evidence: true}

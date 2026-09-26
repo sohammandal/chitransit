@@ -10,6 +10,7 @@ select
     count(*) filter (where status = 'likely_ran') as likely_ran,
     count(*) filter (where status = 'flagged') as flagged,
     count(*) filter (where status = 'silent') as silent,
+    count(*) filter (where status = 'silent' and strict_evidence) as silent_strict,
     count(*) filter (where status = 'missing') as missing,
     count(*) filter (where status = 'unknown') as unknown,
     count(*) filter (where status = 'ran' and flagged) as flagged_but_ran,
