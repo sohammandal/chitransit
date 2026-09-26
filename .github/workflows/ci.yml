@@ -102,16 +102,36 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
-      - uses: docker/setup-buildx-action@v4
+      # A new image restarts the poller on the box (a sweep and some assignment churn), so
+      # build one only when something the box runs changed (not for dbt, docs or CI edits).
+      - name: Did anything the box runs change?
+        id: changed
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if git diff --quiet "$BEFORE" "$GITHUB_SHA" -- src db cdc infra/box compose.yml \
+              compose.prod.yml Dockerfile pyproject.toml uv.lock; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "nothing the box runs changed; keeping the current image"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"  # changed, or no usable BEFORE (new branch)
+          fi
 
-      - uses: docker/login-action@v4
+      - if: steps.changed.outputs.build == 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - if: steps.changed.outputs.build == 'true'
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v7
+      - if: steps.changed.outputs.build == 'true'
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64
