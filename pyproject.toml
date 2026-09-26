@@ -3,7 +3,7 @@ name = "cta-ghost-ledger"
 version = "0.1.0"
 description = "Replayable record of scheduled CTA bus and 'L' trips that ran, were flagged canceled, or silently never showed up"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.27",
     "psycopg[binary]>=3.2",
@@ -30,7 +30,7 @@ packages = ["src/cta_ghost_ledger"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py313"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
