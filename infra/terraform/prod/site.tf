@@ -1,7 +1,66 @@
 # Public dashboard: CloudFront in front of the lake's analytics/site/ prefix, which the
 # nightly workflow writes. Origin access control (OAC): only this distribution can read, and
-# only that prefix; the bucket stays private (public access block stays on). The custom
-# domain (chitransit.fyi, ACM cert in us-east-1 + Route 53 alias) is added once registered.
+# only that prefix; the bucket stays private (public access block stays on). Served at
+# chitransit.fyi (and www) with an ACM certificate in us-east-1.
+
+locals {
+  domain = "chitransit.fyi"
+}
+
+# Registered in Route 53, which created the zone; adopt it rather than recreate it.
+import {
+  to = aws_route53_zone.site
+  id = "Z00394573RAQAY1F1P679"
+}
+
+resource "aws_route53_zone" "site" {
+  name    = local.domain
+  comment = "HostedZone created by Route53 Registrar"
+}
+
+resource "aws_acm_certificate" "site" {
+  provider                  = aws.us_east_1
+  domain_name               = local.domain
+  subject_alternative_names = ["*.${local.domain}"]
+  validation_method         = "DNS"
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# Keyed by domain (known at plan time); the apex and the wildcard get the same validation
+# record, so the second write is a no-op overwrite.
+resource "aws_route53_record" "cert_validation" {
+  for_each = {
+    for o in aws_acm_certificate.site.domain_validation_options : o.domain_name => o
+  }
+  zone_id         = aws_route53_zone.site.zone_id
+  name            = each.value.resource_record_name
+  type            = each.value.resource_record_type
+  records         = [each.value.resource_record_value]
+  ttl             = 300
+  allow_overwrite = true
+}
+
+resource "aws_acm_certificate_validation" "site" {
+  provider                = aws.us_east_1
+  certificate_arn         = aws_acm_certificate.site.arn
+  validation_record_fqdns = [for r in aws_route53_record.cert_validation : r.fqdn]
+}
+
+resource "aws_route53_record" "site" {
+  for_each = toset(flatten([for n in [local.domain, "www.${local.domain}"] : [
+    "${n}|A", "${n}|AAAA"
+  ]]))
+  zone_id = aws_route53_zone.site.zone_id
+  name    = split("|", each.value)[0]
+  type    = split("|", each.value)[1]
+  alias {
+    name                   = aws_cloudfront_distribution.site.domain_name
+    zone_id                = aws_cloudfront_distribution.site.hosted_zone_id
+    evaluate_target_health = false
+  }
+}
 
 resource "aws_cloudfront_origin_access_control" "site" {
   name                              = "ghost-ledger-site"
@@ -45,6 +104,8 @@ resource "aws_cloudfront_distribution" "site" {
   default_root_object = "index.html"
   price_class         = "PriceClass_100"
   http_version        = "http2and3"
+  is_ipv6_enabled     = true
+  aliases             = [local.domain, "www.${local.domain}"]
 
   origin {
     origin_id                = "lake-site"
@@ -70,7 +131,9 @@ resource "aws_cloudfront_distribution" "site" {
   }
 
   viewer_certificate {
-    cloudfront_default_certificate = true
+    acm_certificate_arn      = aws_acm_certificate_validation.site.certificate_arn
+    ssl_support_method       = "sni-only"
+    minimum_protocol_version = "TLSv1.2_2021"
   }
 }
 
@@ -97,5 +160,5 @@ resource "aws_s3_bucket_policy" "lake" {
 }
 
 output "site_url" {
-  value = "https://${aws_cloudfront_distribution.site.domain_name}/"
+  value = { domain = "https://${local.domain}/", cloudfront = "https://${aws_cloudfront_distribution.site.domain_name}/" }
 }

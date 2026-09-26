@@ -265,7 +265,8 @@ data "aws_iam_policy_document" "apply_writes" {
     sid = "SiteDomain"
     actions = [
       "acm:RequestCertificate", "acm:DeleteCertificate", "acm:AddTagsToCertificate",
-      "route53:ChangeResourceRecordSets",
+      "acm:RemoveTagsFromCertificate",
+      "route53:ChangeResourceRecordSets", "route53:ChangeTagsForResource", "route53:UpdateHostedZoneComment",
     ]
     resources = [
       "arn:aws:acm:us-east-1:${data.aws_caller_identity.me.account_id}:certificate/*",

@@ -23,3 +23,12 @@ provider "aws" {
     tags = { project = "ghost-ledger", stack = "prod", managed_by = "terraform" }
   }
 }
+
+# CloudFront certificates must live in us-east-1.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+  default_tags {
+    tags = { project = "ghost-ledger", stack = "prod", managed_by = "terraform" }
+  }
+}
