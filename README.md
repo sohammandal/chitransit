@@ -7,7 +7,7 @@
 [![Apache Iceberg](https://img.shields.io/badge/Apache%20Iceberg-3C8CE7?logo=apache&logoColor=white)](https://iceberg.apache.org/)
 [![DuckDB](https://img.shields.io/badge/DuckDB-FFF000?logo=duckdb&logoColor=black)](https://duckdb.org/)
 [![dbt](https://img.shields.io/badge/dbt-FF694B)](https://www.getdbt.com/)
-[![Dagster](https://img.shields.io/badge/Dagster-4F43DD)](https://dagster.io/)
+[![Terraform](https://img.shields.io/badge/Terraform-844FBA?logo=terraform&logoColor=white)](https://www.terraform.io/)
 [![Ruff](https://img.shields.io/badge/Ruff-D7FF64?logo=ruff&logoColor=black)](https://github.com/astral-sh/ruff)
 
 > A replayable record of scheduled CTA service - which bus trips **ran**, which CTA **flagged as canceled**, and which **silently never showed up** - judged against the schedule that was in force each day.
@@ -40,27 +40,26 @@ The poller writes to exactly one place. Everything downstream is derived from Po
 flowchart LR
     BT[CTA Bus Tracker API<br/>every 30 s] --> P
     subgraph BOX[Lightsail box, 24/7]
-        P[Poller] -->|one transaction per sweep| PG[(Postgres<br/>sweeps, raw_polls<br/>bus_positions)]
+        P[Poller] -->|one transaction per sweep| PG[(Postgres 17<br/>raw_responses, sweeps, raw_polls,<br/>bus_positions, assignments, patterns)]
         PG -->|logical replication| CDC[Debezium Server]
     end
-    CDC --> ING[Ingress<br/>Iceberg on S3]
-    GTFS[GTFS versions<br/>CTA + Transitland] --> INT
-    ING --> INT[Intermediate<br/>dbt-duckdb]
-    INT --> REP[Reporting<br/>delivery, gaps, bunching]
-    REP --> OUT[Dashboard + Parquet]
-    DG{{Dagster}} -.orchestrates.-> INT
-    DG -.-> ING
-    DG -.-> OUT
+    CDC -->|every 5 min| ING[Ingress<br/>Iceberg on S3 + Glue]
+    GTFS[GTFS versions<br/>CTA + Transitland] -.-> INT
+    ING -.-> INT[Intermediate<br/>dbt-duckdb]
+    INT -.-> REP[Reporting<br/>delivery, gaps, bunching]
+    REP -.-> OUT[Dashboard + Parquet]
 ```
+
+Solid arrows run in prod today; dotted ones are planned.
 
 | Layer | What lives there |
 |-------|------------------|
-| **Postgres (`ops`)** | The system of record: every sweep, API call and bus sighting is written here first, and Postgres decides their order. Keeps about two days. |
-| **Ingress** | The complete CDC log in Iceberg, append-only and replayable by log position. After two days it is the only copy, so it is protected and never rebuilt. |
+| **Postgres (`ops`)** | The system of record. Every API response is stored byte for byte (`raw_responses`), next to the parsed rows built from it, in one transaction per 30 s sweep; Postgres decides their order (the LSN). Keeps about two days. |
+| **Ingress** | The complete change log as Iceberg tables on S3 (Glue catalog): one row per change with its operation and log position. After two days it is the only copy, so it is protected and never rebuilt. |
 | **Intermediate** | Schedule and route-pattern versions (SCD2), scheduled trips, interpolated stop passes, flagged cancellations |
 | **Reporting** | `route_hour_delivery`, `stop_hour_gaps`, `bunching_events`, with coverage on every row |
 
-Each scheduled trip lands in one of three buckets: **ran**, **flagged canceled** (CTA's `dyn=1`), or **silent ghost** (never flagged, never seen), counted only when the feed was healthy.
+Each scheduled trip lands in one of three buckets: **ran**, **flagged canceled** (CTA's `dyn=1`), or **silent ghost** (never flagged, never seen), counted only when the feed was healthy. Trips on detour patterns are counted as unknown, never as ghosts.
 
 ---
 
@@ -68,16 +67,18 @@ Each scheduled trip lands in one of three buckets: **ran**, **flagged canceled**
 
 | Layer | Tool | Status |
 |-------|------|--------|
-| Ingestion | Python poller, `httpx` | In progress (week 1) |
-| System of record | PostgreSQL 17, logical replication | Ready |
-| Change data capture | Debezium Server | Week 2 |
-| Hosting | AWS Lightsail 2 GB (poller, Postgres, Debezium) | Week 2 |
-| Lakehouse | Apache Iceberg on Amazon S3 | Week 2 |
+| Ingestion | Python poller (`httpx`, `psycopg`) | Live |
+| System of record | PostgreSQL 17, logical replication | Live |
+| Change data capture | Debezium Server + Iceberg sink (no Kafka) | Live |
+| Lakehouse | Apache Iceberg on Amazon S3, AWS Glue catalog | Live (Ingress) |
+| Hosting | AWS Lightsail 2 GB, Docker Compose, pull-based deploys with a health gate | Live |
+| Infrastructure | Terraform; GitHub Actions (tests, image, plan/apply via OIDC) | Live |
+| Monitoring | CloudWatch metrics and alarms, email via SNS | Live |
 | Transformation | dbt + DuckDB | Week 3 |
-| Orchestration | Dagster | Weeks 2-4 |
-| Dev Tools | `uv`, `ruff`, `sqlfluff`, `pre-commit`, `pytest` | Ready |
+| Orchestration | Nightly jobs (GitHub Actions; Dagster if needed) | Weeks 3-4 |
+| Dev tools | `uv`, `ruff`, `sqlfluff`, `pre-commit`, `pytest` | Ready |
 
-Target cost: about $14/month (a $12 Lightsail box plus S3). Managed Postgres free tiers and Estuary were ruled out for 24/7 running at bus volume (~2.6M sightings/day).
+Cost: about $14-17/month (a $12 Lightsail box plus S3). Managed Postgres free tiers and Estuary were ruled out for 24/7 running at bus volume (~2.6M sightings/day).
 
 ---
 
@@ -94,11 +95,10 @@ Target cost: about $14/month (a $12 Lightsail box plus S3). Managed Postgres fre
 
 ## Roadmap
 
-- [x] **Scaffold** - uv project, Postgres with logical replication, Bus Tracker client, tooling
-- [ ] **Week 1 - Ingest** - poll every route every 30 s into Postgres; prove trip matching on route 79 (1-hour spike: 76/76 trips on #79 and #9 matched exactly one GTFS trip)
-- [ ] **Week 2 - CDC to lakehouse** - Debezium → Iceberg on S3; move to the Lightsail box; outage-recovery drill; compaction; prune gate
-- [ ] **Week 3 - Schedules and stop passes** - SCD2 schedule and pattern versions, stop-pass interpolation, cancellation sampler
-- [ ] **Week 4 - Metrics and dashboard** - reporting tables, freshness and integrity checks, replay drill
+- [x] **Week 1 - Ingest** - every route every 30 s into Postgres in one transaction per sweep; trips match GTFS on (route, pattern, service date, start); prod box, Terraform, CI/CD, alarms. *24-hour score pending.*
+- [ ] **Week 2 - CDC to lakehouse** - Debezium → Iceberg on S3 is live and reconciled with Postgres; still to do: one-hour outage drill, freshness alarm, prune gate, compaction
+- [ ] **Week 3 - Schedules and stop passes** - cancellation sampler, SCD2 schedule and pattern versions, stop-pass interpolation, detour handling
+- [ ] **Week 4 - Metrics and dashboard** - reporting tables, integrity checks, replay drill
 - [ ] **Later - 'L' trains** - second poller once the Train Tracker key arrives
 
 ---
@@ -114,13 +114,14 @@ cta-ghost-ledger/
 │   ├── monitor.py              # Timeliness metrics for CloudWatch alarms
 │   └── cli.py                  # ghost-ledger env | routes | vehicles | poll | monitor | check-db
 ├── db/migrations/              # Postgres schema as dbmate migrations (make migrate)
-├── infra/                      # Prod: Terraform (bootstrap, prod), box setup + deploy scripts; runbook in infra/README.md
-├── .github/workflows/          # CI: lint + tests with Postgres; image to GHCR on main
-├── scripts/                    # Spikes and run checks (check_run.py), not imported by the package
+├── cdc/debezium/               # Debezium Server config (dev: local Iceberg; prod: S3 + Glue)
+├── infra/                      # Terraform (bootstrap, prod), box setup + deploy.sh; runbook in infra/README.md
+├── .github/workflows/          # CI: lint, tests with Postgres, image to GHCR; Terraform plan/apply
+├── scripts/                    # Checks (check_run.py, check_ingress.py) and spikes; not imported
 ├── tests/                      # pytest
 ├── data/                       # Local data (gitignored)
-├── compose.yml                 # Postgres 17 (wal_level=logical, port 5433) + dbmate
-├── compose.prod.yml            # Prod layer: tuned Postgres on 127.0.0.1, migrate, poller, monitor
+├── compose.yml                 # Postgres 17 (wal_level=logical, port 5433), dbmate, Debezium (profile cdc)
+├── compose.prod.yml            # Prod layer: tuned Postgres on 127.0.0.1, migrate, poller, monitor, Debezium
 ├── Dockerfile                  # The prod image (code, migrations, dbmate, deploy files)
 ├── Makefile                    # Common commands
 ├── pyproject.toml              # Project, ruff and pytest config
@@ -130,7 +131,7 @@ cta-ghost-ledger/
 └── .env.example                # Every setting, documented
 ```
 
-Folders follow the pipeline, and each one appears when its week starts: `cdc/` (Debezium config), `transform/` (dbt), `infra/terraform/` and `dashboard/` are still to come.
+Folders follow the pipeline and appear when their week starts: `transform/` (dbt) and `dashboard/` are still to come.
 
 ---
 
@@ -194,7 +195,7 @@ The same code runs in two environments, chosen by `GHOST_LEDGER_ENV` (default `d
 
 | | dev | prod |
 |---|---|---|
-| Where | your laptop, Docker | the Lightsail box (week 2) |
+| Where | your laptop, Docker | the Lightsail box |
 | Settings | environment > `.env` > `.env.dev` | environment only (the box's env file); prod never reads repo files |
 | Make | `make migrate` | `make migrate ENV=prod CONFIRM=prod` (refuses without `CONFIRM`; `db-reset` always refuses) |
 | Compose | `compose.yml` | `compose.yml` + `compose.prod.yml` |
@@ -203,7 +204,9 @@ The same code runs in two environments, chosen by `GHOST_LEDGER_ENV` (default `d
 
 **Rehearsing prod locally:** `make rehearse` builds the image and runs the real deploy path (`infra/box/deploy.sh` + `compose.prod.yml`) as project `ghost-ledger-rehearsal`, with a throwaway env file in `data/rehearsal/`, two routes and metrics to the log. `make rehearse-logs`, `make rehearse-psql`, `make rehearse-down`.
 
-**Deploying:** prod is pull-based. CI pushes `ghcr.io/sohammandal/ghost-ledger:main` after tests pass on `main`; a timer on the box runs `deploy.sh` every 5 minutes, which redeploys only when the image changed. Dev and prod share one API key (100k calls/day): once prod polls 24/7, set `POLL_ROUTES=79,9` for dev.
+**Deploying:** prod is pull-based. CI pushes `ghcr.io/sohammandal/ghost-ledger:main` (and a commit-SHA tag) only after tests pass on `main`; a timer on the box runs `deploy.sh` every 5 minutes, which redeploys only when the image changed. After each deploy a sweep must commit within ~2 minutes, or the box rolls back to its last good image. Migration rules and the manual rollback are in [infra/README.md](infra/README.md#deploy-safety). Dev and prod share one API key (100k calls/day), so dev polls only `79,9` (`.env.dev`).
+
+**CDC in dev:** `docker compose --profile cdc up -d debezium` streams the dev database into Iceberg tables under `data/lake/`.
 
 ### What Happens If Hooks Fail?
 

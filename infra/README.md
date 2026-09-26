@@ -1,8 +1,8 @@
 # Prod infrastructure runbook
 
 Prod is one Lightsail box (us-east-2) running Postgres, the poller, the monitor and Debezium
-(CDC to Iceberg on S3, Glue catalog), deployed by pulling `ghcr.io/sohammandal/ghost-ledger:main`. Everything in AWS is Terraform. Design and
-reasons: `docs/PLAN.md` (local) → Infrastructure, CI/CD, Monitoring.
+(CDC to Iceberg on S3, Glue catalog), deployed by pulling `ghcr.io/sohammandal/ghost-ledger:main`.
+Everything in AWS is Terraform.
 
 ```
 infra/
@@ -53,12 +53,11 @@ infra/
     The `poller-stale` alarm emails within ~7 minutes. Then
     `sudo systemctl start ghost-ledger-deploy.timer ghost-ledger-deploy` brings the poller back;
     the OK email follows.
-13. **Share the API quota**: set `POLL_ROUTES=79,9` in `.env.dev` so dev and prod don't both
-    poll everything.
 
 ## Day to day
 
-- **Deploy**: merge to `main`. CI tests, pushes the image; the box picks it up within 5 minutes.
+- **Deploy**: merge to `main`. CI tests, pushes the image; the box picks it up within 5 minutes
+  and rolls back by itself if no sweep commits afterwards (see Deploy safety).
 - **Change infra**: edit `terraform/prod`, push, read the plan, then run the workflow with that
   plan's run ID.
 - **Rotate secrets / fix the env file**: `make prod-secrets CONFIRM=prod` (keeps the Postgres
