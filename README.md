@@ -44,20 +44,18 @@ flowchart LR
         PG -->|logical replication| CDC[Debezium Server]
     end
     CDC -->|every 5 min| ING[Ingress<br/>Iceberg on S3 + Glue]
-    GTFS[GTFS versions<br/>CTA + Transitland] -.-> INT
-    ING -.-> INT[Intermediate<br/>dbt-duckdb]
-    INT -.-> REP[Reporting<br/>delivery, gaps, bunching]
-    REP -.-> OUT[Dashboard + Parquet]
+    GTFS[GTFS versions<br/>Parquet on S3] --> INT
+    ING --> INT[Intermediate<br/>dbt-duckdb, nightly]
+    INT --> AN[Analytics<br/>trip status, delivery, gaps, bunching]
+    AN --> OUT[Parquet on S3 + dashboard]
 ```
-
-Solid arrows run in prod today; dotted ones are planned.
 
 | Layer | What lives there |
 |-------|------------------|
 | **Postgres (`ops`)** | The system of record. Every API response is stored byte for byte (`raw_responses`), next to the parsed rows built from it, in one transaction per 30 s sweep; Postgres decides their order (the LSN). Keeps about two days. |
 | **Ingress** | The complete change log as Iceberg tables on S3 (Glue catalog): one row per change with its operation and log position. After two days it is the only copy, so it is protected and never rebuilt. |
 | **Intermediate** | Schedule and route-pattern versions (SCD2), scheduled trips, interpolated stop passes, flagged cancellations |
-| **Reporting** | `route_hour_delivery`, `stop_hour_gaps`, `bunching_events`, with coverage on every row |
+| **Analytics** | `trip_status` (every scheduled trip: ran / flagged / silent / unknown), `route_hour_delivery`, `stop_hour_service` (headways, gaps, bunching), published as Parquet partitioned by service date |
 
 Each scheduled trip lands in one of three buckets: **ran**, **flagged canceled** (CTA's `dyn=1`), or **silent ghost** (never flagged, never seen), counted only when the feed was healthy. Trips on detour patterns are counted as unknown, never as ghosts.
 
@@ -74,8 +72,10 @@ Each scheduled trip lands in one of three buckets: **ran**, **flagged canceled**
 | Hosting | AWS Lightsail 2 GB, Docker Compose, pull-based deploys with a health gate | Live |
 | Infrastructure | Terraform; GitHub Actions (tests, image, plan/apply via OIDC) | Live |
 | Monitoring | CloudWatch metrics and alarms, email via SNS | Live |
-| Transformation | dbt + DuckDB | Week 3 |
-| Orchestration | Nightly jobs (GitHub Actions; Dagster if needed) | Weeks 3-4 |
+| Cancellation flags | `getpredictions` sampled at ~730 stops every 10 min | Live |
+| Transformation | dbt + DuckDB, reading Iceberg through Glue; unit and data tests | Live (nightly) |
+| Orchestration | GitHub Actions nightly workflow (OIDC, replayable by date range) | Live |
+| Dashboard | Static HTML rebuilt nightly | Live |
 | Dev tools | `uv`, `ruff`, `sqlfluff`, `pre-commit`, `pytest` | Ready |
 
 Cost: about $14-17/month (a $12 Lightsail box plus S3). Managed Postgres free tiers and Estuary were ruled out for 24/7 running at bus volume (~2.6M sightings/day).
@@ -95,10 +95,10 @@ Cost: about $14-17/month (a $12 Lightsail box plus S3). Managed Postgres free ti
 
 ## Roadmap
 
-- [x] **Week 1 - Ingest** - every route every 30 s into Postgres in one transaction per sweep; trips match GTFS on (route, pattern, service date, start); prod box, Terraform, CI/CD, alarms. *24-hour score pending.*
-- [ ] **Week 2 - CDC to lakehouse** - Debezium → Iceberg on S3 is live and reconciled with Postgres; still to do: one-hour outage drill, freshness alarm, prune gate, compaction
-- [ ] **Week 3 - Schedules and stop passes** - cancellation sampler, SCD2 schedule and pattern versions, stop-pass interpolation, detour handling
-- [ ] **Week 4 - Metrics and dashboard** - reporting tables, integrity checks, replay drill
+- [x] **Week 1 - Ingest** - every route every 30 s into Postgres in one transaction per sweep; every API response kept; trips match GTFS on (route, pattern, service date, start); prod box, Terraform, CI/CD, alarms. *24-hour score pending.*
+- [ ] **Week 2 - CDC to lakehouse** - Debezium → Iceberg on S3 live, reconciled with Postgres, freshness alarm on; still to do: one-hour outage drill, prune gate, Iceberg snapshot expiry and compaction
+- [x] **Week 3 - Schedules, flags, stop passes** - cancellation sampler, GTFS versions, trip matching incl. detours, stop-pass interpolation
+- [x] **Week 4 - Metrics and dashboard** - trip status, delivery, gaps, bunching; tested; nightly publish; dashboard
 - [ ] **Later - 'L' trains** - second poller once the Train Tracker key arrives
 
 ---
@@ -117,6 +117,7 @@ cta-ghost-ledger/
 ├── cdc/debezium/               # Debezium Server config (dev: local Iceberg; prod: S3 + Glue)
 ├── infra/                      # Terraform (bootstrap, prod), box setup + deploy.sh; runbook in infra/README.md
 ├── .github/workflows/          # CI: lint, tests with Postgres, image to GHCR; Terraform plan/apply
+├── transform/                  # dbt project (staging, intermediate, analytics), GTFS loader, publish, dashboard
 ├── scripts/                    # Checks (check_run.py, check_ingress.py) and spikes; not imported
 ├── tests/                      # pytest
 ├── data/                       # Local data (gitignored)
@@ -131,7 +132,7 @@ cta-ghost-ledger/
 └── .env.example                # Every setting, documented
 ```
 
-Folders follow the pipeline and appear when their week starts: `transform/` (dbt) and `dashboard/` are still to come.
+Folders follow the pipeline and appear when their stage starts.
 
 ---
 
@@ -207,6 +208,15 @@ The same code runs in two environments, chosen by `GHOST_LEDGER_ENV` (default `d
 **Deploying:** prod is pull-based. CI pushes `ghcr.io/sohammandal/ghost-ledger:main` (and a commit-SHA tag) only after tests pass on `main`; a timer on the box runs `deploy.sh` every 5 minutes, which redeploys only when the image changed. After each deploy a sweep must commit within ~2 minutes, or the box rolls back to its last good image. Migration rules and the manual rollback are in [infra/README.md](infra/README.md#deploy-safety). Dev and prod share one API key (100k calls/day), so dev polls only `79,9` (`.env.dev`).
 
 **CDC in dev:** `docker compose --profile cdc up -d debezium` streams the dev database into Iceberg tables under `data/lake/`.
+
+### Transform (dbt)
+
+The batch layer is derived only from Ingress and the GTFS versions, for a window of service dates (default: the last 3), so any run can be repeated or replayed.
+
+- **Dev:** `make transform` (optionally `VARS='{start_date: 2026-09-26, end_date: 2026-09-26}'`) builds every model into `transform/target/ghost_ledger.duckdb`, reading prod Ingress **read-only** through Glue. Nothing is published. Inspect with `dbt show` or DuckDB.
+- **CI:** every push and PR runs `dbt build --empty` with a read-only role: all models compile against the real sources, and the data tests and business-rule unit tests run.
+- **Prod:** `.github/workflows/nightly.yml` at 06:00 CT: load a new GTFS feed if CTA published one, check Ingress freshness, `dbt build`, publish the analytics tables to `s3://…/analytics/` (each service date's partition is replaced), rebuild the dashboard (`make dashboard` opens it).
+- **Changing a rule:** edit the model and its unit test, run `make transform` on recent days and compare, push (CI), then rerun the nightly workflow by hand with a `start_date`/`end_date` range to rebuild history from Ingress.
 
 ### What Happens If Hooks Fail?
 
