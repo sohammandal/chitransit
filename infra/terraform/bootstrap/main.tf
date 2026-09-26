@@ -243,8 +243,34 @@ data "aws_iam_policy_document" "apply_writes" {
     actions = [
       "s3:CreateBucket", "s3:DeleteBucket", "s3:PutBucketVersioning", "s3:PutEncryptionConfiguration",
       "s3:PutBucketPublicAccessBlock", "s3:PutLifecycleConfiguration", "s3:PutBucketTagging",
+      "s3:PutBucketPolicy", "s3:DeleteBucketPolicy",
     ]
     resources = ["arn:aws:s3:::ghost-ledger-lake-*"]
+  }
+  # Public dashboard: CloudFront (OAC + headers policy + distribution) in front of the lake's
+  # analytics/site/ prefix; ACM + Route 53 records for the custom domain.
+  statement {
+    sid = "SiteCdn"
+    actions = [
+      "cloudfront:CreateDistribution", "cloudfront:UpdateDistribution", "cloudfront:DeleteDistribution",
+      "cloudfront:TagResource", "cloudfront:UntagResource",
+      "cloudfront:CreateOriginAccessControl", "cloudfront:UpdateOriginAccessControl",
+      "cloudfront:DeleteOriginAccessControl",
+      "cloudfront:CreateResponseHeadersPolicy", "cloudfront:UpdateResponseHeadersPolicy",
+      "cloudfront:DeleteResponseHeadersPolicy",
+    ]
+    resources = ["arn:aws:cloudfront::${data.aws_caller_identity.me.account_id}:*"]
+  }
+  statement {
+    sid = "SiteDomain"
+    actions = [
+      "acm:RequestCertificate", "acm:DeleteCertificate", "acm:AddTagsToCertificate",
+      "route53:ChangeResourceRecordSets",
+    ]
+    resources = [
+      "arn:aws:acm:us-east-1:${data.aws_caller_identity.me.account_id}:certificate/*",
+      "arn:aws:route53:::hostedzone/*",
+    ]
   }
   statement {
     sid = "LakeCatalog"

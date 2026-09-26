@@ -32,8 +32,10 @@ def load(src: str, days: int) -> dict:
         con.execute("INSTALL httpfs; LOAD httpfs; INSTALL aws; LOAD aws;")
         con.execute("CREATE SECRET (TYPE s3, PROVIDER credential_chain, REGION 'us-east-2')")
     con.execute("SET TimeZone = 'America/Chicago'")
-    trips = f"read_parquet('{src}/trip_status/*/*.parquet', hive_partitioning = true)"
-    stops = f"read_parquet('{src}/stop_hour_service/*/*.parquet', hive_partitioning = true)"
+    # union_by_name: older partitions may lack columns added since (they read as NULL)
+    opts = "hive_partitioning = true, union_by_name = true"
+    trips = f"read_parquet('{src}/trip_status/*/*.parquet', {opts})"
+    stops = f"read_parquet('{src}/stop_hour_service/*/*.parquet', {opts})"
     # The service dates come from the partition folder names (service_date=YYYY-MM-DD). An
     # aggregate like max(service_date) over hive-partitioned files trips a DuckDB 1.5
     # internal error in its statistics optimizer, and the folder list is simpler anyway.
