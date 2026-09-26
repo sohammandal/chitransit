@@ -95,7 +95,7 @@ Target cost: about $14/month (a $12 Lightsail box plus S3). Managed Postgres fre
 ## Roadmap
 
 - [x] **Scaffold** - uv project, Postgres with logical replication, Bus Tracker client, tooling
-- [ ] **Week 1 - Ingest** - poll every route every 30 s into Postgres; prove trip matching on route 79 (1-hour spike: 53/53 trips on #79 and #9 matched exactly one GTFS trip)
+- [ ] **Week 1 - Ingest** - poll every route every 30 s into Postgres; prove trip matching on route 79 (1-hour spike: 76/76 trips on #79 and #9 matched exactly one GTFS trip)
 - [ ] **Week 2 - CDC to lakehouse** - Debezium → Iceberg on S3; move to the Lightsail box; outage-recovery drill; compaction; prune gate
 - [ ] **Week 3 - Schedules and stop passes** - SCD2 schedule and pattern versions, stop-pass interpolation, cancellation sampler
 - [ ] **Week 4 - Metrics and dashboard** - reporting tables, freshness and integrity checks, replay drill
