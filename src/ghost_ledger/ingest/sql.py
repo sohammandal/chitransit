@@ -128,11 +128,25 @@ ENSURE_PARTITIONS = "SELECT ops.ensure_daily_partitions(%(today)s::DATE - 1, 4)"
 
 LOAD_ASSIGNMENTS = "SELECT vid, rt, direction, stsd, stst FROM ops.bus_assignments"
 
-# The observed_at bound prunes partitions (tmstmp can lag fetched_at by a few minutes).
+# When each bus was last in a response, repeats included: a bus that keeps sending the same
+# stale report is still present (the running poller counts it), but repeats add no
+# bus_positions row, so the raw responses are the full record. bus_positions covers any
+# time before raw responses were kept. The observed_at bound prunes partitions.
 LOAD_LAST_SEEN = """
 SELECT DISTINCT ON (vid) vid, rt, fetched_at
-FROM ops.bus_positions
-WHERE fetched_at > %(since)s AND observed_at > %(since)s - INTERVAL '1 hour'
+FROM (
+    SELECT v ->> 'vid' AS vid, v ->> 'rt' AS rt, r.fetched_at
+    FROM ops.raw_responses AS r
+    INNER JOIN ops.raw_polls AS p ON r.poll_id = p.poll_id
+    CROSS JOIN LATERAL JSONB_ARRAY_ELEMENTS(
+        COALESCE(r.body::JSONB -> 'bustime-response' -> 'vehicle', '[]'::JSONB)
+    ) AS v
+    WHERE p.endpoint = 'getvehicles' AND r.fetched_at > %(since)s AND p.fetched_at > %(since)s
+    UNION ALL
+    SELECT vid, rt, fetched_at
+    FROM ops.bus_positions
+    WHERE fetched_at > %(since)s AND observed_at > %(since)s - INTERVAL '1 hour'
+) AS seen
 ORDER BY vid, fetched_at DESC
 """
 

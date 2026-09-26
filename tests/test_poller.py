@@ -264,6 +264,32 @@ def assert_replayable(conn, sweep_id: int) -> None:
 
 
 @pytest.mark.db
+def test_restart_keeps_a_bus_that_repeats_a_stale_report(db):
+    """A bus resending the same report is present (no new bus_positions row, though). After
+    a restart it must not look gone just because its last new position is old."""
+    settings, conn = db
+    fake = FakeCta()
+    clock = Clock(T0)
+    transport = httpx.MockTransport(fake.handler)
+    first = Poller(settings, BusTrackerClient("k", transport=transport), now=clock)
+    first.start()
+    fake.vehicles = [bus(64890, "20260925 19:21:44")]
+    first.sweep()
+    clock.t = T0 + timedelta(minutes=11)  # same stale report 11 min later: still present
+    assert first.sweep().new_positions == 0
+    first.conn.close()
+
+    # restart a minute later; the bus drops out of this one response
+    clock.t = T0 + timedelta(minutes=12)
+    fake.vehicles = []
+    second = Poller(settings, BusTrackerClient("k", transport=transport), now=clock)
+    second.start()
+    assert second.sweep().gone == 0  # seen 1 min ago, inside the 10 min grace
+    assert one(conn, "SELECT COUNT(*) FROM ops.bus_assignments WHERE vid = %s", VID) == (1,)
+    second.conn.close()
+
+
+@pytest.mark.db
 def test_sample_stops_sql_agrees_with_python(db):
     _, conn = db
     pattern = {"pid": PID, "rtdir": "Eastbound", "pt": PATTERN_POINTS}
