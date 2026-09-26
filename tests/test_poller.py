@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, date, datetime, timedelta
 
 import httpx
@@ -101,6 +102,11 @@ class Clock:
 
 
 def cleanup(conn):
+    conn.execute(
+        "DELETE FROM ops.raw_responses WHERE poll_id IN (SELECT poll_id FROM ops.raw_polls "
+        "WHERE request_params->>'rt' LIKE 'GLT%%' OR request_params->>'pid' = %s)",
+        (str(PID),),
+    )
     conn.execute("DELETE FROM ops.bus_positions WHERE vid LIKE 'GLT-%%'")
     conn.execute("DELETE FROM ops.bus_live_board WHERE vid LIKE 'GLT-%%'")
     conn.execute("DELETE FROM ops.bus_assignments WHERE vid LIKE 'GLT-%%'")
@@ -155,6 +161,7 @@ def test_poller_lifecycle_against_the_database(db):
     assert one(conn, "SELECT rtdir FROM ops.patterns WHERE pid = %s", PID) == ("Eastbound",)
     keys = one(conn, "SELECT COUNT(*) FROM ops.raw_polls WHERE request_params ? 'key'")
     assert keys == (0,)
+    assert_replayable(conn, s1.sweep_id)
 
     # 2. same report again: no new position, no assignment write
     clock.t = T0 + timedelta(seconds=30)
@@ -193,6 +200,37 @@ def test_poller_lifecycle_against_the_database(db):
     assert sweeps == [(1, 1), (1, 1), (1, 1), (1, 0), (1, 1)]
     client.close()
     poller.conn.close()
+
+
+POSITION_COLUMNS = (
+    "vid, observed_at, tmstmp_local, fetched_at, rt, pid, pdist, lat, lon, hdg, dly, des, "
+    "tatripid, tablockid, origtatripno, stst, stsd, psgld"
+)
+
+
+def assert_replayable(conn, sweep_id: int) -> None:
+    """Every call of the sweep has its exact response stored, and re-parsing the stored
+    getvehicles text with parse_vehicle reproduces bus_positions (DDIA ch. 12: derived
+    data can be rebuilt from the immutable input)."""
+    calls = conn.execute(
+        "SELECT p.poll_id, p.endpoint, r.body FROM ops.raw_polls p "
+        "LEFT JOIN ops.raw_responses r USING (poll_id) WHERE p.sweep_id = %s",
+        (sweep_id,),
+    ).fetchall()
+    assert calls and all(body is not None for _, _, body in calls)
+    for poll_id, endpoint, body in calls:
+        if endpoint != "getvehicles":
+            continue
+        fetched_at = one(conn, "SELECT fetched_at FROM ops.raw_polls WHERE poll_id = %s", poll_id)[
+            0
+        ]
+        vehicles = json.loads(body)["bustime-response"].get("vehicle", [])
+        replayed = sorted(tuple(parse_vehicle(v, fetched_at).values()) for v in vehicles)
+        stored = conn.execute(
+            f"SELECT {POSITION_COLUMNS} FROM ops.bus_positions WHERE poll_id = %s ORDER BY vid",
+            (poll_id,),
+        ).fetchall()
+        assert replayed == sorted(stored)
 
 
 @pytest.mark.db

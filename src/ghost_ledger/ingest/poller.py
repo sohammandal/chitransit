@@ -2,7 +2,8 @@
 
 One sweep = up to 13 getvehicles calls (10 routes each), plus any pattern fetches. All
 API calls happen first; then everything the sweep learned is written in ONE transaction
-(sweeps, raw_polls, bus_positions, live board, patterns, assignments), so CDC sees each
+(sweeps, raw_polls, raw_responses, bus_positions, live board, patterns, assignments), so
+every parsed row sits next to the exact response it came from, and CDC sees each
 sweep atomically, in commit order (DDIA ch. 12-13: one system of record, no dual writes).
 
 Run with `ghost-ledger poll` (or `make poll`). Rules: docs/PLAN.md.
@@ -323,6 +324,7 @@ class Poller:
             }).fetchone()[0]  # fmt: skip
 
             poll_ids: dict[int, int] = {}
+            raw = []
             for call in calls:
                 r = call.result
                 poll_ids[id(call)] = cur.execute(sql.INSERT_RAW_POLL, {
@@ -334,6 +336,15 @@ class Poller:
                     "vehicle_count": len(r.body.get("vehicle", [])) if r.ok else None,
                     "payload": Jsonb(r.body) if (not r.ok and r.body) else None,
                 }).fetchone()[0]  # fmt: skip
+                if r.raw is not None:
+                    raw.append(
+                        {
+                            "poll_id": poll_ids[id(call)],
+                            "fetched_at": call.fetched_at,
+                            "body": r.raw,
+                        }
+                    )
+            cur.executemany(sql.INSERT_RAW_RESPONSE, raw)
 
             rows = [
                 {**p, "poll_id": poll_ids[id(call)], "sweep_id": sweep_id} for call, p in positions

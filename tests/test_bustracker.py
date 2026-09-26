@@ -148,3 +148,28 @@ def test_one_bad_route_among_real_data_keeps_the_data():
         result = client.get_vehicles(["79", "X9"])
     assert result.ok and result.body["vehicle"] == [{"vid": "1"}]
     assert result.api_errors == [{"rt": "X9", "msg": "Invalid route"}]
+
+
+def test_raw_keeps_the_exact_response_text():
+    text = '{"bustime-response": {"vehicle": [{"vid": "1", "zone": ""}]}}'
+    with make_client(lambda request: httpx.Response(200, text=text)) as client:
+        result = client.get_vehicles(["79"])
+    assert result.raw == text  # byte for byte, including fields we don't parse
+
+
+def test_raw_is_kept_for_failures_and_absent_without_a_response():
+    with make_client(lambda request: httpx.Response(503, text="busy")) as client:
+        assert client.get_routes().raw == "busy"
+
+    def handler(request):
+        raise httpx.ConnectTimeout("timed out")
+
+    with make_client(handler) as client:
+        assert client.get_routes().raw is None
+
+
+def test_raw_never_holds_the_key_or_a_nul():
+    text = f'{{"echo": "{KEY}", "nul": "a\x00b"}}'
+    with make_client(lambda request: httpx.Response(200, text=text)) as client:
+        raw = client.get_routes().raw
+    assert KEY not in raw and "\x00" not in raw and "a\\u0000b" in raw

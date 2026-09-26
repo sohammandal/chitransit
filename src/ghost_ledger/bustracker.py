@@ -51,6 +51,9 @@ class ApiResult:
     """
 
     body: dict[str, Any] = field(default_factory=dict)
+    # The response exactly as received (last attempt), kept so every derived row can be
+    # rebuilt by re-parsing it (DDIA ch. 12). None when no response arrived at all.
+    raw: str | None = None
     http_status: int | None = None
     attempts: int = 0
     latency_ms: int = 0
@@ -135,6 +138,8 @@ class BusTrackerClient:
                     f"/{endpoint}", params={"key": self._key, "format": "json", **params}
                 )
                 result.http_status = response.status_code
+                # Postgres TEXT can't hold NUL; JSON's own escape keeps the meaning.
+                result.raw = self._redact(response.text).replace("\x00", "\\u0000")
                 if response.status_code >= 500 or response.status_code == 429:
                     result.error = f"HTTP {response.status_code}"
                 else:

@@ -72,6 +72,12 @@ VALUES (
 RETURNING poll_id
 """
 
+# The response exactly as received, under the call's poll_id: the replayable input.
+INSERT_RAW_RESPONSE = """
+INSERT INTO ops.raw_responses (poll_id, fetched_at, body)
+VALUES (%(poll_id)s, %(fetched_at)s, %(body)s)
+"""
+
 # The same (vid, observed_at) comes back when a bus hasn't reported since the last sweep.
 INSERT_POSITION = """
 INSERT INTO ops.bus_positions (
@@ -115,7 +121,8 @@ WHERE b.observed_at IS DISTINCT FROM EXCLUDED.observed_at
 DELETE_LIVE_BOARD = "DELETE FROM ops.bus_live_board WHERE vid = %(vid)s"
 
 # Yesterday through two days ahead (UTC), so late reports near midnight still land.
-ENSURE_PARTITIONS = "SELECT ops.ensure_bus_positions_partitions(%(today)s::DATE - 1, 4)"
+# Covers every day-partitioned table (bus_positions, raw_responses).
+ENSURE_PARTITIONS = "SELECT ops.ensure_daily_partitions(%(today)s::DATE - 1, 4)"
 
 # --- Startup state ---
 

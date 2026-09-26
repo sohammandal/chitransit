@@ -27,6 +27,7 @@ REGION = "us-east-2"
 INSERT_ONLY = {
     "sweeps": ("sweep_id", "started_at"),
     "raw_polls": ("poll_id", "fetched_at"),
+    "raw_responses": ("poll_id, fetched_at", "fetched_at"),
     "bus_positions": ("vid, observed_at", "fetched_at"),
 }
 ASSIGNMENT_FIELDS = "vid, rt, direction, stsd, stst, pid"
