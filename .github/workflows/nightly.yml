@@ -76,7 +76,7 @@ jobs:
       - name: Dashboard
         run: |
           uv run --group transform python transform/dashboard.py --src "$LAKE/analytics" --out site/index.html
-          aws s3 cp site/index.html "$LAKE/analytics/site/index.html" --content-type text/html --only-show-errors
+          aws s3 cp site/index.html "$LAKE/analytics/site/index.html" --content-type text/html --cache-control "max-age=300" --only-show-errors
 
       - uses: actions/upload-artifact@v7
         with:

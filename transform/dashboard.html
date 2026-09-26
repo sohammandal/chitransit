@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
 <title>Bus Ghost Ledger</title>
 <style>
 :root {
@@ -47,6 +48,7 @@ th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--ru
 th:first-child, td:first-child { text-align: left; }
 th { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 footer { color: var(--muted); font-size: 12px; }
+.preview { border: 1px solid var(--flagged); background: var(--surface); padding: 10px 14px; font-size: 14px; }
 .reg td, .reg th { text-align: left; vertical-align: top; font-variant-numeric: normal; }
 </style>
 </head>
@@ -56,6 +58,8 @@ footer { color: var(--muted); font-size: 12px; }
   <h1>Bus Ghost Ledger</h1>
   <div class="sub">Latest service day $latest_long · built $built</div>
 </header>
+<p class="preview"><b>Preview.</b> The rules behind these numbers are still being validated
+  against street observations and published benchmarks. Figures may change; please don't cite them yet.</p>
 <div class="tiles">$tiles</div>
 <section>
   <h2>Scheduled trips by outcome, per service day</h2>
