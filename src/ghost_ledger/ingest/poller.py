@@ -44,8 +44,10 @@ PATTERN_REFRESH_ROUTES_PER_SWEEP = 5
 PARTITION_CHECK_EVERY = timedelta(hours=1)
 ROUTES_REFRESH_EVERY = timedelta(hours=24)
 # Each sample stop gets one getpredictions call per cycle, spread over the cycle's sweeps.
-# ~730 stops -> ~73 calls per 10 min -> ~10.5k calls/day (docs/PLAN.md, quota).
-PREDICTION_SAMPLE_EVERY = timedelta(minutes=10)
+# ~730 stops -> ~73 calls per 5 min -> ~21k calls/day (docs/PLAN.md, quota). 5 min, not 10:
+# a canceled trip is missing from ~27% of looks at its stops (Sep 26), so each trip needs
+# several looks before "never announced" is believable.
+PREDICTION_SAMPLE_EVERY = timedelta(minutes=5)
 
 
 def direction_of(rtdir: str) -> str:

@@ -18,6 +18,13 @@ vars:
   days: 3
   # "Now" for the pending check; pin it to replay a past run exactly. null = run time.
   as_of: null
+  # Business-rule thresholds (docs/PLAN.md, sensitivity report: transform/sensitivity.py).
+  # Changing one changes the published numbers: record it in the method changelog.
+  rule_coverage_min: 0.9       # share of a trip's minutes the feed was swept to judge it
+  rule_start_tolerance_s: 120  # GTFS first departure is 0..this many seconds after stst
+  rule_reappear_m: 500         # a vanished bus reappearing this close to a trip end
+  rule_flag_window_min: 30     # a stop sampled this long before the trip was due there
+  rule_min_flag_looks: 2       # samples of its stops needed to call a trip unannounced
 
 models:
   ghost_ledger:

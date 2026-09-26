@@ -189,8 +189,8 @@ unit_tests:
     description: >
       Status is the first rule that applies: ran (2+ reports), flagged only by a flag at a stop
       the trip serves, unknown when not watched or near a detour, likely_ran for a single report
-      or physical evidence the bus drove it, then silent when its stops were sampled, else
-      missing. strict_evidence marks silent/missing trips with physical evidence the bus didn't run it.
+      or physical evidence the bus drove it, then silent when its stops were sampled twice
+      (at stops known to show cancellations), else missing. strict_evidence marks silent/missing trips with physical evidence the bus didn't run it.
     model: trip_status
     overrides:
       vars: {as_of: "2026-09-27 06:00:00-05"}
@@ -208,6 +208,8 @@ unit_tests:
           - {service_date: "2026-09-26", trip_id: "S1", feed_id: "f", rt: "9", direction: "North", block_id: "bS1", pid: 10, start_s: 43200, end_s: 44400, scheduled_start: "2026-09-26 12:00:00-05", scheduled_end: "2026-09-26 12:02:00-05"}
           - {service_date: "2026-09-26", trip_id: "S2", feed_id: "f", rt: "9", direction: "North", block_id: "bS2", pid: 10, start_s: 45000, end_s: 46200, scheduled_start: "2026-09-26 12:30:00-05", scheduled_end: "2026-09-26 12:32:00-05"}
           - {service_date: "2026-09-26", trip_id: "M1", feed_id: "f", rt: "9", direction: "North", block_id: "bM1", pid: 10, start_s: 46800, end_s: 48000, scheduled_start: "2026-09-26 13:00:00-05", scheduled_end: "2026-09-26 13:02:00-05"}
+          - {service_date: "2026-09-26", trip_id: "M2", feed_id: "f", rt: "9", direction: "North", block_id: "bM2", pid: 10, start_s: 48600, end_s: 49800, scheduled_start: "2026-09-26 13:30:00-05", scheduled_end: "2026-09-26 13:32:00-05"}
+          - {service_date: "2026-09-26", trip_id: "M3", feed_id: "f", rt: "9", direction: "North", block_id: "bM3", pid: 10, start_s: 50400, end_s: 51600, scheduled_start: "2026-09-26 14:00:00-05", scheduled_end: "2026-09-26 14:02:00-05"}
       - input: ref('int_trip_matches')
         rows:
           - {service_date: "2026-09-26", trip_id: "R1", matched_on: "pattern", n_reports: 5, first_vid: "A"}
@@ -218,6 +220,8 @@ unit_tests:
           - {service_date: "2026-09-26", rt: "9", direction: "North", start_s: 30590, stop_id: "SF1", first_flagged_at: "2026-09-26 08:20:00-05", n_flagged_samples: 2}
           # same route and start as F2, at a stop F2 doesn't serve: not F2's flag
           - {service_date: "2026-09-26", rt: "9", direction: "North", start_s: 32390, stop_id: "ELSEWHERE", first_flagged_at: "2026-09-26 08:50:00-05", n_flagged_samples: 1}
+          # at F2's own stop, but CTA cleared it later: not a flag either
+          - {service_date: "2026-09-26", rt: "9", direction: "North", start_s: 32390, stop_id: "SF2", first_flagged_at: "2026-09-26 08:40:00-05", n_flagged_samples: 1, cleared_at: "2026-09-26 08:50:00-05"}
       - input: ref('int_scheduled_departures')
         rows:
           - {service_date: "2026-09-26", trip_id: "R1", stop_id: "SR1", stop_sequence: 1, departs_at: "2026-09-26 08:00:00-05"}
@@ -231,6 +235,8 @@ unit_tests:
           - {service_date: "2026-09-26", trip_id: "S1", stop_id: "SS1", stop_sequence: 1, departs_at: "2026-09-26 12:00:00-05"}
           - {service_date: "2026-09-26", trip_id: "S2", stop_id: "SS2", stop_sequence: 1, departs_at: "2026-09-26 12:30:00-05"}
           - {service_date: "2026-09-26", trip_id: "M1", stop_id: "SM1", stop_sequence: 1, departs_at: "2026-09-26 13:00:00-05"}
+          - {service_date: "2026-09-26", trip_id: "M2", stop_id: "SM2", stop_sequence: 1, departs_at: "2026-09-26 13:30:00-05"}
+          - {service_date: "2026-09-26", trip_id: "M3", stop_id: "SM3", stop_sequence: 1, departs_at: "2026-09-26 14:00:00-05"}
       - input: ref('int_feed_minutes')
         rows:
           - {minute: "2026-09-26 09:00:00-05", swept: true, predictions_sampled: false}
@@ -257,6 +263,12 @@ unit_tests:
           - {minute: "2026-09-26 13:00:00-05", swept: true, predictions_sampled: false}
           - {minute: "2026-09-26 13:01:00-05", swept: true, predictions_sampled: false}
           - {minute: "2026-09-26 13:02:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 13:30:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 13:31:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 13:32:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 14:00:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 14:01:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 14:02:00-05", swept: true, predictions_sampled: false}
       - input: ref('stg_prediction_samples')
         rows:
           - {poll_id: 0, fetched_at: "2026-09-26 07:50:00-05", stop_id: "SR1"}
@@ -269,6 +281,21 @@ unit_tests:
           - {poll_id: 7, fetched_at: "2026-09-26 11:20:00-05", stop_id: "SL3"}
           - {poll_id: 8, fetched_at: "2026-09-26 11:50:00-05", stop_id: "SS1"}
           - {poll_id: 9, fetched_at: "2026-09-26 12:20:00-05", stop_id: "SS2"}
+          # second looks: silent needs 2 looks at stops that have shown a cancellation
+          - {poll_id: 10, fetched_at: "2026-09-26 08:55:00-05", stop_id: "SF2"}
+          - {poll_id: 11, fetched_at: "2026-09-26 11:55:00-05", stop_id: "SS1"}
+          - {poll_id: 12, fetched_at: "2026-09-26 12:25:00-05", stop_id: "SS2"}
+          - {poll_id: 13, fetched_at: "2026-09-26 13:25:00-05", stop_id: "SM2"}
+          - {poll_id: 14, fetched_at: "2026-09-26 13:50:00-05", stop_id: "SM3"}
+          - {poll_id: 15, fetched_at: "2026-09-26 13:55:00-05", stop_id: "SM3"}
+      - input: ref('stg_predictions')
+        rows:
+          # stops that have shown a cancellation (for other trips); SM3 never has
+          - {stpid: "SF2", dyn: 1, fetched_at: "2026-09-26 06:00:00-05"}
+          - {stpid: "SS1", dyn: 1, fetched_at: "2026-09-26 06:00:00-05"}
+          - {stpid: "SS2", dyn: 1, fetched_at: "2026-09-26 06:00:00-05"}
+          - {stpid: "SM2", dyn: 1, fetched_at: "2026-09-26 06:00:00-05"}
+          - {stpid: "SM3", dyn: 0, fetched_at: "2026-09-26 06:00:00-05"}
       - input: ref('int_detour_windows')
         rows:
           - {service_date: "2026-09-26", rt: "8", pid: 77, window_start: "2026-09-26 09:30:00-05", window_end: "2026-09-26 11:00:00-05"}
@@ -296,3 +323,7 @@ unit_tests:
         - {trip_id: "S1", status: "silent", reason: null, strict_evidence: true}
         - {trip_id: "S2", status: "silent", reason: null, strict_evidence: false}
         - {trip_id: "M1", status: "missing", reason: "flags_not_sampled", strict_evidence: true}
+        # one look only
+        - {trip_id: "M2", status: "missing", reason: "flags_not_sampled", strict_evidence: false}
+        # two looks, but at a stop that has never shown a cancellation
+        - {trip_id: "M3", status: "missing", reason: "flags_not_sampled", strict_evidence: false}

@@ -72,8 +72,9 @@ footer { color: var(--muted); font-size: 12px; }
   bus reported it (matched on pattern and start, or route and start for detours, including a bus
   on its pattern under another trip key); the feed was swept for ≥ 90% of it; no detour ran on
   the route within the hour; its block's bus did not vanish and reappear at the trip's far end
-  (a dead tracker); CTA's predictions at one of its own stops were sampled before it was due and
-  never flagged it. <b>Strict</b> counts only ghosts with physical evidence the bus didn't run it:
+  (a dead tracker); CTA's predictions at its own stops were sampled at least twice before it was due
+  (at stops known to show cancellations; a canceled trip is missing from about a quarter of
+  looks) and never flagged it, nor a flag CTA later cleared. <b>Strict</b> counts only ghosts with physical evidence the bus didn't run it:
   it was seen doing something else during the trip, or reappeared where the trip started.
   <b>Lenient</b> counts all. <b>Missing</b>: the same, but its stops weren't sampled, so we can't
   say whether CTA announced it. Delivered = ran ÷ (ran + announced + silent + missing).

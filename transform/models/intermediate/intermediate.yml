@@ -11,7 +11,7 @@ models:
   - name: int_observed_trips
     description: Trips the feed showed, keyed (service_date, rt, pid, start_s) after the midnight shift.
   - name: int_trip_flags
-    description: Trips flagged canceled (dyn=1) in sampled predictions, per stop. Grain (service_date, rt, direction, start_s, stop_id).
+    description: Trips flagged canceled (dyn=1) in sampled predictions, per stop; cleared_at = a later sample at that stop showed it not canceled. Grain (service_date, rt, direction, start_s, stop_id).
   - name: int_feed_minutes
     description: Per minute, whether a clean sweep ran and whether predictions were sampled.
     columns:

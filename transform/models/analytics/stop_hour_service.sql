@@ -78,10 +78,10 @@ select
     round(60.0 / s.scheduled_buses, 1) as scheduled_headway_min,
     round(o.median_headway_min, 1) as median_headway_min,
     round(o.max_headway_min, 1) as max_headway_min,
-    case when w.sweep_coverage >= 0.9 and s.scheduled_buses > 0 then
+    case when w.sweep_coverage >= {{ var('rule_coverage_min') }} and s.scheduled_buses > 0 then
         len(list_filter(o.headways, h -> h < 0.25 * 60.0 / s.scheduled_buses))
     end as bunched,
-    case when w.sweep_coverage >= 0.9 and s.scheduled_buses > 0 then
+    case when w.sweep_coverage >= {{ var('rule_coverage_min') }} and s.scheduled_buses > 0 then
         len(list_filter(o.headways, h -> h > 2 * 60.0 / s.scheduled_buses))
     end as gaps,
     coalesce(w.sweep_coverage, 0) as sweep_coverage

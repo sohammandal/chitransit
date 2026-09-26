@@ -22,7 +22,7 @@ ENVIRONMENTS = ("dev", "prod")
 DEV_DATABASE_URL = "postgresql://ghost:ghost@localhost:5433/ghost_ledger"
 
 # One CTA key allows 100k calls/day, shared by dev and prod. Keep headroom for the
-# predictions sampler (~11k/day) and pattern fetches.
+# predictions sampler (~21k/day) and pattern fetches.
 DAILY_CALL_QUOTA = 100_000
 MAX_VEHICLE_CALLS_PER_DAY = 60_000
 ROUTES_PER_CALL = 10

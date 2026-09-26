@@ -27,7 +27,7 @@ by_pattern as (
     inner join observed as o
         on
             s.service_date = o.service_date and s.rt = o.rt and s.pid = o.pid
-            and s.start_s - o.start_s between 0 and 120
+            and s.start_s - o.start_s between 0 and {{ var('rule_start_tolerance_s') }}
     qualify
         row_number() over (partition by s.service_date, s.trip_id order by s.start_s - o.start_s) = 1
         and row_number() over (
@@ -51,7 +51,7 @@ by_route as (
     inner join observed as o
         on
             s.service_date = o.service_date and s.rt = o.rt
-            and s.start_s - o.start_s between 0 and 120
+            and s.start_s - o.start_s between 0 and {{ var('rule_start_tolerance_s') }}
     where
         not exists (
             select 1 from by_pattern as m

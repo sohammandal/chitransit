@@ -10,8 +10,9 @@
 --   likely_ran : matched with a single report; or not seen, but the block's bus was on this
 --                trip's pattern under another key during it, or vanished and reappeared at
 --                the trip's far end (it drove the trip with a dead tracker)
---   silent     : not seen, not announced, and one of its own stops was sampled for
---                predictions in the 30 minutes before the trip was due there
+--   silent     : not seen, not announced, and CTA's predictions at its own stops were
+--                sampled at least twice in the 30 minutes before it was due (stops that
+--                have shown a cancellation before only)
 --   missing    : the same, but its stops weren't sampled: announcement unknown
 -- ghost_evidence (silent/missing only) grades them: strict = the block's bus was seen doing
 -- something else during the trip, or reappeared at the end it started from. gap_ratio
@@ -26,7 +27,8 @@ matched as (
 ),
 
 flags as (
-    -- a flag belongs to a trip only at a stop that trip serves (GTFS), same route and start
+    -- a flag belongs to a trip only at a stop that trip serves (GTFS), same route and start,
+    -- and counts only if CTA didn't clear it later at that stop
     select
         s.service_date,
         s.trip_id,
@@ -36,9 +38,10 @@ flags as (
     inner join {{ ref('int_trip_flags') }} as f
         on
             s.service_date = f.service_date and s.rt = f.rt
-            and s.start_s - f.start_s between 0 and 120
+            and s.start_s - f.start_s between 0 and {{ var('rule_start_tolerance_s') }}
     inner join {{ ref('int_scheduled_departures') }} as d
         on s.service_date = d.service_date and s.trip_id = d.trip_id and f.stop_id = d.stop_id
+    where f.cleared_at is null
     group by all
 ),
 
@@ -55,16 +58,27 @@ watching as (
     group by s.service_date, s.trip_id, s.scheduled_start, s.scheduled_end
 ),
 
+flag_stops as (
+    -- stops that have ever shown a cancellation (all history up to as_of, not just this window)
+    select distinct stpid as stop_id
+    from {{ ref('stg_predictions') }}
+    where dyn = 1 and fetched_at <= {{ as_of() }}
+),
+
 sampled as (
-    -- one of the trip's own stops (GTFS) was sampled in the 30 minutes before the trip was
-    -- due there: a flag would have shown up in that response
-    select distinct d.service_date, d.trip_id
+    -- looks at the trip's own stops (GTFS) in the window before it was due there, counting
+    -- only stops that have shown a cancellation at some point (CTA omits canceled
+    -- predictions where a stop isn't configured to show them). A canceled trip is missing
+    -- from ~27% of looks (Sep 26), so one look isn't enough to call it unannounced.
+    select d.service_date, d.trip_id, count(distinct ps.poll_id) as n_flag_looks
     from {{ ref('int_scheduled_departures') }} as d
     inner join {{ ref('stg_prediction_samples') }} as ps
         on
             d.stop_id = ps.stop_id
-            and ps.fetched_at >= d.departs_at - interval 30 minute
+            and ps.fetched_at >= d.departs_at - interval ({{ var('rule_flag_window_min') }}) minute
             and ps.fetched_at < d.departs_at
+    where d.stop_id in (select stop_id from flag_stops)
+    group by all
 ),
 
 detoured as (
@@ -88,7 +102,8 @@ classified as (
         f.first_flagged_at,
         f.n_flagged_samples,
         w.sweep_coverage,
-        sp.trip_id is not null as flags_sampled,
+        coalesce(sp.n_flag_looks, 0) as n_flag_looks,
+        coalesce(sp.n_flag_looks, 0) >= {{ var('rule_min_flag_looks') }} as flags_sampled,
         dt.trip_id is not null as detour,
         e.evidence as ghost_evidence,
         e.block_vid,
@@ -112,7 +127,7 @@ decided as (
             when scheduled_end + interval 30 minute > {{ as_of() }} then 'pending'
             when n_reports >= 2 then 'ran'
             when flagged then 'flagged'
-            when sweep_coverage < 0.9 then 'unknown'
+            when sweep_coverage < {{ var('rule_coverage_min') }} then 'unknown'
             when detour and n_reports is null then 'unknown'
             when n_reports = 1 then 'likely_ran'
             when ghost_evidence in ('bus_on_this_pattern', 'reappeared_far_end') then 'likely_ran'
@@ -134,7 +149,7 @@ select
     scheduled_end,
     status,
     case
-        when status = 'unknown' and sweep_coverage < 0.9 then 'not_watched'
+        when status = 'unknown' and sweep_coverage < {{ var('rule_coverage_min') }} then 'not_watched'
         when status = 'unknown' then 'detour'
         when status = 'likely_ran' and n_reports = 1 then 'single_report'
         when status = 'likely_ran' and ghost_evidence = 'bus_on_this_pattern' then 'miskeyed'
@@ -156,5 +171,6 @@ select
     n_flagged_samples,
     sweep_coverage,
     flags_sampled,
+    n_flag_looks,
     gap_ratio
 from decided

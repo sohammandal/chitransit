@@ -68,7 +68,7 @@ predicted_buses as (
             u.rt = p.rt and p.dyn = 0 and p.vid is not null
             and (case when p.stst >= 86400 then p.stsd + 1 else p.stsd end) = u.service_date
             and u.start_s - (case when p.stst >= 86400 then p.stst - 86400 else p.stst end)
-            between 0 and 120
+            between 0 and {{ var('rule_start_tolerance_s') }}
     inner join {{ ref('int_scheduled_departures') }} as d
         on u.service_date = d.service_date and u.trip_id = d.trip_id and p.stpid = d.stop_id
 ),
@@ -145,8 +145,8 @@ select
         when block_vid is null then 'no_block_bus'
         when n_seen_during > 0 then 'bus_elsewhere'
         when reappeared_at is null then 'bus_not_seen_again'
-        when m_from_last_stop <= 500 and m_from_last_stop < m_from_first_stop then 'reappeared_far_end'
-        when m_from_first_stop <= 500 then 'reappeared_same_end'
+        when m_from_last_stop <= {{ var('rule_reappear_m') }} and m_from_last_stop < m_from_first_stop then 'reappeared_far_end'
+        when m_from_first_stop <= {{ var('rule_reappear_m') }} then 'reappeared_same_end'
         else 'reappeared_elsewhere'
     end as evidence
 from measured
