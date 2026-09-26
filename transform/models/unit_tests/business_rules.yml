@@ -113,7 +113,8 @@ unit_tests:
     description: >
       Where the block's bus was decides between a dead tracker and a ghost: reappearing at the
       far end means it drove the trip; at the same end, it sat; seen elsewhere during the trip,
-      it didn't run it; seen on the trip's own pattern, it ran it under another key.
+      it didn't run it; the block's bus or CTA's predicted bus on the trip's own pattern ran it
+      under another key.
     model: int_missing_trip_evidence
     given:
       - input: ref('int_scheduled_trips')
@@ -129,6 +130,7 @@ unit_tests:
           - {service_date: "2026-09-26", trip_id: "P6", feed_id: "f", rt: "9", direction: "North", block_id: "E6", pid: 10, start_s: 57600, end_s: 58800, scheduled_start: "2026-09-26 16:00:00-05", scheduled_end: "2026-09-26 16:20:00-05"}
           - {service_date: "2026-09-26", trip_id: "X6", feed_id: "f", rt: "9", direction: "North", block_id: "E6", pid: 10, start_s: 59400, end_s: 60600, scheduled_start: "2026-09-26 16:30:00-05", scheduled_end: "2026-09-26 16:50:00-05"}
           - {service_date: "2026-09-26", trip_id: "X5", feed_id: "f", rt: "9", direction: "North", block_id: "E5", pid: 10, start_s: 55800, end_s: 57000, scheduled_start: "2026-09-26 15:30:00-05", scheduled_end: "2026-09-26 15:50:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X7", feed_id: "f", rt: "9", direction: "North", block_id: "E7", pid: 10, start_s: 63000, end_s: 64200, scheduled_start: "2026-09-26 17:30:00-05", scheduled_end: "2026-09-26 17:50:00-05"}
       - input: ref('int_trip_matches')
         rows:
           - {service_date: "2026-09-26", trip_id: "P1", matched_on: "pattern", n_reports: 5, first_vid: "V1", last_vid: "V1"}
@@ -150,6 +152,12 @@ unit_tests:
           - {service_date: "2026-09-26", trip_id: "X6", stop_id: "B", stop_sequence: 2, departs_at: "2026-09-26 16:50:00-05"}
           - {service_date: "2026-09-26", trip_id: "X5", stop_id: "A", stop_sequence: 1, departs_at: "2026-09-26 15:30:00-05"}
           - {service_date: "2026-09-26", trip_id: "X5", stop_id: "B", stop_sequence: 2, departs_at: "2026-09-26 15:50:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X7", stop_id: "A", stop_sequence: 1, departs_at: "2026-09-26 17:30:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X7", stop_id: "B", stop_sequence: 2, departs_at: "2026-09-26 17:50:00-05"}
+      - input: ref('stg_predictions')
+        rows:
+          # CTA assigned bus P7 to X7 (not canceled) at X7's first stop
+          - {rt: "9", vid: "P7", dyn: 0, stsd: "2026-09-26", stst: 62990, stpid: "A", fetched_at: "2026-09-26 17:20:00-05"}
       - input: ref('stg_gtfs_stops')
         rows:
           - {feed_id: "f", stop_id: "A", lat: 41.0, lon: -87.6}
@@ -165,6 +173,8 @@ unit_tests:
           # V4 seen during X4 on X4's own pattern under another key: ran it, mis-keyed
           - {vid: "V4", observed_at: "2026-09-26 14:40:00-05", rt: "9", pid: 10, pdist: 100, lat: 41.02, lon: -87.6}
           # V6 never seen again
+          # P7, CTA's predicted bus for X7, ran X7's pattern during it under another key
+          - {vid: "P7", observed_at: "2026-09-26 17:40:00-05", rt: "9", pid: 10, pdist: 900, lat: 41.02, lon: -87.6}
     expect:
       rows:
         - {trip_id: "X1", block_vid: "V1", evidence: "reappeared_far_end"}
@@ -173,6 +183,7 @@ unit_tests:
         - {trip_id: "X4", block_vid: "V4", evidence: "bus_on_this_pattern"}
         - {trip_id: "X5", block_vid: null, evidence: "no_block_bus"}
         - {trip_id: "X6", block_vid: "V6", evidence: "bus_not_seen_again"}
+        - {trip_id: "X7", block_vid: null, evidence: "bus_on_this_pattern"}
 
   - name: trip_status_rules
     description: >

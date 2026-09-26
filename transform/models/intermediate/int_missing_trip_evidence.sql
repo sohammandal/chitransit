@@ -2,8 +2,9 @@
 -- run it (the block's bus, from the trips before or after it in its GTFS block). Absence
 -- from the feed alone can't tell a ghost from a bus driving with a dead tracker; where that
 -- bus was can.
---   bus_on_this_pattern : visible during the trip's scheduled time on this trip's pattern
---                         under another trip key: it most likely ran it (mis-keyed)
+--   bus_on_this_pattern : the block's bus, or a bus CTA predicted for this trip (dyn = 0, at
+--                         one of its stops), was on this trip's pattern during it under
+--                         another trip key: it most likely ran it (mis-keyed)
 --   bus_elsewhere       : visible during the trip's scheduled time, not on its pattern
 --                         (still on an earlier trip, laid over, another route): it didn't run
 --                         it, and its tracker worked. Strong ghost evidence.
@@ -58,6 +59,31 @@ stops as (
     select * from {{ ref('stg_gtfs_stops') }}
 ),
 
+predicted_buses as (
+    -- buses CTA's predictions assigned to this trip (not canceled) at a stop it serves
+    select distinct u.service_date, u.trip_id, p.vid
+    from unseen as u
+    inner join {{ ref('stg_predictions') }} as p
+        on
+            u.rt = p.rt and p.dyn = 0 and p.vid is not null
+            and (case when p.stst >= 86400 then p.stsd + 1 else p.stsd end) = u.service_date
+            and u.start_s - (case when p.stst >= 86400 then p.stst - 86400 else p.stst end)
+            between 0 and 120
+    inner join {{ ref('int_scheduled_departures') }} as d
+        on u.service_date = d.service_date and u.trip_id = d.trip_id and p.stpid = d.stop_id
+),
+
+predicted_on_pattern as (
+    select pb.service_date, pb.trip_id, count(*) as n
+    from predicted_buses as pb
+    inner join unseen as u on pb.service_date = u.service_date and pb.trip_id = u.trip_id
+    inner join {{ ref('stg_bus_positions') }} as b
+        on
+            pb.vid = b.vid and b.rt = u.rt and b.pid = u.pid
+            and b.observed_at between u.scheduled_start and u.scheduled_end
+    group by all
+),
+
 during as (
     select
         u.service_date,
@@ -92,7 +118,7 @@ measured as (
         u.trip_id,
         u.block_vid,
         coalesce(d.n_seen, 0) as n_seen_during,
-        coalesce(d.n_on_this_pattern, 0) as n_on_this_pattern,
+        coalesce(d.n_on_this_pattern, 0) + coalesce(pp.n, 0) as n_on_this_pattern,
         a.reappeared_at,
         -- equirectangular metres: plenty accurate across a city
         sqrt(
@@ -106,6 +132,7 @@ measured as (
     from unseen as u
     left join during as d on u.service_date = d.service_date and u.trip_id = d.trip_id
     left join after as a on u.service_date = a.service_date and u.trip_id = a.trip_id
+    left join predicted_on_pattern as pp on u.service_date = pp.service_date and u.trip_id = pp.trip_id
     left join terminals as t on u.service_date = t.service_date and u.trip_id = t.trip_id
     left join stops as sf on u.feed_id = sf.feed_id and t.first_stop_id = sf.stop_id
     left join stops as sl on u.feed_id = sl.feed_id and t.last_stop_id = sl.stop_id
@@ -114,8 +141,8 @@ measured as (
 select
     *,
     case
-        when block_vid is null then 'no_block_bus'
         when n_on_this_pattern > 0 then 'bus_on_this_pattern'
+        when block_vid is null then 'no_block_bus'
         when n_seen_during > 0 then 'bus_elsewhere'
         when reappeared_at is null then 'bus_not_seen_again'
         when m_from_last_stop <= 500 and m_from_last_stop < m_from_first_stop then 'reappeared_far_end'
