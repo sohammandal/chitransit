@@ -7,12 +7,14 @@ import pytest
 
 from ghost_ledger.bustracker import BusTrackerClient
 from ghost_ledger.config import get_settings
+from ghost_ledger.ingest import sql
 from ghost_ledger.ingest.poller import (
     Poller,
     direction_of,
     next_tick,
     parse_vehicle,
     pattern_hash,
+    sample_stops,
 )
 
 T0 = datetime(2026, 9, 26, 0, 21, 52, tzinfo=UTC)
@@ -49,6 +51,18 @@ def test_parse_vehicle_without_a_trip():
     assert row["stsd"] is None and row["stst"] is None
 
 
+def test_sample_stops_are_the_first_and_middle_stop():
+    pt = [
+        {"seq": 1, "typ": "W"},
+        {"seq": 2, "typ": "S", "stpid": "10"},
+        {"seq": 3, "typ": "S", "stpid": "11"},
+        {"seq": 4, "typ": "S", "stpid": "12"},
+        {"seq": 5, "typ": "S", "stpid": "13"},
+    ]
+    assert sample_stops({"pt": pt}) == {"10", "12"}
+    assert sample_stops({"pt": [{"typ": "W"}]}) == set()
+
+
 def test_next_tick_keeps_cadence_and_skips_overrun_ticks():
     assert next_tick(100.0, 30.0, 110.0) == 130.0
     assert next_tick(100.0, 30.0, 175.0) == 190.0  # sweep overran two ticks
@@ -60,6 +74,13 @@ def test_next_tick_keeps_cadence_and_skips_overrun_ticks():
 ROUTES = ("GLT1", "GLT2")  # made-up routes and ids so nothing collides with real data
 PID = 990_001
 VID = "GLT-100"
+STOPS = ("GLT-S1", "GLT-S2", "GLT-S3")
+PATTERN_POINTS = [
+    {"seq": 1, "typ": "S", "stpid": STOPS[0], "pdist": 0},
+    {"seq": 2, "typ": "W", "pdist": 400},
+    {"seq": 3, "typ": "S", "stpid": STOPS[1], "pdist": 500},
+    {"seq": 4, "typ": "S", "stpid": STOPS[2], "pdist": 1000},
+]
 
 
 class FakeCta:
@@ -79,8 +100,11 @@ class FakeCta:
             body = {"vehicle": self.vehicles} if self.vehicles else quiet
             return httpx.Response(200, json={"bustime-response": body})
         if endpoint == "getpatterns":
-            ptr = {"pid": PID, "ln": 1000.0, "rtdir": "Eastbound", "pt": [{"seq": 1, "pdist": 0}]}
+            ptr = {"pid": PID, "ln": 1000.0, "rtdir": "Eastbound", "pt": PATTERN_POINTS}
             return httpx.Response(200, json={"bustime-response": {"ptr": [ptr]}})
+        if endpoint == "getpredictions":
+            prd = {"stpid": STOPS[0], "rt": ROUTES[0], "dyn": 1, "stsd": "2026-09-25", "stst": 1}
+            return httpx.Response(200, json={"bustime-response": {"prd": [prd]}})
         return httpx.Response(404)
 
 
@@ -102,20 +126,16 @@ class Clock:
 
 
 def cleanup(conn):
-    conn.execute(
-        "DELETE FROM ops.raw_responses WHERE poll_id IN (SELECT poll_id FROM ops.raw_polls "
-        "WHERE request_params->>'rt' LIKE 'GLT%%' OR request_params->>'pid' = %s)",
-        (str(PID),),
+    test_polls = (
+        "SELECT poll_id FROM ops.raw_polls WHERE request_params->>'rt' LIKE 'GLT%%' "
+        "OR request_params->>'pid' = %s OR request_params->>'stpid' LIKE 'GLT%%'"
     )
+    conn.execute(f"DELETE FROM ops.raw_responses WHERE poll_id IN ({test_polls})", (str(PID),))
     conn.execute("DELETE FROM ops.bus_positions WHERE vid LIKE 'GLT-%%'")
     conn.execute("DELETE FROM ops.bus_live_board WHERE vid LIKE 'GLT-%%'")
     conn.execute("DELETE FROM ops.bus_assignments WHERE vid LIKE 'GLT-%%'")
     conn.execute("DELETE FROM ops.patterns WHERE pid = %s", (PID,))
-    conn.execute(
-        "DELETE FROM ops.raw_polls WHERE request_params->>'rt' LIKE 'GLT%%' "
-        "OR request_params->>'pid' = %s",
-        (str(PID),),
-    )
+    conn.execute(f"DELETE FROM ops.raw_polls WHERE poll_id IN ({test_polls})", (str(PID),))
     conn.execute(
         "DELETE FROM ops.sweeps s WHERE NOT EXISTS "
         "(SELECT 1 FROM ops.raw_polls r WHERE r.sweep_id = s.sweep_id)"
@@ -162,6 +182,16 @@ def test_poller_lifecycle_against_the_database(db):
     keys = one(conn, "SELECT COUNT(*) FROM ops.raw_polls WHERE request_params ? 'key'")
     assert keys == (0,)
     assert_replayable(conn, s1.sweep_id)
+    # the new pattern's first and middle stops were sampled in the same sweep
+    sampled = one(
+        conn,
+        "SELECT p.request_params->>'stpid', r.body FROM ops.raw_polls p "
+        "JOIN ops.raw_responses r USING (poll_id) "
+        "WHERE p.sweep_id = %s AND p.endpoint = 'getpredictions'",
+        s1.sweep_id,
+    )
+    assert sorted(sampled[0].split(",")) == [STOPS[0], STOPS[1]]
+    assert json.loads(sampled[1])["bustime-response"]["prd"][0]["dyn"] == 1
 
     # 2. same report again: no new position, no assignment write
     clock.t = T0 + timedelta(seconds=30)
@@ -231,6 +261,19 @@ def assert_replayable(conn, sweep_id: int) -> None:
             (poll_id,),
         ).fetchall()
         assert replayed == sorted(stored)
+
+
+@pytest.mark.db
+def test_sample_stops_sql_agrees_with_python(db):
+    _, conn = db
+    pattern = {"pid": PID, "rtdir": "Eastbound", "pt": PATTERN_POINTS}
+    conn.execute(
+        "INSERT INTO ops.patterns (pid, rt, rtdir, length_ft, content_hash, pattern, "
+        "first_seen_at, changed_at) VALUES (%s, %s, 'Eastbound', 1000, 'h', %s, NOW(), NOW())",
+        (PID, ROUTES[0], json.dumps(pattern)),
+    )
+    from_sql = {s for rt, s in conn.execute(sql.LOAD_SAMPLE_STOPS) if rt == ROUTES[0]}
+    assert from_sql == sample_stops(pattern)
 
 
 @pytest.mark.db

@@ -137,3 +137,19 @@ ORDER BY vid, fetched_at DESC
 """
 
 LOAD_PATTERNS = "SELECT pid, rtdir, content_hash FROM ops.patterns"
+
+# First and middle stop of every pattern (see poller.sample_stops, which must agree).
+LOAD_SAMPLE_STOPS = """
+SELECT DISTINCT rt, stpid
+FROM (
+    SELECT
+        p.rt,
+        x.pt ->> 'stpid' AS stpid,
+        ROW_NUMBER() OVER (PARTITION BY p.pid ORDER BY x.ord) AS i,
+        COUNT(*) OVER (PARTITION BY p.pid) AS n
+    FROM ops.patterns AS p,
+        JSONB_ARRAY_ELEMENTS(p.pattern -> 'pt') WITH ORDINALITY AS x (pt, ord)
+    WHERE x.pt ->> 'typ' = 'S'
+) AS s
+WHERE i = 1 OR i = n / 2 + 1
+"""

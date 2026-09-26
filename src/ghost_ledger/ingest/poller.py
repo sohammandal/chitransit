@@ -23,7 +23,13 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Jsonb
 
-from ghost_ledger.bustracker import ApiResult, BusTrackerClient, chunked, parse_tmstmp
+from ghost_ledger.bustracker import (
+    MAX_STOPS_PER_CALL,
+    ApiResult,
+    BusTrackerClient,
+    chunked,
+    parse_tmstmp,
+)
 from ghost_ledger.bustracker import resolve_tmstmp as resolve
 from ghost_ledger.config import ROUTES_PER_CALL, Settings
 from ghost_ledger.ingest import sql
@@ -37,6 +43,9 @@ PATTERN_REFRESH_EVERY = timedelta(hours=24)
 PATTERN_REFRESH_ROUTES_PER_SWEEP = 5
 PARTITION_CHECK_EVERY = timedelta(hours=1)
 ROUTES_REFRESH_EVERY = timedelta(hours=24)
+# Each sample stop gets one getpredictions call per cycle, spread over the cycle's sweeps.
+# ~730 stops -> ~73 calls per 10 min -> ~10.5k calls/day (docs/PLAN.md, quota).
+PREDICTION_SAMPLE_EVERY = timedelta(minutes=10)
 
 
 def direction_of(rtdir: str) -> str:
@@ -62,6 +71,16 @@ def _float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def sample_stops(pattern: dict[str, Any]) -> set[str]:
+    """The stops whose predictions we sample for a pattern: its first and middle stop.
+
+    A canceled trip shows up as a prediction with dyn=1 at the stops it would serve, and
+    the first stop covers trips before they start. Keep in step with sql.LOAD_SAMPLE_STOPS.
+    """
+    stops = [p["stpid"] for p in pattern.get("pt", []) if p.get("typ") == "S" and p.get("stpid")]
+    return {str(stops[0]), str(stops[len(stops) // 2])} if stops else set()
 
 
 def parse_vehicle(v: dict[str, Any], fetched_at: datetime) -> dict[str, Any]:
@@ -139,6 +158,8 @@ class Poller:
         self.conn: psycopg.Connection | None = None
         self.routes: list[str] = []
         self.patterns: dict[int, tuple[str, str]] = {}  # pid -> (rtdir, content_hash)
+        self.stops: dict[str, str] = {}  # sample stop id -> its route
+        self._stop_queue: list[str] = []
         self.presence = PresenceTracker(timedelta(minutes=settings.assignment_grace_minutes))
         self._refresh_queue: list[str] = []
         self._next_pattern_refresh = self.now()
@@ -171,6 +192,7 @@ class Poller:
             self.patterns = {
                 pid: (rtdir, h) for pid, rtdir, h in conn.execute(sql.LOAD_PATTERNS).fetchall()
             }
+            self.stops = {stpid: rt for rt, stpid in conn.execute(sql.LOAD_SAMPLE_STOPS)}
             trips = {
                 vid: TripKey(rt, direction, stsd, stst)
                 for vid, rt, direction, stsd, stst in conn.execute(sql.LOAD_ASSIGNMENTS)
@@ -241,6 +263,7 @@ class Poller:
                     log.warning("skipping unparseable vehicle %s: %s", v.get("vid"), exc)
 
         pattern_rows = self._fetch_patterns(positions, deadline)
+        self._sample_predictions(deadline)
 
         sightings = []
         for _, p in positions:
@@ -298,6 +321,27 @@ class Poller:
             rows += self._pattern_rows(call, rt)
         return rows
 
+    def _sample_predictions(self, deadline: float) -> None:
+        """Call getpredictions for this sweep's share of the sample stops. The responses are
+        kept in raw_responses like every call; dyn=1 (canceled) flags are parsed downstream."""
+        routes = set(self.routes)
+        stops = sorted(s for s, rt in self.stops.items() if rt in routes)
+        if not stops:
+            return
+        cycle = PREDICTION_SAMPLE_EVERY.total_seconds() / self.settings.poll_interval_seconds
+        n_calls = math.ceil(len(stops) / MAX_STOPS_PER_CALL / max(cycle, 1))
+        for _ in range(n_calls):
+            if self.monotonic() > deadline:
+                return  # the rest of the queue waits for the next sweep
+            if not self._stop_queue:
+                self._stop_queue = stops
+            batch = self._stop_queue[:MAX_STOPS_PER_CALL]
+            self._stop_queue = self._stop_queue[MAX_STOPS_PER_CALL:]
+            self._call(
+                "getpredictions", {"stpid": ",".join(batch), "tmres": "s"},
+                lambda b=batch: self.client.get_predictions(b), [self.stops[s] for s in batch],
+            )  # fmt: skip
+
     def _pattern_rows(self, call: Call, rt: str) -> list[dict[str, Any]]:
         rows = []
         for ptr in call.result.body.get("ptr", []) if call.result.ok else []:
@@ -305,6 +349,7 @@ class Poller:
             if self.patterns.get(pid, (None, None))[1] == h:
                 continue
             self.patterns[pid] = (ptr["rtdir"], h)
+            self.stops.update(dict.fromkeys(sample_stops(ptr), rt))
             rows.append({
                 "pid": pid, "rt": rt, "rtdir": ptr["rtdir"], "length_ft": _float(ptr.get("ln")),
                 "content_hash": h, "pattern": Jsonb(ptr), "seen_at": call.fetched_at,

@@ -27,10 +27,13 @@ DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (1.0, 2.0)
 
-# The only error CTA returns for "nothing to report right now" (a quiet route at night, a
-# route with no buses). Verified live 2026-09-25. Anything else, e.g. "Invalid API access key
-# supplied" or a daily-quota message, arrives as HTTP 200 too and must count as a failure.
-BENIGN_API_ERRORS = frozenset({"No data found for parameter"})
+# Errors CTA returns for "nothing to report right now": a quiet route at night (verified live
+# 2026-09-25), or a stop with no upcoming buses (getpredictions; texts from CTA's developer
+# guide). Anything else, e.g. "Invalid API access key supplied" or a daily-quota message,
+# arrives as HTTP 200 too and must count as a failure.
+BENIGN_API_ERRORS = frozenset(
+    {"No data found for parameter", "No arrival times", "No service scheduled"}
+)
 
 # httpx logs full URLs (including ?key=...) at INFO. Keep it quiet so the key never lands in logs.
 logging.getLogger("httpx").setLevel(logging.WARNING)
