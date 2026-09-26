@@ -26,6 +26,7 @@ select
     t.service_id,
     t.route_id as rt,
     t.direction,
+    t.block_id,
     substr(t.shape_id, 4)::int as pid,
     b.first_departure_s,
     b.last_departure_s

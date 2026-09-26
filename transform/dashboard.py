@@ -16,10 +16,11 @@ from string import Template
 
 import duckdb
 
-STATUSES = [  # (status, label, color token)
+STATUSES = [  # (status, label, color token); likely_ran is counted as ran
     ("ran", "Ran", "--ran"),
-    ("flagged", "Flagged canceled", "--flagged"),
+    ("flagged", "Announced canceled", "--flagged"),
     ("silent", "Silent ghost", "--silent"),
+    ("missing", "Missing, announcement unknown", "--missing"),
     ("unknown", "Unknown", "--unknown"),
 ]
 
@@ -42,7 +43,10 @@ def load(src: str, days: int) -> dict:
     since = dates[-days:][0]
     by_day = con.execute(
         f"""
-        select service_date, status, count(*) as n
+        select
+            service_date,
+            case when status = 'likely_ran' then 'ran' else status end as status,
+            count(*) as n
         from {trips}
         where service_date >= DATE '{since}'
         group by all order by 1
@@ -53,9 +57,11 @@ def load(src: str, days: int) -> dict:
         f"""
         with t as (
             select rt, count(*) as scheduled,
-                count(*) filter (where status = 'ran') as ran,
+                count(*) filter (where status in ('ran', 'likely_ran')) as ran,
                 count(*) filter (where status = 'flagged') as flagged,
                 count(*) filter (where status = 'silent') as silent,
+                count(*) filter (where status = 'silent' and gap_confirmed) as confirmed,
+                count(*) filter (where status = 'missing') as missing,
                 count(*) filter (where status = 'unknown') as unknown
             from {trips} where service_date = ? group by rt
         ),
@@ -65,7 +71,7 @@ def load(src: str, days: int) -> dict:
         )
         select t.*, s.passes, s.bunched, s.gaps
         from t left join s using (rt)
-        order by t.silent + t.flagged desc, t.unknown desc, try_cast(t.rt as int), t.rt
+        order by t.silent + t.missing + t.flagged desc, t.unknown desc, try_cast(t.rt as int), t.rt
         """,
         [latest, latest],
     ).fetchall()
@@ -82,7 +88,8 @@ def render(data: dict) -> str:
     latest = data["latest"]
     total = {d: sum(counts.get((d, s), 0) for s, _, _ in STATUSES) for d in days}
     tot = {s: counts.get((latest, s), 0) for s, _, _ in STATUSES}
-    known = tot["ran"] + tot["flagged"] + tot["silent"]
+    known = tot["ran"] + tot["flagged"] + tot["silent"] + tot["missing"]
+    confirmed = sum(r[5] for r in data["routes"])
 
     tiles = [
         (
@@ -91,9 +98,14 @@ def render(data: dict) -> str:
             "finished trips, latest service day",
         ),
         ("Ran", f"{tot['ran']:,}", pct(tot["ran"], known) + " of trips we could judge"),
-        ("Flagged canceled", f"{tot['flagged']:,}", "CTA marked them canceled (dyn=1)"),
-        ("Silent ghosts", f"{tot['silent']:,}", "not seen, not flagged, while we were watching"),
-        ("Unknown", f"{tot['unknown']:,}", "not enough evidence to call"),
+        ("Announced canceled", f"{tot['flagged']:,}", "CTA marked them canceled (dyn=1)"),
+        (
+            "Silent ghosts",
+            f"{tot['silent']:,}",
+            f"{confirmed:,} confirmed by a gap at the stops; never announced",
+        ),
+        ("Missing", f"{tot['missing']:,}", "not seen; CTA's flags weren't sampled"),
+        ("Unknown", f"{tot['unknown']:,}", "not watched, or a detour on the route"),
     ]
     tile_html = "".join(
         f'<div class="tile"><span class="k">{k}</span><span class="n">{v}</span>'
@@ -129,11 +141,11 @@ def render(data: dict) -> str:
 
     rows = "".join(
         "<tr>"
-        f"<td>{html.escape(str(rt))}</td><td>{sched:,}</td><td>{pct(ran, ran + fl + si)}</td>"
-        f"<td>{fl}</td><td>{si}</td><td>{un}</td>"
+        f"<td>{html.escape(str(rt))}</td><td>{sched:,}</td><td>{pct(ran, ran + fl + si + mi)}</td>"
+        f"<td>{fl}</td><td>{si} <span class=sub>({co})</span></td><td>{mi}</td><td>{un}</td>"
         f"<td>{pct(bun, passes)}</td><td>{pct(gaps, passes)}</td>"
         "</tr>"
-        for rt, sched, ran, fl, si, un, passes, bun, gaps in data["routes"]
+        for rt, sched, ran, fl, si, co, mi, un, passes, bun, gaps in data["routes"]
     )
     page = Template((Path(__file__).parent / "dashboard.html").read_text())
     return page.substitute(

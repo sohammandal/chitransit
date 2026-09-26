@@ -7,8 +7,10 @@ select
     hour(scheduled_start) as start_hour,
     count(*) as scheduled,
     count(*) filter (where status = 'ran') as ran,
+    count(*) filter (where status = 'likely_ran') as likely_ran,
     count(*) filter (where status = 'flagged') as flagged,
     count(*) filter (where status = 'silent') as silent,
+    count(*) filter (where status = 'missing') as missing,
     count(*) filter (where status = 'unknown') as unknown,
     count(*) filter (where status = 'ran' and flagged) as flagged_but_ran,
     round(avg(sweep_coverage), 4) as avg_sweep_coverage

@@ -19,6 +19,8 @@ select
     max(observed_at) as last_seen_at,
     count(*) as n_reports,
     count(distinct vid) as n_buses,
+    arg_min(vid, observed_at) as first_vid,
+    arg_max(vid, observed_at) as last_vid,
     min(pdist) as min_pdist,
     max(pdist) as max_pdist
 from keyed

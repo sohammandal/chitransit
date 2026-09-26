@@ -11,7 +11,7 @@ models:
   - name: int_observed_trips
     description: Trips the feed showed, keyed (service_date, rt, pid, start_s) after the midnight shift.
   - name: int_trip_flags
-    description: Trips flagged canceled (dyn=1) in sampled predictions. Grain (service_date, rt, direction, start_s).
+    description: Trips flagged canceled (dyn=1) in sampled predictions, per stop. Grain (service_date, rt, direction, start_s, stop_id).
   - name: int_feed_minutes
     description: Per minute, whether a clean sweep ran and whether predictions were sampled.
     columns:
@@ -24,3 +24,9 @@ models:
         data_tests: [not_null]
   - name: int_scheduled_departures
     description: Scheduled departures per stop. Grain (service_date, trip_id, stop_sequence).
+  - name: int_detour_windows
+    description: Times a route ran patterns its GTFS schedule lacks (detours), widened an hour each side.
+  - name: int_trip_service_gaps
+    description: >
+      Wait at each trip's middle scheduled stop between the buses just before and after its
+      scheduled time, as a multiple of the scheduled headway. ~2x corroborates a missing trip.

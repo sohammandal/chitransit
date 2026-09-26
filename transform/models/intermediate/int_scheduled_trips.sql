@@ -69,6 +69,7 @@ select
     t.trip_id,
     t.rt,
     t.direction,
+    t.block_id,
     t.pid,
     t.first_departure_s as start_s,
     t.last_departure_s as end_s,

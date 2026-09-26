@@ -8,7 +8,7 @@
 :root {
   --bg: #f4f5f6; --surface: #fcfcfb; --ink: #15191d; --muted: #58616a; --rule: #d4d9dd;
   /* status colors carry state (validated for color-blind separation) and always have a label */
-  --ran: #0ca30c; --flagged: #fab219; --silent: #d03b3b; --unknown: #a3a29c;
+  --ran: #0ca30c; --flagged: #fab219; --silent: #d03b3b; --missing: #8e44ad; --unknown: #a3a29c;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -64,14 +64,19 @@ footer { color: var(--muted); font-size: 12px; }
 <section>
   <h2>Routes, $latest_short <span class="sub">— sorted by missing trips</span></h2>
   <div class="tbl"><table>
-    <thead><tr><th>Route</th><th>Scheduled</th><th>Delivered</th><th>Flagged</th><th>Silent</th>
-      <th>Unknown</th><th>Bunched</th><th>Gaps</th></tr></thead>
+    <thead><tr><th>Route</th><th>Scheduled</th><th>Delivered</th><th>Announced</th>
+      <th>Silent (confirmed)</th><th>Missing</th><th>Unknown</th><th>Bunched</th><th>Gaps</th></tr></thead>
     <tbody>$rows</tbody>
   </table></div>
-  <p class="sub">Delivered = ran ÷ trips we could judge (ran + flagged + silent). A trip is a silent
-  ghost only while the feed was swept for ≥ 90% of it and CTA's predictions were sampled before it
-  was due; otherwise it is unknown. Bunched: headway under 25% of scheduled; gaps: over 2×; as a
-  share of stop passes, terminals excluded.</p>
+  <p class="sub">A trip is a <b>silent ghost</b> only after every other explanation is ruled out: no bus
+  reported it (matched on pattern and start, or route and start for detours); the feed was
+  swept for ≥ 90% of it; no detour ran on the route within the hour; its bus did not run the
+  block trips before and after it without leaving a gap; CTA's predictions at one of its own
+  stops were sampled before it was due and never flagged it. <b>Confirmed</b> means other buses'
+  stop passes show the hole it left (the wait at its middle stop was ≥ 1.5× the scheduled
+  headway). <b>Missing</b>: the same, but its stops weren't sampled, so we can't say whether CTA
+  announced it. Delivered = ran ÷ (ran + announced + silent + missing). Bunched: headway under
+  25% of scheduled; gaps: over 2×; as a share of stop passes, terminals excluded.</p>
 </section>
 <footer>Personal analysis of CTA Bus Tracker data. Not affiliated with CTA.</footer>
 </main>

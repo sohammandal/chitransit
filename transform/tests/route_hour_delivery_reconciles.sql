@@ -4,7 +4,8 @@ with totals as (
         (select count(*) from {{ ref('trip_status') }} where status != 'pending') as trips,
         (select sum(scheduled) from {{ ref('route_hour_delivery') }}) as counted,
         (
-            select sum(ran + flagged + silent + unknown) from {{ ref('route_hour_delivery') }}
+            select sum(ran + likely_ran + flagged + silent + missing + unknown)
+            from {{ ref('route_hour_delivery') }}
         ) as by_status
 )
 

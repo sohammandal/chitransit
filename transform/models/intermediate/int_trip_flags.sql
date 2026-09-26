@@ -1,5 +1,6 @@
--- Trips CTA flagged canceled (dyn = 1) in any sampled prediction, keyed like
--- int_observed_trips. Predictions carry the direction word but no pid.
+-- Trips CTA flagged canceled (dyn = 1) in sampled predictions, keyed like
+-- int_observed_trips, per stop: predictions carry no pid, so trip_status matches a flag to
+-- a scheduled trip that serves that stop (two trips can share route, direction and start).
 with keyed as (
     select
         *,
@@ -15,6 +16,7 @@ select
     rt,
     direction,
     start_s,
+    stpid as stop_id,
     min(fetched_at) as first_flagged_at,
     max(fetched_at) as last_flagged_at,
     count(*) as n_flagged_samples

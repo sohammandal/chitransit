@@ -8,14 +8,16 @@ models:
     columns:
       - name: status
         description: >
-          ran | flagged (CTA marked it canceled, dyn=1) | silent (not seen, not flagged,
-          while the feed and the prediction sampler were both watching) | unknown (not enough
-          evidence) | pending (not over yet).
+          ran | likely_ran (not seen, but its bus ran the block trips before and after, or a
+          single report) | flagged (CTA announced it canceled, dyn=1) | silent (not seen, not
+          announced, while the feed and this trip's prediction samples were watching) |
+          missing (not seen while watched; announcement unknown) | unknown (not watched, or a
+          detour on the route) | pending (not over yet). See the model header for the order.
         data_tests:
           - not_null
           - accepted_values:
               arguments:
-                values: [ran, flagged, silent, unknown, pending]
+                values: [ran, likely_ran, flagged, silent, missing, unknown, pending]
       - name: matched_on
         description: "pattern: same pid and start; route: same route and start (bus on a detour pattern)."
       - name: flagged
@@ -23,7 +25,13 @@ models:
       - name: sweep_coverage
         description: Share of the trip's scheduled minutes with a fully successful sweep.
       - name: flags_sampled
-        description: Predictions were sampled in the 30 minutes before the trip was due.
+        description: This trip's first or middle stop was sampled for predictions in the 30 minutes before it was due.
+      - name: reason
+        description: "Why a trip isn't ran/flagged: not_watched, detour, tracker_gap, single_report, flags_not_sampled."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [not_watched, detour, tracker_gap, single_report, flags_not_sampled]
 
   - name: route_hour_delivery
     description: >
