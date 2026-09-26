@@ -80,12 +80,21 @@ def main() -> None:
     for endpoint, n, failed, retried, max_ms in calls:
         print(f"calls         {endpoint}: {n}, failed {failed}, retried {retried}, max {max_ms} ms")
 
-    # route match against the GTFS schedule for each service date seen
+    # Route match against the GTFS schedule. After midnight, buses report the previous
+    # service day with stst past 24:00 (e.g. Sep 25 at 24:47), while CTA's GTFS lists the
+    # same trip on the next day at 00:47: try the reported key, then the rolled-over one.
     sched: dict[tuple, list] = {}
-    for d in {t[2] for t in trips}:
+    for d in {t[2] for t in trips} | {t[2] + timedelta(days=1) for t in trips}:
         for (rt, direction, stst), gtfs in load_scheduled({args.rt}, d).items():
             sched[(rt, direction, d, stst)] = gtfs
-    keys = [(rt, rtdir.removesuffix("bound"), stsd, stst) for rt, rtdir, stsd, stst in trips]
+
+    def gtfs_key(k: tuple) -> tuple:
+        rt, direction, stsd, stst = k
+        if stst >= 86400 and len(sched.get(k, [])) != 1:
+            return (rt, direction, stsd + timedelta(days=1), stst - 86400)
+        return k
+
+    keys = [gtfs_key((rt, d.removesuffix("bound"), stsd, stst)) for rt, d, stsd, stst in trips]
     exact = sum(1 for k in keys if len(sched.get(k, [])) == 1)
     print(
         f"match #{args.rt}     {exact}/{len(keys)} trips match exactly one GTFS trip "
