@@ -44,5 +44,17 @@ services:
       postgres:
         condition: service_healthy
 
+  # Week-2 CDC spike (dev): `docker compose --profile cdc up -d debezium`.
+  # Reads the dev Postgres change log and writes Iceberg tables to ./data/lake.
+  debezium:
+    image: ghcr.io/memiiso/debezium-server-iceberg:1.0.0.Final
+    profiles: ["cdc"]
+    volumes:
+      - ./cdc/debezium/application.dev.properties:/debezium/config/application.properties:ro
+      - ./data/lake:/data/warehouse
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   pgdata:
