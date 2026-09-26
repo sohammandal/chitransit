@@ -64,6 +64,8 @@ if [ "$before" = "$after" ] && [ "$running" = "$expected" ] \
 fi
 
 # Take the deploy files from the image, so they always match the code that runs.
+cdc_conf="$DIR/cdc/application.prod.properties"
+cdc_before=$(cat "$cdc_conf" 2>/dev/null | cksum)
 tmp=$(mktemp -d)
 cid=$(docker create "$IMAGE")
 docker cp -q "$cid:/app/deploy/." "$tmp/"
@@ -82,5 +84,11 @@ sha=$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' 
   | sed -n 's/^GIT_SHA=//p')
 log "deploying ${sha:-unknown} (image ${after:7:12}; running before: ${running:-none})"
 compose up -d --remove-orphans
+# A changed CDC config file doesn't change the compose definition, so compose keeps the old
+# container (and its bind mount of the old file): recreate Debezium to load the new config.
+if [ "$(cksum < "$cdc_conf")" != "$cdc_before" ] && compose ps --services | grep -qx debezium; then
+  log "CDC config changed; recreating debezium"
+  compose up -d --force-recreate debezium
+fi
 docker image prune -f >/dev/null
 log "done: $(compose ps --status running --services | sort | tr '\n' ' ')"
