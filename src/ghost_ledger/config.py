@@ -46,6 +46,8 @@ class Settings:
     assignment_grace_minutes: int
     # Where `ghost-ledger monitor` sends metrics: CloudWatch in prod, the log in dev
     metrics_sink: Literal["log", "cloudwatch"] = "log"
+    # Glue "database.table" whose last Iceberg commit the monitor watches (prod only)
+    ingress_freshness_table: str | None = None
 
     @property
     def is_prod(self) -> bool:
@@ -109,6 +111,7 @@ def get_settings(environ: Mapping[str, str] | None = None, root: Path = REPO_ROO
         poll_routes=routes or None,
         assignment_grace_minutes=grace,
         metrics_sink=sink,  # type: ignore[arg-type]
+        ingress_freshness_table=v.get("INGRESS_FRESHNESS_TABLE", "").strip() or None,
     )
     calls = settings.vehicle_calls_per_day()
     if calls > MAX_VEHICLE_CALLS_PER_DAY:

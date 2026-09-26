@@ -60,6 +60,11 @@ locals {
       periods = 1, missing = "notBreaching",
       text    = "A replication slot is lost or unreserved: CDC needs a re-snapshot"
     }
+    ingress-stale = {
+      metric  = "IngressFreshnessMinutes", op = "GreaterThanThreshold", threshold = 15,
+      periods = 3, missing = "breaching",
+      text    = "No Iceberg commit to Ingress for 15+ minutes (Debezium up but not landing?)"
+    }
     cdc-slot-inactive = {
       metric  = "ReplicationSlotsInactive", op = "GreaterThanOrEqualToThreshold", threshold = 1,
       periods = 10, missing = "notBreaching",

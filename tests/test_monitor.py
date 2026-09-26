@@ -4,7 +4,7 @@ import psycopg
 import pytest
 
 from ghost_ledger.config import get_settings
-from ghost_ledger.monitor import Snapshot, compute_metrics, read_snapshot
+from ghost_ledger.monitor import Snapshot, compute_metrics, ingress_freshness, read_snapshot
 
 # 18:00 UTC = 13:00 Chicago (daytime); 08:00 UTC = 03:00 Chicago (night)
 NOON = datetime(2026, 9, 28, 18, 0, tzinfo=UTC)
@@ -90,3 +90,22 @@ def test_snapshot_query_runs_against_the_real_schema():
     with conn:
         s = read_snapshot(conn, datetime.now(UTC))
     assert s.sweeps_last_hour >= 0 and isinstance(s.slots, tuple)
+
+
+class FakeGlue:
+    def __init__(self, updated: datetime):
+        self.updated = updated
+        self.asked: list[tuple[str, str]] = []
+
+    def get_table(self, DatabaseName: str, Name: str) -> dict:  # noqa: N803 - boto3's names
+        self.asked.append((DatabaseName, Name))
+        return {"Table": {"UpdateTime": self.updated}}
+
+
+def test_ingress_freshness_is_minutes_since_the_last_commit():
+    glue = FakeGlue(NOON - timedelta(minutes=4, seconds=30))
+    m = ingress_freshness(glue, "ghost_ledger_ingress.ghost_ops_sweeps", NOON)
+    assert (m.name, m.value) == ("IngressFreshnessMinutes", 4.5)
+    assert glue.asked == [("ghost_ledger_ingress", "ghost_ops_sweeps")]
+    # a clock slightly behind Glue's never yields a negative age
+    assert ingress_freshness(FakeGlue(NOON + timedelta(seconds=5)), "d.t", NOON).value == 0

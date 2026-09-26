@@ -15,6 +15,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import psycopg
@@ -120,6 +121,16 @@ def disk_used_pct(path: str = "/") -> float:
     return 100 * usage.used / usage.total
 
 
+def ingress_freshness(glue: Any, table: str, now: datetime) -> Metric:
+    """Minutes since the Ingress table's last Iceberg commit. Glue's UpdateTime moves with
+    every commit (verified 2026-09-26); Debezium commits every 5 minutes, so a larger value
+    means CDC is running but not landing (the gap slot lag alone is slow to show)."""
+    database, name = table.split(".", 1)
+    updated = glue.get_table(DatabaseName=database, Name=name)["Table"]["UpdateTime"]
+    minutes = max((now - updated).total_seconds() / 60, 0.0)
+    return Metric("IngressFreshnessMinutes", round(minutes, 2), "None")
+
+
 class CloudWatchSink:
     def __init__(self, env: str) -> None:
         import boto3  # only needed in prod
@@ -152,6 +163,11 @@ def run(
     stop = stop or threading.Event()
     use_cloudwatch = settings.metrics_sink == "cloudwatch" and not dry_run
     sink = CloudWatchSink(settings.env) if use_cloudwatch else LogSink()
+    glue = None
+    if settings.ingress_freshness_table:
+        import boto3  # only needed in prod
+
+        glue = boto3.client("glue")
     log.info("monitor started: env=%s sink=%s", settings.env, type(sink).__name__)
     conn: psycopg.Connection | None = None
     metrics: list[Metric] = []
@@ -163,6 +179,12 @@ def run(
             metrics = compute_metrics(
                 read_snapshot(conn, at), settings.poll_interval_seconds, disk_used_pct()
             )
+            if glue is not None:
+                try:
+                    metrics.append(ingress_freshness(glue, settings.ingress_freshness_table, at))
+                except Exception:
+                    # Publish nothing for it: the alarm treats missing data as breaching.
+                    log.exception("could not read Ingress freshness from Glue")
             sink.send(metrics, at)
         except psycopg.Error:
             # Publish nothing: missing data is what trips the poller-alive alarm.

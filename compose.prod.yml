@@ -75,6 +75,9 @@ services:
   monitor:
     <<: *app
     command: ["monitor"]
+    environment:
+      # its last Iceberg commit -> IngressFreshnessMinutes (sweeps change every 30 s)
+      INGRESS_FRESHNESS_TABLE: ghost_ledger_ingress.ghost_ops_sweeps
     depends_on:
       postgres:
         condition: service_healthy
