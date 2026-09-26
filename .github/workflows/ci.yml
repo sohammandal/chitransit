@@ -45,8 +45,25 @@ jobs:
         if: failure()
         run: docker compose logs postgres
 
+  terraform:
+    # Offline checks (no AWS): formatting and validity of both stacks on every change
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.14.5
+      - run: terraform fmt -check -recursive -diff infra/terraform
+      - name: Validate
+        run: |
+          for stack in bootstrap prod; do
+            terraform -chdir=infra/terraform/$stack init -backend=false -input=false
+            terraform -chdir=infra/terraform/$stack validate
+          done
+
   image:
-    needs: test
+    needs: [test, terraform]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15

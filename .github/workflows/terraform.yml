@@ -1,0 +1,139 @@
+name: terraform
+
+# Plan the prod stack on every PR and every push to main that touches infra. Each plan run
+# uploads its exact plan file. To apply, read a main-branch plan, then start this workflow
+# by hand (Actions -> terraform -> Run workflow) with that run's ID: the apply job applies
+# that saved file, nothing re-planned. Terraform refuses it if prod state changed since.
+# Apply runs only in the `prod` environment (main only); AWS enforces that too, because the
+# apply role trusts only `repo:...:environment:prod`. No AWS keys are stored in GitHub.
+#
+# Repo variables used (Settings -> Secrets and variables -> Actions -> Variables):
+#   AWS_PLAN_ROLE_ARN, AWS_APPLY_ROLE_ARN, TF_STATE_BUCKET   (from bootstrap outputs)
+#   TF_ADMIN_CIDRS (JSON list), TF_ALERT_EMAIL, TF_SSH_PUBLIC_KEY
+
+on:
+  pull_request:
+    paths: ["infra/terraform/prod/**", "infra/box/**", ".github/workflows/terraform.yml"]
+  push:
+    branches: [main]
+    paths: ["infra/terraform/prod/**", "infra/box/**", ".github/workflows/terraform.yml"]
+  workflow_dispatch:
+    inputs:
+      apply_plan_run_id:
+        description: "Run ID of a successful main-branch plan to apply (empty = just plan)"
+        type: string
+        default: ""
+
+concurrency:
+  group: terraform-prod
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-2
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  TF_VAR_admin_cidrs: ${{ vars.TF_ADMIN_CIDRS }}
+  TF_VAR_alert_email: ${{ vars.TF_ALERT_EMAIL }}
+  TF_VAR_ssh_public_key: ${{ vars.TF_SSH_PUBLIC_KEY }}
+
+defaults:
+  run:
+    # `shell: bash` adds pipefail, so `terraform plan | tee` fails when the plan fails
+    shell: bash
+    working-directory: infra/terraform/prod
+
+jobs:
+  plan:
+    # Skips until bootstrap has run and the repo variables exist
+    if: ${{ vars.AWS_PLAN_ROLE_ARN != '' && inputs.apply_plan_run_id == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.14.5
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - run: terraform fmt -check -recursive -diff
+      - run: terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+      - run: terraform validate
+      - run: terraform plan -no-color -lock-timeout=2m -out=tfplan | tee plan.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tfplan
+          path: |
+            infra/terraform/prod/tfplan
+            infra/terraform/prod/plan.txt
+          retention-days: 14
+
+      - name: Post the plan on the PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          { echo "### terraform plan (prod), run ${{ github.run_id }}"; echo '```'
+            tail -c 60000 plan.txt; echo '```'; } > comment.md
+          gh pr comment ${{ github.event.pull_request.number }} --body-file comment.md
+
+  apply:
+    if: ${{ vars.AWS_APPLY_ROLE_ARN != '' && inputs.apply_plan_run_id != '' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    steps:
+      - name: Check the plan run is a successful main-branch terraform run
+        id: source
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.apply_plan_run_id }}
+        run: |
+          read -r name branch event conclusion sha < <(gh api \
+            "repos/${{ github.repository }}/actions/runs/$RUN_ID" \
+            --jq '[.name, .head_branch, .event, .conclusion, .head_sha] | @tsv')
+          echo "run $RUN_ID: $name on $branch ($event) -> $conclusion at $sha"
+          [ "$name" = terraform ] && [ "$branch" = main ] && [ "$event" != pull_request ] \
+            && [ "$conclusion" = success ] || { echo "not an applicable plan run"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: tfplan
+          run-id: ${{ inputs.apply_plan_run_id }}
+          github-token: ${{ github.token }}
+          path: infra/terraform/prod
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.14.5
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - run: terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+      - name: The plan being applied
+        run: terraform show -no-color tfplan
+      - run: terraform apply -no-color -lock-timeout=2m tfplan

@@ -1,6 +1,6 @@
 #cloud-config
 # First boot of the prod box (Ubuntu 24.04 on Lightsail). Rendered by Terraform with
-# templatefile(): ${deploy_sh} is infra/box/deploy.sh. Nothing secret is in here; secrets
+# templatefile(): $${deploy_sh} is infra/box/deploy.sh (literal $ escaped as $$ here). Nothing secret is in here; secrets
 # arrive later over SSH via `make prod-secrets` into /etc/ghost-ledger (mode 0700).
 
 package_update: true

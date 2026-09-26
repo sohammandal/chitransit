@@ -125,3 +125,26 @@ def test_get_pattern_fetches_by_pid():
     with make_client(handler) as client:
         client.get_pattern(3637)
     assert seen["pid"] == "3637" and "rt" not in seen
+
+
+def test_a_bad_key_is_a_failure_even_though_cta_answers_http_200():
+    body = ok_body(error=[{"msg": "Invalid API access key supplied"}])
+    with make_client(lambda request: httpx.Response(200, json=body)) as client:
+        result = client.get_vehicles(["79"])
+    assert not result.ok
+    assert result.error == "API error: Invalid API access key supplied"
+    assert result.attempts == 1  # refusals are not retried
+
+
+def test_quota_exhaustion_is_a_failure():
+    body = ok_body(error=[{"msg": "Transaction limit for current day has been exceeded."}])
+    with make_client(lambda request: httpx.Response(200, json=body)) as client:
+        assert not client.get_vehicles(["79"]).ok
+
+
+def test_one_bad_route_among_real_data_keeps_the_data():
+    body = ok_body(vehicle=[{"vid": "1"}], error=[{"rt": "X9", "msg": "Invalid route"}])
+    with make_client(lambda request: httpx.Response(200, json=body)) as client:
+        result = client.get_vehicles(["79", "X9"])
+    assert result.ok and result.body["vehicle"] == [{"vid": "1"}]
+    assert result.api_errors == [{"rt": "X9", "msg": "Invalid route"}]

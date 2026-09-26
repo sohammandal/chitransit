@@ -1,0 +1,5 @@
+# Copy to terraform.tfvars (gitignored) for plans from the laptop. CI uses GitHub repo
+# variables instead (TF_VAR_admin_cidrs, TF_VAR_alert_email, TF_VAR_ssh_public_key).
+admin_cidrs    = ["203.0.113.7/32"] # your IP: curl -s https://checkip.amazonaws.com
+alert_email    = "you@example.com"
+ssh_public_key = "ssh-ed25519 AAAA... ghost-ledger"

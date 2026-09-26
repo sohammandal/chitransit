@@ -114,7 +114,7 @@ cta-ghost-ledger/
 │   ├── monitor.py              # Timeliness metrics for CloudWatch alarms
 │   └── cli.py                  # ghost-ledger env | routes | vehicles | poll | monitor | check-db
 ├── db/migrations/              # Postgres schema as dbmate migrations (make migrate)
-├── infra/box/                  # Prod box: cloud-init template and the pull-based deploy.sh
+├── infra/                      # Prod: Terraform (bootstrap, prod), box setup + deploy scripts; runbook in infra/README.md
 ├── .github/workflows/          # CI: lint + tests with Postgres; image to GHCR on main
 ├── scripts/                    # Spikes and run checks (check_run.py), not imported by the package
 ├── tests/                      # pytest

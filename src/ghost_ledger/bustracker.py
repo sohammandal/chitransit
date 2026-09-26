@@ -27,6 +27,11 @@ DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (1.0, 2.0)
 
+# The only error CTA returns for "nothing to report right now" (a quiet route at night, a
+# route with no buses). Verified live 2026-09-25. Anything else, e.g. "Invalid API access key
+# supplied" or a daily-quota message, arrives as HTTP 200 too and must count as a failure.
+BENIGN_API_ERRORS = frozenset({"No data found for parameter"})
+
 # httpx logs full URLs (including ?key=...) at INFO. Keep it quiet so the key never lands in logs.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -37,11 +42,12 @@ class BusTrackerError(RuntimeError):
 
 @dataclass
 class ApiResult:
-    """One API call. `error` is set only for transport failures after all retries.
+    """One API call. `error` is set when the call failed: a transport failure after all
+    retries, or a reply with no data and an error other than "No data found" (a bad key or
+    an exhausted quota also comes back as HTTP 200).
 
-    CTA also returns per-parameter errors next to data (e.g. "No data found for
-    parameter" for a route with no buses right now); those are in `api_errors` and
-    are not failures.
+    Per-parameter errors next to real data (one quiet route among ten) stay in `api_errors`
+    and are not failures, so one bad route can't discard the other nine.
     """
 
     body: dict[str, Any] = field(default_factory=dict)
@@ -133,14 +139,22 @@ class BusTrackerClient:
                     result.error = f"HTTP {response.status_code}"
                 else:
                     result.body = response.json().get("bustime-response", {})
-                    result.error = None
-                    break
+                    result.error = self._api_failure(result.body)
+                    break  # an API-level refusal won't change on retry
             except (httpx.TransportError, ValueError) as exc:
                 result.error = self._redact(f"{type(exc).__name__}: {exc}")
             if attempt < MAX_ATTEMPTS:
                 self._sleep(BACKOFF_SECONDS[attempt - 1])
         result.latency_ms = round((time.monotonic() - started) * 1000)
         return result
+
+    @staticmethod
+    def _api_failure(body: dict[str, Any]) -> str | None:
+        if any(k != "error" for k in body):
+            return None  # there is data; per-route errors stay in api_errors
+        serious = [e.get("msg", "") for e in body.get("error", [])]
+        serious = [m for m in serious if m not in BENIGN_API_ERRORS]
+        return f"API error: {'; '.join(serious)}" if serious else None
 
     def get_routes(self) -> ApiResult:
         return self.call("getroutes")

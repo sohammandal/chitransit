@@ -74,7 +74,8 @@ class FakeCta:
         if endpoint == "getvehicles":
             if self.fail_vehicles:
                 return httpx.Response(503)
-            body = {"vehicle": self.vehicles} if self.vehicles else {"error": [{"msg": "No data"}]}
+            quiet = {"error": [{"rt": ROUTES[0], "msg": "No data found for parameter"}]}
+            body = {"vehicle": self.vehicles} if self.vehicles else quiet
             return httpx.Response(200, json={"bustime-response": body})
         if endpoint == "getpatterns":
             ptr = {"pid": PID, "ln": 1000.0, "rtdir": "Eastbound", "pt": [{"seq": 1, "pdist": 0}]}

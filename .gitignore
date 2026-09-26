@@ -42,3 +42,11 @@ tmp*/
 .DS_Store
 .vscode/
 .idea/
+
+# Terraform (state lives in S3 or, for bootstrap, only on the laptop)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+infra/terraform/**/terraform.tfvars
+infra/terraform/**/backend.hcl

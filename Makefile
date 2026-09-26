@@ -1,4 +1,4 @@
-.PHONY: install lint test env guard up down psql migrate migrate-status new-migration db-reset check-db routes vehicles poll monitor image rehearse rehearse-logs rehearse-psql rehearse-down
+.PHONY: install lint test env guard up down psql migrate migrate-status new-migration db-reset check-db routes vehicles poll monitor image rehearse rehearse-logs rehearse-psql rehearse-down ssh-key tf-bootstrap tf-plan prod-ip prod-ssh prod-secrets prod-status prod-logs prod-tunnel
 
 # Environment: dev (laptop, default) or prod (Lightsail box). Prod needs CONFIRM=prod:
 #   make migrate ENV=prod CONFIRM=prod
@@ -98,6 +98,40 @@ rehearse-psql:
 rehearse-down:      ## stop the rehearsal and delete its data
 	$(REHEARSAL_COMPOSE) down -v
 	rm -rf $(REHEARSAL)
+
+# ---------- prod infrastructure (step 4; docs/PLAN.md) ----------
+TF_PROD = terraform -chdir=infra/terraform/prod
+PROD_IP = $$($(TF_PROD) output -raw box_ip)
+PROD_SSH = ssh -i ~/.ssh/ghost_ledger ubuntu@$(PROD_IP)
+
+ssh-key:            ## create the dedicated SSH key for the box (once)
+	@[ -f ~/.ssh/ghost_ledger ] && echo "~/.ssh/ghost_ledger already exists" || \
+		ssh-keygen -t ed25519 -f ~/.ssh/ghost_ledger -C ghost-ledger-lightsail -N ""
+
+tf-bootstrap:       ## one-time: state bucket, GitHub OIDC, CI roles (local state, asks to approve)
+	cd infra/terraform/bootstrap && terraform init && terraform apply
+
+tf-plan:            ## plan prod from the laptop (needs backend.hcl + terraform.tfvars)
+	$(TF_PROD) init -backend-config=backend.hcl && $(TF_PROD) plan
+
+prod-ip:
+	@$(TF_PROD) output -raw box_ip; echo
+
+prod-ssh:
+	$(PROD_SSH)
+
+prod-secrets:       ## write prod.env + ghcr.env on the box, then deploy (CONFIRM=prod; safe to re-run)
+	@[ "$(CONFIRM)" = prod ] || { echo "This writes secrets to the prod box. Re-run with CONFIRM=prod."; exit 1; }
+	infra/box/push-secrets.sh $(PROD_IP)
+
+prod-status:        ## services, last deploy, and the monitor's latest metrics
+	$(PROD_SSH) 'cd /opt/ghost-ledger && sudo docker compose -p ghost-ledger ps --format "table {{.Service}}\t{{.Status}}"; sudo journalctl -u ghost-ledger-deploy -n 3 --no-pager -o cat; sudo docker logs --tail 1 ghost-ledger-monitor-1'
+
+prod-logs:          ## follow the poller on the box
+	$(PROD_SSH) 'sudo docker logs -f --tail 20 ghost-ledger-poller-1'
+
+prod-tunnel:        ## Postgres on the box at localhost:15432 (Ctrl-C to close)
+	ssh -i ~/.ssh/ghost_ledger -N -L 15432:127.0.0.1:5432 ubuntu@$(PROD_IP)
 
 routes:             ## smoke-test the Bus Tracker key
 	$(CLI) routes
