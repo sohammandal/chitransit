@@ -5,7 +5,14 @@
 # `docker compose up -d`. The migrate job runs before the poller; the poller finishes its
 # sweep on SIGTERM. CI never connects to the box.
 #
-# Overridable for the local rehearsal: IMAGE, DIR, ENV_FILE, BIN, SKIP_PULL=1, FORCE=1.
+# Health gate: after a deploy, a sweep must commit within ~2 minutes. If none does, the
+# previous good image (local tag <project>-deploy:last-good) is redeployed and the bad
+# image's id is remembered so the timer doesn't redeploy it; the next CI image replaces
+# it. Migrations are not undone: they must stay compatible with the previous code
+# (expand, then contract; see CLAUDE.md).
+#
+# Overridable for the local rehearsal: IMAGE, DIR, ENV_FILE, BIN, SKIP_PULL=1, FORCE=1,
+# HEALTH_CHECKS.
 set -euo pipefail
 
 IMAGE="${IMAGE:-ghcr.io/sohammandal/ghost-ledger:main}"
@@ -41,7 +48,57 @@ compose() {
     --env-file "$ENV_FILE" "$@"
 }
 
-before=$(docker image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null || true)
+# Local tag for the newest image that committed a sweep after its deploy, and the id of an
+# image that failed to: the rollback target, and an image never to redeploy.
+LAST_GOOD="$PROJECT-deploy:last-good"
+BAD_FILE="$DIR/.bad-image"
+HEALTH_CHECKS="${HEALTH_CHECKS:-12}"  # x 10 s: a healthy poller commits a sweep every 30 s
+
+image_id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null || true; }
+
+# True once the poller has committed a sweep that finished after $1 (a SQL timestamp).
+healthy() {
+  local n
+  for _ in $(seq 1 "$HEALTH_CHECKS"); do
+    n=$(compose exec -T postgres psql -U ghost -d ghost_ledger -XAt \
+      -c "SELECT COUNT(*) FROM ops.sweeps WHERE finished_at > $1" 2>/dev/null || true)
+    [ "${n:-0}" -gt 0 ] 2>/dev/null && return 0
+    sleep 10
+  done
+  return 1
+}
+
+# Take the deploy files from the image, so they always match the code that runs; then up.
+deploy() {
+  local cdc_conf="$DIR/cdc/application.prod.properties" cdc_before tmp cid sha
+  cdc_before=$({ cat "$cdc_conf" 2>/dev/null || true; } | cksum)  # the first deploy has none
+  tmp=$(mktemp -d)
+  cid=$(docker create "$IMAGE")
+  docker cp -q "$cid:/app/deploy/." "$tmp/"
+  docker rm "$cid" >/dev/null
+  mkdir -p "$DIR/cdc"
+  for f in compose.yml compose.prod.yml cdc/application.prod.properties; do
+    cp "$tmp/$f" "$DIR/$f.new" && mv -f "$DIR/$f.new" "$DIR/$f"
+  done
+  # Replace this script by rename (new inode), never in place: bash is still reading it.
+  if [ -w "$(dirname "$BIN")" ]; then
+    cp "$tmp/deploy.sh" "$BIN.new" && chmod 0755 "$BIN.new" && mv -f "$BIN.new" "$BIN"
+  fi
+  rm -rf "$tmp"
+  sha=$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$IMAGE" \
+    | sed -n 's/^GIT_SHA=//p')
+  log "deploying ${sha:-unknown} (image $(image_id "$IMAGE" | cut -c8-19); running before: ${running:-none})"
+  # A failed migration exits non-zero and the poller never starts: the health check decides.
+  compose up -d --remove-orphans || log "compose up failed"
+  # A changed CDC config file doesn't change the compose definition, so compose keeps the
+  # old container (and its bind mount of the old file): recreate Debezium to load it.
+  if [ "$(cksum < "$cdc_conf")" != "$cdc_before" ] && compose ps --services | grep -qx debezium; then
+    log "CDC config changed; recreating debezium"
+    compose up -d --force-recreate debezium
+  fi
+}
+
+before=$(image_id "$IMAGE")
 if [ "${SKIP_PULL:-0}" != 1 ]; then
   if [ -f "$GHCR_ENV" ]; then
     # shellcheck disable=SC1090
@@ -50,7 +107,12 @@ if [ "${SKIP_PULL:-0}" != 1 ]; then
   fi
   docker pull -q "$IMAGE" >/dev/null
 fi
-after=$(docker image inspect --format '{{.Id}}' "$IMAGE")
+after=$(image_id "$IMAGE")
+if [ -f "$BAD_FILE" ] && [ "$after" = "$(cat "$BAD_FILE")" ] && [ -n "$(image_id "$LAST_GOOD")" ]; then
+  # This image already failed its health check here: stay on the last good one.
+  docker tag "$LAST_GOOD" "$IMAGE"
+  after=$(image_id "$IMAGE")
+fi
 
 running="" expected="unknown"
 if [ -f "$DIR/compose.prod.yml" ]; then
@@ -58,37 +120,33 @@ if [ -f "$DIR/compose.prod.yml" ]; then
   # every long-running service of the active profiles (migrate is a one-shot job)
   expected=$(compose config --services 2>/dev/null | grep -vx migrate | sort | tr '\n' ' ')
 fi
-if [ "$before" = "$after" ] && [ "$running" = "$expected" ] \
-  && [ "${FORCE:-0}" != 1 ]; then
-  exit 0  # nothing changed and everything is up
+if [ "$before" = "$after" ] && [ "$running" = "$expected" ] && [ "${FORCE:-0}" != 1 ]; then
+  # Nothing changed and everything is up. Remember this image as good if nothing is yet.
+  if [ -z "$(image_id "$LAST_GOOD")" ] && HEALTH_CHECKS=1 healthy "NOW() - INTERVAL '2 minutes'"; then
+    docker tag "$after" "$LAST_GOOD"
+    log "marked ${after:7:12} as last good"
+  fi
+  exit 0
 fi
 
-# Take the deploy files from the image, so they always match the code that runs.
-cdc_conf="$DIR/cdc/application.prod.properties"
-cdc_before=$(cat "$cdc_conf" 2>/dev/null | cksum)
-tmp=$(mktemp -d)
-cid=$(docker create "$IMAGE")
-docker cp -q "$cid:/app/deploy/." "$tmp/"
-docker rm "$cid" >/dev/null
-mkdir -p "$DIR/cdc"
-for f in compose.yml compose.prod.yml cdc/application.prod.properties; do
-  cp "$tmp/$f" "$DIR/$f.new" && mv -f "$DIR/$f.new" "$DIR/$f"
-done
-# Replace this script by rename (new inode), never in place: bash is still reading it.
-if [ -w "$(dirname "$BIN")" ]; then
-  cp "$tmp/deploy.sh" "$BIN.new" && chmod 0755 "$BIN.new" && mv -f "$BIN.new" "$BIN"
-fi
-rm -rf "$tmp"
-
-sha=$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$IMAGE" \
-  | sed -n 's/^GIT_SHA=//p')
-log "deploying ${sha:-unknown} (image ${after:7:12}; running before: ${running:-none})"
-compose up -d --remove-orphans
-# A changed CDC config file doesn't change the compose definition, so compose keeps the old
-# container (and its bind mount of the old file): recreate Debezium to load the new config.
-if [ "$(cksum < "$cdc_conf")" != "$cdc_before" ] && compose ps --services | grep -qx debezium; then
-  log "CDC config changed; recreating debezium"
-  compose up -d --force-recreate debezium
+started=$(date -u +%FT%TZ)
+deploy
+if healthy "'$started'"; then
+  docker tag "$after" "$LAST_GOOD"
+  rm -f "$BAD_FILE"
+  log "healthy: a sweep committed after the deploy"
+else
+  good=$(image_id "$LAST_GOOD")
+  if [ -n "$good" ] && [ "$good" != "$after" ]; then
+    log "UNHEALTHY: no sweep committed after deploying ${after:7:12}; rolling back to ${good:7:12}"
+    echo "$after" > "$BAD_FILE"
+    docker tag "$LAST_GOOD" "$IMAGE"
+    running=$(compose ps --status running --services 2>/dev/null | sort | tr '\n' ' ')
+    deploy
+    if healthy "'$started'"; then log "rollback healthy"; else log "rollback UNHEALTHY too"; fi
+  else
+    log "UNHEALTHY and no other known-good image to roll back to (poller-stale will alarm)"
+  fi
 fi
 docker image prune -f >/dev/null
 log "done: $(compose ps --status running --services | sort | tr '\n' ' ')"

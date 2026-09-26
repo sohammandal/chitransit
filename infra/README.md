@@ -74,6 +74,29 @@ infra/
   5 minutes: `sudo systemctl stop ghost-ledger-deploy.timer && sudo docker stop ghost-ledger-debezium-1`.
   The slot keeps WAL (capped at 2 GB); `cdc-slot-inactive` emails after 10 minutes.
 
+## Deploy safety
+
+- **CI gate:** the prod image is built only after lint and all tests pass (the tests run every
+  migration against Postgres 17). Each image is tagged `main` and with its commit SHA.
+- **Health gate + auto-rollback** (`deploy.sh`): after a deploy a sweep must commit within
+  ~2 minutes. If none does, the box redeploys its local `ghost-ledger-deploy:last-good` image
+  (with that image's compose files), remembers the bad image id in `/opt/ghost-ledger/.bad-image`
+  and won't redeploy it; the next CI image replaces it. The log line starts `deploy: UNHEALTHY`.
+- **Manual rollback:** `make prod-ssh`, then
+  `sudo env IMAGE=ghcr.io/sohammandal/ghost-ledger:<sha> FORCE=1 /usr/local/bin/ghost-ledger-deploy`
+  (the timer goes back to `:main` on its next run, so also revert on main).
+- **Migrations are never rolled back automatically.** A failed migration undoes itself (dbmate
+  runs each in a transaction); a successful one stays, so every migration must work with the
+  code already running:
+  - **Expand, then contract.** Add tables/columns first; drop or rename only in a later deploy,
+    once no running code uses the old shape.
+  - **Never rewrite or long-lock a big table** (`bus_positions`, `raw_responses`): no column type
+    changes, no non-concurrent index builds, no `ADD COLUMN ... DEFAULT <volatile>`.
+  - **Published tables change additively** (Debezium and Iceberg add columns; drops and renames
+    need a plan). A new published table ships in two deploys: the Debezium include list first,
+    then the migration that adds it to the publication.
+  - Never `TRUNCATE` or bulk `DELETE` a published table (both stream to Ingress); drop partitions.
+
 ## Things that are easy to break
 
 - **Never change `user_data` expecting an effect**: it's ignored after first boot (changing it

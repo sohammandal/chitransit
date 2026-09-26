@@ -87,9 +87,12 @@ services:
     environment:
       LAKE_BUCKET: ghost-ledger-lake-354894954112
       GLUE_DATABASE: ghost_ledger_ingress
-      # 2 GB box shared with Postgres: cap the heap; the container limit leaves JVM overhead
+      # 2 GB box shared with Postgres: cap the heap at 512 MB. Measured 2026-09-26: the heap
+      # fills to its cap and ~260 MB sits outside it (classes, code cache, threads), so the
+      # limit leaves room above ~800 MB. Fewer malloc arenas keep native memory from creeping.
       JAVA_OPTS: -Xms256m -Xmx512m -XX:+ExitOnOutOfMemoryError
-    mem_limit: 900m
+      MALLOC_ARENA_MAX: "2"
+    mem_limit: 1100m
     volumes: !override
       - ./cdc/application.prod.properties:/debezium/config/application.properties:ro
     stop_grace_period: 60s
