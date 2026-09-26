@@ -1,5 +1,5 @@
 # Local system of record for the poller. Logical replication is on so CDC
-# (Debezium Server or Estuary) can read the WAL in week 2.
+# (Debezium Server) can read the WAL in week 2. The same setup runs 24/7 on a Lightsail box.
 services:
   postgres:
     image: postgres:17
@@ -23,13 +23,27 @@ services:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # Runs only when the volume is first created; `make db-reset` to re-run
-      - ./sql/postgres:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ghost -d ghost_ledger"]
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # Schema migrations (db/migrations). On demand only: `make migrate`.
+  # Runs the same way on the laptop and on the Lightsail box, nothing to install.
+  dbmate:
+    image: ghcr.io/amacneil/dbmate:2
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgres://ghost:ghost@postgres:5432/ghost_ledger?sslmode=disable
+      DBMATE_MIGRATIONS_DIR: /db/migrations
+      DBMATE_NO_DUMP_SCHEMA: "true"
+      DBMATE_WAIT: "true"
+    volumes:
+      - ./db:/db
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   pgdata:

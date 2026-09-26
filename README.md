@@ -38,9 +38,11 @@ The poller writes to exactly one place. Everything downstream is derived from Po
 
 ```mermaid
 flowchart LR
-    BT[CTA Bus Tracker API<br/>every 30 s] --> P[Poller]
-    P -->|one transaction| PG[(Postgres<br/>ops.raw_polls<br/>ops.bus_live_board)]
-    PG -->|logical replication| CDC[Debezium / Estuary]
+    BT[CTA Bus Tracker API<br/>every 30 s] --> P
+    subgraph BOX[Lightsail box, 24/7]
+        P[Poller] -->|one transaction per sweep| PG[(Postgres<br/>sweeps, raw_polls<br/>bus_positions)]
+        PG -->|logical replication| CDC[Debezium Server]
+    end
     CDC --> ING[Ingress<br/>Iceberg on S3]
     GTFS[GTFS versions<br/>CTA + Transitland] --> INT
     ING --> INT[Intermediate<br/>dbt-duckdb]
@@ -53,8 +55,8 @@ flowchart LR
 
 | Layer | What lives there |
 |-------|------------------|
-| **Postgres (`ops`)** | Raw API responses and current state per bus. The system of record. |
-| **Ingress** | Append-only CDC events in Iceberg, replayable by log position |
+| **Postgres (`ops`)** | The system of record: every sweep, API call and bus sighting is written here first, and Postgres decides their order. Keeps about two days. |
+| **Ingress** | The complete CDC log in Iceberg, append-only and replayable by log position. After two days it is the only copy, so it is protected and never rebuilt. |
 | **Intermediate** | Schedule and route-pattern versions (SCD2), scheduled trips, interpolated stop passes, flagged cancellations |
 | **Reporting** | `route_hour_delivery`, `stop_hour_gaps`, `bunching_events`, with coverage on every row |
 
@@ -68,13 +70,14 @@ Each scheduled trip lands in one of three buckets: **ran**, **flagged canceled**
 |-------|------|--------|
 | Ingestion | Python poller, `httpx` | In progress (week 1) |
 | System of record | PostgreSQL 17, logical replication | Ready |
-| Change data capture | Debezium Server / Estuary | Week 2 |
+| Change data capture | Debezium Server | Week 2 |
+| Hosting | AWS Lightsail 2 GB (poller, Postgres, Debezium) | Week 2 |
 | Lakehouse | Apache Iceberg on Amazon S3 | Week 2 |
 | Transformation | dbt + DuckDB | Week 3 |
 | Orchestration | Dagster | Weeks 2-4 |
 | Dev Tools | `uv`, `ruff`, `sqlfluff`, `pre-commit`, `pytest` | Ready |
 
-Target cost: under $10/month on AWS.
+Target cost: about $14/month (a $12 Lightsail box plus S3). Managed Postgres free tiers and Estuary were ruled out for 24/7 running at bus volume (~2.6M sightings/day).
 
 ---
 
@@ -92,8 +95,8 @@ Target cost: under $10/month on AWS.
 ## Roadmap
 
 - [x] **Scaffold** - uv project, Postgres with logical replication, Bus Tracker client, tooling
-- [ ] **Week 1 - Ingest** - poll every route every 30 s into Postgres; prove trip matching on route 79
-- [ ] **Week 2 - CDC to lakehouse** - Debezium → Iceberg on S3; outage-recovery drill; compaction
+- [ ] **Week 1 - Ingest** - poll every route every 30 s into Postgres; prove trip matching on route 79 (1-hour spike: 53/53 trips on #79 and #9 matched exactly one GTFS trip)
+- [ ] **Week 2 - CDC to lakehouse** - Debezium → Iceberg on S3; move to the Lightsail box; outage-recovery drill; compaction; prune gate
 - [ ] **Week 3 - Schedules and stop passes** - SCD2 schedule and pattern versions, stop-pass interpolation, cancellation sampler
 - [ ] **Week 4 - Metrics and dashboard** - reporting tables, freshness and integrity checks, replay drill
 - [ ] **Later - 'L' trains** - second poller once the Train Tracker key arrives
@@ -104,20 +107,23 @@ Target cost: under $10/month on AWS.
 
 ```
 cta-ghost-ledger/
-├── src/cta_ghost_ledger/
-│   ├── bustracker.py           # Bus Tracker v3 client (10 routes/call, seconds resolution)
+├── src/ghost_ledger/           # The one Python package
+│   ├── bustracker.py           # Bus Tracker v3 client: retries, DST-safe timestamps
 │   ├── config.py               # Settings from env (~/.secrets) and .env
 │   └── cli.py                  # Smoke-test CLI (ghost-ledger routes | vehicles | check-db)
-├── sql/postgres/               # System-of-record schema, run on first DB start
+├── db/migrations/              # Postgres schema as dbmate migrations (make migrate)
+├── scripts/                    # Spikes and one-off checks, not imported by the package
 ├── tests/                      # pytest
 ├── data/                       # Local data (gitignored)
-├── docker-compose.yml          # Postgres 17, wal_level=logical, port 5433
+├── docker-compose.yml          # Postgres 17 (wal_level=logical, port 5433) + dbmate
 ├── Makefile                    # Common commands
 ├── pyproject.toml              # Project, ruff and pytest config
 ├── .sqlfluff                   # SQL lint rules
 ├── .pre-commit-config.yaml     # Hygiene, ruff and sqlfluff hooks
 └── .env.example                # Sample environment config
 ```
+
+Folders follow the pipeline, and each one appears when its week starts: `ingest/` (poller), `cdc/` (Debezium config), `transform/` (dbt), `infra/` (Lightsail) and `dashboard/`.
 
 ---
 
@@ -153,8 +159,8 @@ cta-ghost-ledger/
 5. **Start Postgres** (Docker required):
 
    ```bash
-   make up             # Postgres 17 on localhost:5433
-   make check-db       # wal_level, ops tables, CDC publication
+   make up             # Postgres 17 on localhost:5433, then apply migrations
+   make check-db       # wal_level, ops tables, CDC publication, partitions
    ```
 
 6. **Smoke-test the API:**
@@ -171,7 +177,9 @@ cta-ghost-ledger/
    make test
    ```
 
-Other commands: `make psql` (shell into Postgres), `make db-reset` (recreate the database and re-run the schema), `make down`.
+Other commands: `make psql` (shell into Postgres), `make migrate-status`, `make new-migration NAME=...`, `make db-reset` (drop the local database and rebuild it from migrations), `make down`.
+
+Schema changes always go in a new migration under `db/migrations/`; never edit an applied one.
 
 ### What Happens If Hooks Fail?
 

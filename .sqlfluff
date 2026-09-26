@@ -1,5 +1,5 @@
 [sqlfluff]
-# Postgres is the system of record (sql/postgres). When dbt arrives (week 3),
+# Postgres is the system of record (db/migrations). When dbt arrives (week 3),
 # add a nested .sqlfluff in the dbt project with dialect = duckdb and templater = dbt.
 dialect = postgres
 templater = raw

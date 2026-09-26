@@ -1,8 +1,26 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
+import httpx
 import pytest
 
-from cta_ghost_ledger.bustracker import BusTrackerClient, chunked, parse_tmstmp
+from ghost_ledger.bustracker import (
+    MAX_ATTEMPTS,
+    BusTrackerClient,
+    chunked,
+    parse_tmstmp,
+    resolve_tmstmp,
+)
+
+KEY = "sekret-key-123"
+
+
+def make_client(handler) -> BusTrackerClient:
+    transport = httpx.MockTransport(handler)
+    return BusTrackerClient(api_key=KEY, transport=transport, sleep=lambda s: None)
+
+
+def ok_body(**payload) -> dict:
+    return {"bustime-response": payload}
 
 
 def test_chunked_splits_routes_into_batches_of_ten():
@@ -22,8 +40,88 @@ def test_parse_tmstmp_is_naive_local_time():
     assert parse_tmstmp("20261101 01:30:00").tzinfo is None
 
 
+def test_resolve_tmstmp_ordinary_time_uses_cdt_offset():
+    local = datetime(2026, 9, 25, 19, 21, 44)
+    fetched = datetime(2026, 9, 26, 0, 21, 52, tzinfo=UTC)
+    assert resolve_tmstmp(local, fetched) == datetime(2026, 9, 26, 0, 21, 44, tzinfo=UTC)
+
+
+def test_resolve_tmstmp_dst_fall_back_first_pass_is_cdt():
+    # 2026-11-01 01:30 happens twice in Chicago: 06:30Z (CDT) and 07:30Z (CST).
+    local = datetime(2026, 11, 1, 1, 30)
+    fetched = datetime(2026, 11, 1, 6, 30, 20, tzinfo=UTC)
+    assert resolve_tmstmp(local, fetched) == datetime(2026, 11, 1, 6, 30, tzinfo=UTC)
+
+
+def test_resolve_tmstmp_dst_fall_back_second_pass_is_cst():
+    local = datetime(2026, 11, 1, 1, 30)
+    fetched = datetime(2026, 11, 1, 7, 30, 20, tzinfo=UTC)
+    assert resolve_tmstmp(local, fetched) == datetime(2026, 11, 1, 7, 30, tzinfo=UTC)
+
+
 def test_get_vehicles_rejects_more_than_ten_routes():
-    client = BusTrackerClient(api_key="dummy")
+    client = make_client(lambda request: httpx.Response(200, json=ok_body()))
     with pytest.raises(ValueError):
         client.get_vehicles([str(i) for i in range(11)])
     client.close()
+
+
+def test_retries_timeout_then_succeeds():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1:
+            raise httpx.ConnectTimeout("[Errno 60] Operation timed out")
+        return httpx.Response(200, json=ok_body(vehicle=[{"vid": "1"}]))
+
+    with make_client(handler) as client:
+        result = client.get_vehicles(["79"])
+    assert result.ok and result.attempts == 2
+    assert result.body["vehicle"] == [{"vid": "1"}]
+
+
+def test_retries_server_errors_then_reports_failure_without_raising():
+    with make_client(lambda request: httpx.Response(503, text="busy")) as client:
+        result = client.get_vehicles(["79"])
+    assert not result.ok
+    assert result.attempts == MAX_ATTEMPTS
+    assert result.error == "HTTP 503"
+
+
+def test_non_json_body_is_retried_as_transient():
+    with make_client(lambda request: httpx.Response(200, text="<html>oops</html>")) as client:
+        result = client.get_routes()
+    assert not result.ok and result.attempts == MAX_ATTEMPTS
+
+
+def test_routes_with_no_buses_are_not_a_failure():
+    # Late at night a batch of 10 routes can return only per-route errors.
+    body = ok_body(error=[{"rt": "4", "msg": "No data found for parameter"}])
+    with make_client(lambda request: httpx.Response(200, json=body)) as client:
+        result = client.get_vehicles(["4"])
+    assert result.ok
+    assert result.body.get("vehicle", []) == []
+    assert result.api_errors == [{"rt": "4", "msg": "No data found for parameter"}]
+
+
+def test_error_text_never_contains_the_key():
+    def handler(request):
+        raise httpx.ConnectError(f"failed to reach {request.url}")
+
+    with make_client(handler) as client:
+        result = client.get_routes()
+    assert KEY not in result.error
+    assert "***" in result.error
+
+
+def test_get_pattern_fetches_by_pid():
+    seen = {}
+
+    def handler(request):
+        seen.update(request.url.params)
+        return httpx.Response(200, json=ok_body(ptr=[{"pid": 3637}]))
+
+    with make_client(handler) as client:
+        client.get_pattern(3637)
+    assert seen["pid"] == "3637" and "rt" not in seen
