@@ -1,4 +1,4 @@
-.PHONY: install lint test env guard up down psql migrate migrate-status new-migration db-reset check-db routes vehicles poll monitor image rehearse rehearse-logs rehearse-psql rehearse-down ssh-key tf-bootstrap tf-plan prod-ip prod-ssh prod-secrets prod-status prod-logs prod-tunnel transform dashboard
+.PHONY: install lint test env guard up down psql migrate migrate-status new-migration db-reset check-db routes vehicles poll monitor image rehearse rehearse-logs rehearse-psql rehearse-down ssh-key tf-bootstrap tf-plan prod-ip prod-ssh prod-secrets prod-status prod-logs prod-tunnel transform transform-ci dashboard
 
 # Environment: dev (laptop, default) or prod (Lightsail box). Prod needs CONFIRM=prod:
 #   make migrate ENV=prod CONFIRM=prod
@@ -145,6 +145,9 @@ LAKE = s3://ghost-ledger-lake-354894954112
 
 transform:          ## dbt build locally on prod Ingress (read-only), e.g. VARS='{start_date: ...}'
 	$(AWS_ENV) cd transform && uv run --group transform dbt build --profiles-dir . $(if $(VARS),--vars "$(VARS)")
+
+transform-ci:       ## what CI runs: every model with zero rows + all data and unit tests
+	$(AWS_ENV) cd transform && GTFS_ROOT=$(LAKE)/gtfs DBT_DUCKDB_PATH=target/ci.duckdb uv run --group transform dbt build --profiles-dir . --empty
 
 dashboard:          ## open the latest dashboard the nightly job published
 	$(AWS_ENV) aws s3 cp $(LAKE)/analytics/site/index.html data/dashboard.html --only-show-errors && open data/dashboard.html

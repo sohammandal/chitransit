@@ -1,9 +1,16 @@
--- SCD2: a pid's versions tile time without overlaps or zero-length versions.
-select pid, valid_from, valid_to
-from {{ ref('stg_pattern_versions') }}
+-- SCD2: a pid's versions tile time with no overlaps or holes: each version ends exactly where
+-- the next begins, and none is empty.
+with versions as (
+    select
+        pid,
+        valid_from,
+        valid_to,
+        lead(valid_from) over (partition by pid order by valid_from) as next_from
+    from {{ ref('stg_pattern_versions') }}
+)
+
+select pid, valid_from, valid_to, next_from
+from versions
 where
     valid_to <= valid_from
-    or valid_to != (
-        select min(v2.valid_from) from {{ ref('stg_pattern_versions') }} as v2
-        where v2.pid = stg_pattern_versions.pid and v2.valid_from > stg_pattern_versions.valid_from
-    )
+    or valid_to is distinct from next_from
