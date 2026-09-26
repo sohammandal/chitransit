@@ -1,4 +1,4 @@
-.PHONY: install lint test env guard up down psql migrate migrate-status new-migration db-reset check-db routes vehicles poll monitor image rehearse rehearse-logs rehearse-psql rehearse-down ssh-key tf-bootstrap tf-plan prod-ip prod-ssh prod-secrets prod-status prod-logs prod-tunnel
+.PHONY: install lint test env guard up down psql migrate migrate-status new-migration db-reset check-db routes vehicles poll monitor image rehearse rehearse-logs rehearse-psql rehearse-down ssh-key tf-bootstrap tf-plan prod-ip prod-ssh prod-secrets prod-status prod-logs prod-tunnel transform dashboard
 
 # Environment: dev (laptop, default) or prod (Lightsail box). Prod needs CONFIRM=prod:
 #   make migrate ENV=prod CONFIRM=prod
@@ -137,6 +137,17 @@ prod-logs:          ## follow the poller on the box
 
 prod-tunnel:        ## Postgres on the box at localhost:15432 (Ctrl-C to close)
 	ssh -i ~/.ssh/ghost_ledger -N -L 15432:127.0.0.1:5432 ubuntu@$(PROD_IP)
+
+# ---------- transform (dbt) ----------
+# Dev: reads prod Ingress read-only through Glue, builds into transform/target (never
+# publishes). Prod: the nightly workflow. VARS='{start_date: 2026-09-26, end_date: 2026-09-26}'
+LAKE = s3://ghost-ledger-lake-354894954112
+
+transform:          ## dbt build locally on prod Ingress (read-only), e.g. VARS='{start_date: ...}'
+	$(AWS_ENV) cd transform && uv run --group transform dbt build --profiles-dir . $(if $(VARS),--vars "$(VARS)")
+
+dashboard:          ## open the latest dashboard the nightly job published
+	$(AWS_ENV) aws s3 cp $(LAKE)/analytics/site/index.html data/dashboard.html --only-show-errors && open data/dashboard.html
 
 routes:             ## smoke-test the Bus Tracker key
 	$(CLI) routes

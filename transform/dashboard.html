@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bus Ghost Ledger</title>
+<style>
+:root {
+  --bg: #f4f5f6; --surface: #fcfcfb; --ink: #15191d; --muted: #58616a; --rule: #d4d9dd;
+  /* status colors carry state (validated for color-blind separation) and always have a label */
+  --ran: #0ca30c; --flagged: #fab219; --silent: #d03b3b; --unknown: #a3a29c;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1317; --surface: #1a1a19; --ink: #f2f4f5; --muted: #c3c2b7; --rule: #2f363c;
+    --unknown: #8c8b85; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 24px 16px 48px;
+}
+main { max-width: 1100px; margin: 0 auto; display: grid; gap: 24px; }
+h1 { margin: 0; font-size: 28px; }
+.sub { color: var(--muted); font-size: 13px; }
+.tiles {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1px;
+  background: var(--rule); border: 1px solid var(--rule);
+}
+.tile { background: var(--surface); padding: 14px; display: grid; gap: 2px; }
+.k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.n { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.s { font-size: 12px; color: var(--muted); }
+section { background: var(--surface); border: 1px solid var(--rule); padding: 16px; }
+h2 { font-size: 17px; margin: 0 0 10px; }
+svg { width: 100%; height: auto; display: block; }
+.ax { fill: var(--muted); font-size: 11px; text-anchor: middle; }
+.base { stroke: var(--rule); }
+rect:hover { opacity: .8; }
+.lg { display: inline-flex; align-items: center; gap: 6px; margin-right: 16px; font-size: 13px; }
+.lg i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--rule); }
+th:first-child, td:first-child { text-align: left; }
+th { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+footer { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Bus Ghost Ledger</h1>
+  <div class="sub">Latest service day $latest_long · built $built</div>
+</header>
+<div class="tiles">$tiles</div>
+<section>
+  <h2>Scheduled trips by outcome, per service day</h2>
+  <div>$legend</div>
+  <svg viewBox="0 0 $w $h" role="img" aria-label="Stacked columns of trip outcomes per service day">$bars</svg>
+</section>
+<section>
+  <h2>Routes, $latest_short <span class="sub">— sorted by missing trips</span></h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Route</th><th>Scheduled</th><th>Delivered</th><th>Flagged</th><th>Silent</th>
+      <th>Unknown</th><th>Bunched</th><th>Gaps</th></tr></thead>
+    <tbody>$rows</tbody>
+  </table></div>
+  <p class="sub">Delivered = ran ÷ trips we could judge (ran + flagged + silent). A trip is a silent
+  ghost only while the feed was swept for ≥ 90% of it and CTA's predictions were sampled before it
+  was due; otherwise it is unknown. Bunched: headway under 25% of scheduled; gaps: over 2×; as a
+  share of stop passes, terminals excluded.</p>
+</section>
+<footer>Personal analysis of CTA Bus Tracker data. Not affiliated with CTA.</footer>
+</main>
+</body>
+</html>

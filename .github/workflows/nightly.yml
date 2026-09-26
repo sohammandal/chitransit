@@ -69,3 +69,14 @@ jobs:
 
       - name: Publish analytics to the lake
         run: uv run --group transform python transform/publish.py --db transform/target/ghost_ledger.duckdb --to "$LAKE/analytics"
+
+      - name: Dashboard
+        run: |
+          uv run --group transform python transform/dashboard.py --src "$LAKE/analytics" --out site/index.html
+          aws s3 cp site/index.html "$LAKE/analytics/site/index.html" --content-type text/html --only-show-errors
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dashboard
+          path: site/index.html
+          retention-days: 30
