@@ -47,6 +47,7 @@ th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--ru
 th:first-child, td:first-child { text-align: left; }
 th { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 footer { color: var(--muted); font-size: 12px; }
+.reg td, .reg th { text-align: left; vertical-align: top; font-variant-numeric: normal; }
 </style>
 </head>
 <body>
@@ -80,6 +81,56 @@ footer { color: var(--muted); font-size: 12px; }
   say whether CTA announced it. Delivered = ran ÷ (ran + announced + silent + missing).
   Bunched: headway under 25% of scheduled; gaps: over 2×; as a share of stop passes, terminals
   excluded.</p>
+</section>
+<section>
+  <h2>Data health</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Service day</th><th>Finished trips</th><th>Watched</th><th>Detour window</th>
+      <th>Announcement known</th><th>Likely ran (unseen)</th></tr></thead>
+    <tbody>$health</tbody>
+  </table></div>
+  <p class="sub"><b>Watched</b>: the feed was swept for ≥ 90% of the trip's minutes; the rest are
+  unknown, never ghosts. <b>Detour window</b>: unknown because the route ran patterns its
+  schedule lacks within the hour. <b>Announcement known</b>: of the trips no bus ran, the share
+  whose stops CTA's predictions were sampled at often enough to say whether it was announced
+  (silent ÷ (silent + missing)). <b>Likely ran</b>: unseen or seen once, counted as ran.</p>
+</section>
+<section>
+  <h2>Method and assumptions</h2>
+  <div class="tbl"><table class="reg">
+    <thead><tr><th>Rule</th><th>Assumes</th><th>Evidence</th><th>How it could be wrong</th></tr></thead>
+    <tbody>
+      <tr><td>A bus runs the scheduled trip with the same route, pattern and start (GTFS start 0–120 s after the bus's scheduled start); else same route and start</td>
+        <td>CTA's scheduled start on the bus names the GTFS trip</td>
+        <td>271 of 271 observed trips matched exactly one scheduled trip in a 1-hour all-route check; 60 s or 180 s tolerance moves silent by ≤ 5</td>
+        <td>A trip run far off its start looks missing: detour windows and a nightly check for unmatched buses near silent trips guard it</td></tr>
+      <tr><td>Judge a trip only if the feed was swept for ≥ 90% of its minutes</td>
+        <td>A bus absent from a complete sweep wasn't reporting</td>
+        <td>Sweeps every 30 s (see Watched above); 80% or 95% moves silent by ≤ 2</td>
+        <td>Feed-wide outages: those trips are unknown, never ghosts</td></tr>
+      <tr><td>Seen once, or its block's bus vanished and reappeared at the trip's far end, or was on its pattern under another key: likely ran</td>
+        <td>Buses drop off the tracker on hardware failures while still running</td>
+        <td>CTA documents tracker dropouts; 250 m or 1,000 m reappearance moves counts by ≤ 2</td>
+        <td>A bus that drove there empty is counted as having run it: ghosts are undercounted, not overcounted</td></tr>
+      <tr><td>Announced = CTA flagged it canceled (dyn = 1) at a stop the trip serves, and never cleared the flag</td>
+        <td>The prediction flag is CTA's public cancellation notice</td>
+        <td>Predictions sampled every 5 min at ~730 first and middle stops; no flag has been cleared later so far</td>
+        <td>CTA hides some cancel types (dyn = 12) and some stops don't show cancellations</td></tr>
+      <tr><td>Silent ghost = no bus, not announced, and its own stops were sampled ≥ 2 times in the 30 min before it was due, at stops known to show cancellations; else missing</td>
+        <td>A canceled trip appears as canceled in most looks at its stops</td>
+        <td>A canceled trip showed in 73% of looks; 2 of 53 canceled trips with ≥ 4 looks were missed on every look</td>
+        <td>A few percent of announced cancellations may be counted as silent: the lenient count is an upper bound</td></tr>
+      <tr><td>Strict = the block's bus was seen doing something else during the trip, or reappeared where it started</td>
+        <td>The bus that ran the block's trip before (or after) would have run this one</td>
+        <td>Physical: positions, not the absence of them</td>
+        <td>A substitute bus with a dead tracker could have run it; the nightly check for unmatched buses near silent trips looks for that</td></tr>
+      <tr><td>Detours: a route running patterns its schedule lacks makes its trips within an hour unknown; CTA Customer Alerts are kept as context</td>
+        <td>CTA gives detours their own patterns</td>
+        <td>Long-running reroutes are already in the schedule; routes under reroute alerts had no excess silent trips (Sep 26)</td>
+        <td>A reroute on regular patterns can make buses vanish; watched nightly</td></tr>
+    </tbody>
+  </table></div>
+  <p class="sub">Nightly checks warn when a silent trip had a CTA prediction with a bus, an unmatched bus nearby, or a flag later cleared. Built from method version $method.</p>
 </section>
 <footer>Personal analysis of CTA Bus Tracker data. Not affiliated with CTA.</footer>
 </main>

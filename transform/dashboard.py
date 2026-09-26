@@ -10,6 +10,7 @@ come with a text label; the route table is the accessible view of the same numbe
 
 import argparse
 import html
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from string import Template
@@ -75,7 +76,25 @@ def load(src: str, days: int) -> dict:
         """,
         [latest, latest],
     ).fetchall()
-    return {"by_day": by_day, "latest": latest, "routes": routes}
+    # Data health per day: how much of the day we could judge at all, straight from the rules'
+    # own outputs (not_watched = feed swept < 90% of the trip; missing = its stops' flags
+    # weren't sampled enough to say whether CTA announced it).
+    health = con.execute(
+        f"""
+        select
+            service_date,
+            count(*) as finished,
+            count(*) filter (where reason = 'not_watched') as not_watched,
+            count(*) filter (where reason = 'detour') as detour,
+            count(*) filter (where status = 'silent') as silent,
+            count(*) filter (where status = 'missing') as missing,
+            count(*) filter (where status = 'likely_ran') as likely_ran
+        from {trips}
+        where service_date >= DATE '{since}'
+        group by all order by 1 desc
+        """
+    ).fetchall()
+    return {"by_day": by_day, "latest": latest, "routes": routes, "health": health}
 
 
 def pct(a: float | None, b: float | None) -> str:
@@ -104,7 +123,7 @@ def render(data: dict) -> str:
             f"{strict:,}–{tot['silent']:,}",
             "never announced; strict (its bus seen elsewhere or never left) to lenient",
         ),
-        ("Missing", f"{tot['missing']:,}", "not seen; CTA's flags weren't sampled"),
+        ("Missing", f"{tot['missing']:,}", "not seen; too few samples to know if CTA announced it"),
         ("Unknown", f"{tot['unknown']:,}", "not watched, or a detour on the route"),
     ]
     tile_html = "".join(
@@ -147,6 +166,14 @@ def render(data: dict) -> str:
         "</tr>"
         for rt, sched, ran, fl, si, st, mi, un, passes, bun, gaps in data["routes"]
     )
+    health = "".join(
+        "<tr>"
+        f"<td>{d:%a %b %d}</td><td>{fin:,}</td><td>{pct(fin - nw, fin)}</td><td>{det:,}</td>"
+        f"<td>{pct(si, si + mi)}</td><td>{lr:,}</td>"
+        "</tr>"
+        for d, fin, nw, det, si, mi, lr in data["health"]
+    )
+    sha = os.environ.get("GITHUB_SHA", "")[:7] or "local"
     page = Template((Path(__file__).parent / "dashboard.html").read_text())
     return page.substitute(
         latest_long=f"{latest:%A %B %d, %Y}",
@@ -158,6 +185,8 @@ def render(data: dict) -> str:
         h=h,
         bars="".join(bars),
         rows=rows,
+        health=health,
+        method=html.escape(sha),
     )
 
 
