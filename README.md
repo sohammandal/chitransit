@@ -98,8 +98,6 @@ Target cost: under $10/month on AWS.
 - [ ] **Week 4 - Metrics and dashboard** - reporting tables, freshness and integrity checks, replay drill
 - [ ] **Later - 'L' trains** - second poller once the Train Tracker key arrives
 
-Detailed briefs: [`docs/briefs/`](docs/briefs/) (bus and 'L').
-
 ---
 
 ## Project Structure
@@ -112,9 +110,6 @@ cta-ghost-ledger/
 │   └── cli.py                  # Smoke-test CLI (ghost-ledger routes | vehicles | check-db)
 ├── sql/postgres/               # System-of-record schema, run on first DB start
 ├── tests/                      # pytest
-├── docs/
-│   ├── briefs/                 # Bus and 'L' project briefs (HTML)
-│   └── research/               # Data availability and prior-art research
 ├── data/                       # Local data (gitignored)
 ├── docker-compose.yml          # Postgres 17, wal_level=logical, port 5433
 ├── Makefile                    # Common commands
@@ -205,8 +200,6 @@ This builds on, and borrows from, earlier Chicago transit work:
 - [Ghost Bus Index](https://github.com/dulcetberg/us-ghost-buses) - multi-city ghost rates and feed validity tests
 - [CTA Reliability Tracker](https://github.com/brandonmcfadd/cta-reliability) - scheduled vs actual 'L' trains, 2022-2026
 - [MBTA LAMP](https://github.com/mbta/lamp) and [TIDES](https://tides-transit.github.io/TIDES/main/tables/) - event models and table standards
-
-Details in [`docs/research/`](docs/research/).
 
 ---
 
