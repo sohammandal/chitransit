@@ -1,11 +1,19 @@
-"""Smoke-test CLI. The poller itself is week-1 step 3 (see CLAUDE.md)."""
+"""Smoke-test CLI. Every command runs against GHOST_LEDGER_ENV (default dev); see config.py.
+
+The poller itself is week-1 step 3 (docs/PLAN.md).
+"""
 
 import argparse
 
 import psycopg
 
 from ghost_ledger.bustracker import BusTrackerClient, raise_for_error
-from ghost_ledger.config import get_settings, require_bus_key
+from ghost_ledger.config import (
+    DAILY_CALL_QUOTA,
+    get_settings,
+    redacted_url,
+    require_bus_key,
+)
 
 
 def cmd_routes(_: argparse.Namespace) -> None:
@@ -31,8 +39,22 @@ def cmd_vehicles(args: argparse.Namespace) -> None:
         print("  " + "  ".join(f"{f}={v.get(f)}" for f in fields))
 
 
+def cmd_env(_: argparse.Namespace) -> None:
+    s = get_settings()
+    calls = s.vehicle_calls_per_day()
+    print(f"env                      {s.env}")
+    print(f"database_url             {redacted_url(s.database_url)}")
+    print(f"bus api key              {'set' if s.bus_api_key else 'MISSING'}")
+    print(f"train api key            {'set' if s.train_api_key else 'not set'}")
+    print(f"poll interval            {s.poll_interval_seconds} s")
+    print(f"poll routes              {','.join(s.poll_routes) if s.poll_routes else 'all'}")
+    print(f"assignment grace         {s.assignment_grace_minutes} min")
+    print(f"getvehicles calls/day    ~{calls:,} of {DAILY_CALL_QUOTA:,} key quota")
+
+
 def cmd_check_db(_: argparse.Namespace) -> None:
     settings = get_settings()
+    print(f"env={settings.env}  db={redacted_url(settings.database_url)}")
     with psycopg.connect(settings.database_url) as conn:
         wal = conn.execute("SHOW wal_level").fetchone()[0]
         tables = conn.execute(
@@ -57,6 +79,9 @@ def cmd_check_db(_: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="ghost-ledger")
     sub = parser.add_subparsers(required=True)
+    sub.add_parser("env", help="Show resolved settings (secrets redacted)").set_defaults(
+        func=cmd_env
+    )
     sub.add_parser("routes", help="List bus routes (checks the API key)").set_defaults(
         func=cmd_routes
     )

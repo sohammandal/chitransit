@@ -1,5 +1,15 @@
-.PHONY: install lint test up down psql migrate migrate-status new-migration db-reset check-db routes vehicles
+.PHONY: install lint test env guard up down psql migrate migrate-status new-migration db-reset check-db routes vehicles
 
+# Environment: dev (laptop, default) or prod (Lightsail box). Prod needs CONFIRM=prod:
+#   make migrate ENV=prod CONFIRM=prod
+ENV ?= dev
+ifeq ($(filter $(ENV),dev prod),)
+$(error ENV must be dev or prod, got '$(ENV)')
+endif
+export GHOST_LEDGER_ENV := $(ENV)
+
+# Prod layers compose.prod.yml (week 2) over the shared base.
+COMPOSE = docker compose -f compose.yml $(if $(filter prod,$(ENV)),-f compose.prod.yml)
 PYTHON = uv run python
 CLI = uv run ghost-ledger
 
@@ -13,30 +23,38 @@ lint:               ## ruff + sqlfluff + hygiene hooks on every file
 test:
 	uv run pytest -q
 
-up:                 ## start Postgres (logical replication on, port 5433) and apply migrations
-	docker compose up -d --wait
+env:                ## show resolved settings for ENV (secrets redacted)
+	$(CLI) env
+
+guard:              ## stop unless ENV=dev, or ENV=prod with CONFIRM=prod
+	@if [ "$(ENV)" = "prod" ] && [ "$(CONFIRM)" != "prod" ]; then \
+		echo "Refusing to run against prod. Re-run with ENV=prod CONFIRM=prod."; exit 1; fi
+
+up: guard           ## start Postgres (logical replication on) and apply migrations
+	$(COMPOSE) up -d --wait
 	$(MAKE) migrate
 
-down:
-	docker compose down
+down: guard
+	$(COMPOSE) down
 
-psql:
+psql: guard
 	docker exec -it ghost-ledger-postgres psql -U ghost -d ghost_ledger
 
-migrate:            ## apply pending db/migrations (dbmate)
-	docker compose run --rm dbmate up
+migrate: guard      ## apply pending db/migrations (dbmate)
+	$(COMPOSE) run --rm dbmate up
 
-migrate-status:
-	docker compose run --rm dbmate status
+migrate-status: guard
+	$(COMPOSE) run --rm dbmate status
 
-new-migration:      ## make new-migration NAME=add_patterns
-	docker compose run --rm dbmate new $(NAME)
+new-migration:      ## make new-migration NAME=add_patterns (creates a file; dev only)
+	docker compose -f compose.yml run --rm dbmate new $(NAME)
 
-db-reset:           ## drop the local volume and rebuild the schema from migrations
-	docker compose down -v
+db-reset: guard     ## drop the local volume and rebuild from migrations (never prod)
+	@if [ "$(ENV)" = "prod" ]; then echo "db-reset never runs against prod."; exit 1; fi
+	$(COMPOSE) down -v
 	$(MAKE) up
 
-check-db:
+check-db: guard
 	$(CLI) check-db
 
 routes:             ## smoke-test the Bus Tracker key

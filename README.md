@@ -109,18 +109,19 @@ Target cost: about $14/month (a $12 Lightsail box plus S3). Managed Postgres fre
 cta-ghost-ledger/
 ├── src/ghost_ledger/           # The one Python package
 │   ├── bustracker.py           # Bus Tracker v3 client: retries, DST-safe timestamps
-│   ├── config.py               # Settings from env (~/.secrets) and .env
+│   ├── config.py               # dev/prod settings (GHOST_LEDGER_ENV), quota guard
 │   └── cli.py                  # Smoke-test CLI (ghost-ledger routes | vehicles | check-db)
 ├── db/migrations/              # Postgres schema as dbmate migrations (make migrate)
 ├── scripts/                    # Spikes and one-off checks, not imported by the package
 ├── tests/                      # pytest
 ├── data/                       # Local data (gitignored)
-├── docker-compose.yml          # Postgres 17 (wal_level=logical, port 5433) + dbmate
+├── compose.yml                 # Postgres 17 (wal_level=logical, port 5433) + dbmate; prod adds compose.prod.yml
 ├── Makefile                    # Common commands
 ├── pyproject.toml              # Project, ruff and pytest config
 ├── .sqlfluff                   # SQL lint rules
 ├── .pre-commit-config.yaml     # Hygiene, ruff and sqlfluff hooks
-└── .env.example                # Sample environment config
+├── .env.dev                    # Committed dev defaults (no secrets)
+└── .env.example                # Every setting, documented
 ```
 
 Folders follow the pipeline, and each one appears when its week starts: `ingest/` (poller), `cdc/` (Debezium config), `transform/` (dbt), `infra/` (Lightsail) and `dashboard/`.
@@ -142,7 +143,7 @@ Folders follow the pipeline, and each one appears when its week starts: `ingest/
    export CTA_BUS_TRACKER_API_KEY="..."
    ```
 
-   > Environment variables win over `.env`. See `.env.example` for all settings. Never commit keys.
+   > In dev, environment variables win over `.env`, which wins over the committed `.env.dev`. See `.env.example` for every setting. Never commit keys.
 
 3. **Install [uv](https://github.com/astral-sh/uv):**
 
@@ -180,6 +181,19 @@ Folders follow the pipeline, and each one appears when its week starts: `ingest/
 Other commands: `make psql` (shell into Postgres), `make migrate-status`, `make new-migration NAME=...`, `make db-reset` (drop the local database and rebuild it from migrations), `make down`.
 
 Schema changes always go in a new migration under `db/migrations/`; never edit an applied one.
+
+### Dev and prod
+
+The same code runs in two environments, chosen by `GHOST_LEDGER_ENV` (default `dev`):
+
+| | dev | prod |
+|---|---|---|
+| Where | your laptop, Docker | the Lightsail box (week 2) |
+| Settings | environment > `.env` > `.env.dev` | environment only (the box's env file); prod never reads repo files |
+| Make | `make migrate` | `make migrate ENV=prod CONFIRM=prod` (refuses without `CONFIRM`; `db-reset` always refuses) |
+| Compose | `compose.yml` | `compose.yml` + `compose.prod.yml` |
+
+`make env` prints the resolved settings with secrets redacted, including the daily API-call estimate. Dev and prod share one API key (100k calls/day): once prod polls 24/7, set `POLL_ROUTES=79,9` for dev.
 
 ### What Happens If Hooks Fail?
 
