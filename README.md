@@ -1,27 +1,215 @@
 # CTA Ghost Ledger
 
-A replayable record of scheduled CTA service: which bus trips **ran**, which CTA **flagged as canceled**, and which **silently never showed up**, plus gaps and bunching. It's judged against the schedule version in force each day. 'L' trains follow once the Train Tracker key arrives.
+[![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![uv](https://img.shields.io/badge/uv-DE5FE9?logo=uv&logoColor=white)](https://github.com/astral-sh/uv)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Debezium](https://img.shields.io/badge/CDC-Debezium-91D443)](https://debezium.io/)
+[![Apache Iceberg](https://img.shields.io/badge/Apache%20Iceberg-3C8CE7?logo=apache&logoColor=white)](https://iceberg.apache.org/)
+[![DuckDB](https://img.shields.io/badge/DuckDB-FFF000?logo=duckdb&logoColor=black)](https://duckdb.org/)
+[![dbt](https://img.shields.io/badge/dbt-FF694B)](https://www.getdbt.com/)
+[![Dagster](https://img.shields.io/badge/Dagster-4F43DD)](https://dagster.io/)
+[![Ruff](https://img.shields.io/badge/Ruff-D7FF64?logo=ruff&logoColor=black)](https://github.com/astral-sh/ruff)
 
-Personal learning project built around *Designing Data-Intensive Applications* (2nd ed.). Not affiliated with CTA.
+> A replayable record of scheduled CTA service - which bus trips **ran**, which CTA **flagged as canceled**, and which **silently never showed up** - judged against the schedule that was in force each day.
 
-## Stack
+A learning project built around *Designing Data-Intensive Applications* (2nd ed.): change data capture, event time vs processing time, slowly changing dimensions, idempotent reprocessing and a lakehouse on object storage, applied to a real Chicago problem. 'L' trains follow once the Train Tracker key arrives.
 
-Poller (Python) → Postgres (single system of record) → CDC (Debezium / Estuary) → Iceberg on S3 → dbt-duckdb → Dagster.
-Lakehouse layers: **Ingress → Intermediate → Reporting**.
+*Not affiliated with the Chicago Transit Authority. Data provided by CTA.*
 
-## Quickstart
+---
 
-```bash
-make install     # uv sync + pre-commit hooks
-make up          # Postgres 17 on :5433 with wal_level=logical
-make check-db    # wal_level, ops tables, CDC publication
-make routes      # smoke-test the Bus Tracker key (from ~/.secrets)
-make vehicles    # live buses on route 79
-make lint test
+## Problem
+
+CTA reports that buses delivered 98.8% of scheduled trips in June 2025, and since May 2025 it flags canceled trips in rider apps. But a high delivery rate can still mean two buses together and then a 25-minute gap, and a cancellation flag only helps if every missing trip actually gets one.
+
+This project answers questions the public data can't:
+
+- What share of missing trips does CTA **flag** as canceled, and how many vanish **silently**?
+- Which routes deliver their trips but **bunch** them, leaving long gaps at rush hour?
+- How does service compare across routes, neighborhoods and hours, measured against **that day's** schedule?
+
+Others have built parts of this (see [Prior art](#prior-art)). The new piece is auditing CTA's cancellation flags against observed service, trip by trip.
+
+---
+
+## Architecture
+
+The poller writes to exactly one place. Everything downstream is derived from Postgres's change log (DDIA ch. 12-13: one system of record, no dual writes).
+
+```mermaid
+flowchart LR
+    BT[CTA Bus Tracker API<br/>every 30 s] --> P[Poller]
+    P -->|one transaction| PG[(Postgres<br/>ops.raw_polls<br/>ops.bus_live_board)]
+    PG -->|logical replication| CDC[Debezium / Estuary]
+    CDC --> ING[Ingress<br/>Iceberg on S3]
+    GTFS[GTFS versions<br/>CTA + Transitland] --> INT
+    ING --> INT[Intermediate<br/>dbt-duckdb]
+    INT --> REP[Reporting<br/>delivery, gaps, bunching]
+    REP --> OUT[Dashboard + Parquet]
+    DG{{Dagster}} -.orchestrates.-> INT
+    DG -.-> ING
+    DG -.-> OUT
 ```
 
-## Briefs and research
+| Layer | What lives there |
+|-------|------------------|
+| **Postgres (`ops`)** | Raw API responses and current state per bus. The system of record. |
+| **Ingress** | Append-only CDC events in Iceberg, replayable by log position |
+| **Intermediate** | Schedule and route-pattern versions (SCD2), scheduled trips, interpolated stop passes, flagged cancellations |
+| **Reporting** | `route_hour_delivery`, `stop_hour_gaps`, `bunching_events`, with coverage on every row |
 
-- Bus brief: `docs/briefs/bus-ghost-ledger.html` · [artifact](https://claude.ai/artifact/S4fbRE5PzLiqxX3NwJxFeY)
-- L brief: `docs/briefs/l-ghost-ledger.html` · [artifact](https://claude.ai/artifact/EM673oAthRYV9DSXmc6hwd)
-- Prior art and data research: `docs/research/`
+Each scheduled trip lands in one of three buckets: **ran**, **flagged canceled** (CTA's `dyn=1`), or **silent ghost** (never flagged, never seen), counted only when the feed was healthy.
+
+---
+
+## Tech Stack
+
+| Layer | Tool | Status |
+|-------|------|--------|
+| Ingestion | Python poller, `httpx` | In progress (week 1) |
+| System of record | PostgreSQL 17, logical replication | Ready |
+| Change data capture | Debezium Server / Estuary | Week 2 |
+| Lakehouse | Apache Iceberg on Amazon S3 | Week 2 |
+| Transformation | dbt + DuckDB | Week 3 |
+| Orchestration | Dagster | Weeks 2-4 |
+| Dev Tools | `uv`, `ruff`, `sqlfluff`, `pre-commit`, `pytest` | Ready |
+
+Target cost: under $10/month on AWS.
+
+---
+
+## Data Sources
+
+| Source | Used for |
+|--------|----------|
+| [CTA Bus Tracker API v3](https://www.transitchicago.com/developers/bustracker/) | Live positions (`getvehicles`), route patterns (`getpatterns`), cancellation flags (`getpredictions`) |
+| [CTA static GTFS](https://www.transitchicago.com/developers/gtfs/) | The current schedule |
+| [Transitland archive](https://www.transit.land/feeds/f-dp3-cta) | ~100 historical schedule versions since 2021 |
+| [Ghost Buses / CTA StopWatch](https://github.com/mansueto-institute/cta-stop-watch) | 5-minute bus history (2022 to today) for backfill and cross-checks |
+
+---
+
+## Roadmap
+
+- [x] **Scaffold** - uv project, Postgres with logical replication, Bus Tracker client, tooling
+- [ ] **Week 1 - Ingest** - poll every route every 30 s into Postgres; prove trip matching on route 79
+- [ ] **Week 2 - CDC to lakehouse** - Debezium → Iceberg on S3; outage-recovery drill; compaction
+- [ ] **Week 3 - Schedules and stop passes** - SCD2 schedule and pattern versions, stop-pass interpolation, cancellation sampler
+- [ ] **Week 4 - Metrics and dashboard** - reporting tables, freshness and integrity checks, replay drill
+- [ ] **Later - 'L' trains** - second poller once the Train Tracker key arrives
+
+Detailed briefs: [`docs/briefs/`](docs/briefs/) (bus and 'L').
+
+---
+
+## Project Structure
+
+```
+cta-ghost-ledger/
+├── src/cta_ghost_ledger/
+│   ├── bustracker.py           # Bus Tracker v3 client (10 routes/call, seconds resolution)
+│   ├── config.py               # Settings from env (~/.secrets) and .env
+│   └── cli.py                  # Smoke-test CLI (ghost-ledger routes | vehicles | check-db)
+├── sql/postgres/               # System-of-record schema, run on first DB start
+├── tests/                      # pytest
+├── docs/
+│   ├── briefs/                 # Bus and 'L' project briefs (HTML)
+│   └── research/               # Data availability and prior-art research
+├── data/                       # Local data (gitignored)
+├── docker-compose.yml          # Postgres 17, wal_level=logical, port 5433
+├── Makefile                    # Common commands
+├── CLAUDE.md                   # Context for Claude Code sessions
+├── pyproject.toml              # Project, ruff and pytest config
+├── .sqlfluff                   # SQL lint rules
+├── .pre-commit-config.yaml     # Hygiene, ruff and sqlfluff hooks
+└── .env.example                # Sample environment config
+```
+
+---
+
+## Local Development
+
+1. **Clone the repo:**
+
+   ```bash
+   git clone git@github.com:sohammandal/cta-ghost-ledger.git
+   cd cta-ghost-ledger
+   ```
+
+2. **Get a Bus Tracker API key** from your [Bus Tracker account](https://www.ctabustracker.com/) (My Account → Developer API) and export it, for example in `~/.secrets`:
+
+   ```bash
+   export CTA_BUS_TRACKER_API_KEY="..."
+   ```
+
+   > Environment variables win over `.env`. See `.env.example` for all settings. Never commit keys.
+
+3. **Install [uv](https://github.com/astral-sh/uv):**
+
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+
+4. **Install dependencies and git hooks:**
+
+   ```bash
+   make install        # uv sync + pre-commit install
+   ```
+
+5. **Start Postgres** (Docker required):
+
+   ```bash
+   make up             # Postgres 17 on localhost:5433
+   make check-db       # wal_level, ops tables, CDC publication
+   ```
+
+6. **Smoke-test the API:**
+
+   ```bash
+   make routes         # lists bus routes
+   make vehicles       # live buses on route 79 (or: make vehicles RT="9 79")
+   ```
+
+7. **Lint and test:**
+
+   ```bash
+   make lint           # pre-commit on all files (ruff, sqlfluff, hygiene)
+   make test
+   ```
+
+Other commands: `make psql` (shell into Postgres), `make db-reset` (recreate the database and re-run the schema), `make down`.
+
+### What Happens If Hooks Fail?
+
+* If a hook auto-fixes files (e.g. formatting with `ruff` or `sqlfluff`), the commit will be blocked.
+* Simply **`git add .` and commit again** - your files will now be fixed and pass.
+* If errors remain (like lint violations), you must resolve them manually before committing.
+
+### Adding a New Package/Dependency
+
+```bash
+uv add <package-name>               # runtime dependency
+uv add --group dev <package-name>   # dev tooling
+```
+
+Commit the updated `pyproject.toml` and `uv.lock`; others run `uv sync`.
+
+---
+
+## Prior art
+
+This builds on, and borrows from, earlier Chicago transit work:
+
+- [Chi Hack Night Ghost Buses](https://github.com/chihacknight/chn-ghost-buses) and [Mansueto CTA StopWatch](https://github.com/mansueto-institute/cta-stop-watch) - scheduled vs observed buses, stop-pass interpolation, historical GTFS
+- [chicago-transit-insights](https://github.com/cailinpitt/chicago-transit-insights) - live bunching, gap and ghost detection
+- [Ghost Bus Index](https://github.com/dulcetberg/us-ghost-buses) - multi-city ghost rates and feed validity tests
+- [CTA Reliability Tracker](https://github.com/brandonmcfadd/cta-reliability) - scheduled vs actual 'L' trains, 2022-2026
+- [MBTA LAMP](https://github.com/mbta/lamp) and [TIDES](https://tides-transit.github.io/TIDES/main/tables/) - event models and table standards
+
+Details in [`docs/research/`](docs/research/).
+
+---
+
+## License
+
+[MIT](LICENSE)
