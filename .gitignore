@@ -17,8 +17,9 @@ dist/
 .env.*
 !.env.example
 
-# Local-only docs (briefs, research)
+# Local-only docs (briefs, research, Claude Code context)
 docs/
+CLAUDE.md
 
 # Local data and engines
 data/*

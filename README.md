@@ -113,7 +113,6 @@ cta-ghost-ledger/
 ├── data/                       # Local data (gitignored)
 ├── docker-compose.yml          # Postgres 17, wal_level=logical, port 5433
 ├── Makefile                    # Common commands
-├── CLAUDE.md                   # Context for Claude Code sessions
 ├── pyproject.toml              # Project, ruff and pytest config
 ├── .sqlfluff                   # SQL lint rules
 ├── .pre-commit-config.yaml     # Hygiene, ruff and sqlfluff hooks
