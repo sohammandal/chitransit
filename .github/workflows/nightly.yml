@@ -70,6 +70,9 @@ jobs:
       - name: Publish analytics to the lake
         run: uv run --group transform python transform/publish.py --db transform/target/ghost_ledger.duckdb --to "$LAKE/analytics"
 
+      - name: Ingress day counts (evidence for the box's prune gate)
+        run: uv run --group transform python transform/ingress_counts.py --to "$LAKE/analytics/ops/ingress_day_counts.json"
+
       - name: Dashboard
         run: |
           uv run --group transform python transform/dashboard.py --src "$LAKE/analytics" --out site/index.html
