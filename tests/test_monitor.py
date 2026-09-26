@@ -51,6 +51,17 @@ def test_coverage_counts_missing_sweeps_and_is_capped_at_one():
     assert values(snap(sweeps_last_hour=121))["SweepCoverage1h"] == 1.0
 
 
+def test_coverage_on_a_fresh_database_counts_only_the_time_since_the_first_sweep():
+    # 10 minutes old with every sweep present: full coverage, not 20/120
+    fresh = dict(first_sweep_started_at=NOON - timedelta(minutes=10), sweeps_last_hour=20)
+    assert values(snap(**fresh))["SweepCoverage1h"] == 1.0
+    # ... but a real gap in a young database still shows
+    assert values(snap(**{**fresh, "sweeps_last_hour": 10}))["SweepCoverage1h"] == 0.5
+    # older than an hour: the normal one-hour window
+    old = NOON - timedelta(days=2)
+    assert values(snap(first_sweep_started_at=old, sweeps_last_hour=60))["SweepCoverage1h"] == 0.5
+
+
 def test_call_success_rate_and_its_absence_with_no_calls():
     assert values(snap(calls_ok_15m=351, calls_total_15m=390))["CallSuccessRate15m"] == 0.9
     assert "CallSuccessRate15m" not in values(snap(calls_ok_15m=0, calls_total_15m=0))

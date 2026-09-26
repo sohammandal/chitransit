@@ -19,8 +19,8 @@ resource "aws_lightsail_instance" "box" {
     deploy_sh = file("${path.module}/../../box/deploy.sh")
   })
 
-  # Daily snapshot of the whole disk. Until CDC ships the log to S3 (week 2), Postgres on
-  # this box is the only copy of prod data (DDIA ch. 6: replication is not backup).
+  # Daily snapshot of the whole disk. Postgres keeps only ~2 days once the prune gate runs;
+  # Ingress on S3 holds the full log (DDIA ch. 6: replication is not backup).
   add_on {
     type          = "AutoSnapshot"
     snapshot_time = "10:00" # UTC = 05:00 Chicago (CDT), low service
@@ -55,8 +55,8 @@ resource "aws_lightsail_instance_public_ports" "box" {
   }
 }
 
-# The box's own AWS identity: it may only publish metrics to its namespace (lake writes in
-# week 2). Its access key is created by `make prod-secrets`, outside Terraform, so the
+# The box's own AWS identity: it may only publish metrics to its namespace (lake access is
+# in lake.tf). Its access key is created by `make prod-secrets`, outside Terraform, so the
 # secret never lands in Terraform state.
 resource "aws_iam_user" "box" {
   name = "ghost-ledger-box-prod"

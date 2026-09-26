@@ -40,6 +40,7 @@ class Snapshot:
     calls_total_15m: int
     sweeps_last_10m: int
     sweeps_with_buses_last_10m: int
+    first_sweep_started_at: datetime | None = None
     # one entry per logical replication slot: (active, wal_status, lag_bytes or None)
     slots: tuple[tuple[bool, str | None, int | None], ...] = ()
 
@@ -56,7 +57,13 @@ def compute_metrics(s: Snapshot, poll_interval_seconds: int, disk_used_pct: floa
     if s.last_sweep_finished_at is not None:
         age = (s.now - s.last_sweep_finished_at).total_seconds() / 60
         m.append(Metric("MinutesSinceLastSweep", round(max(age, 0.0), 2), "None"))
-    expected = 3600 / poll_interval_seconds
+    # A fresh database has less than an hour of history: judge coverage over what exists,
+    # so a first start doesn't read as an outage for an hour. (A restart doesn't qualify:
+    # its gap is real missing data.)
+    window = 3600.0
+    if s.first_sweep_started_at is not None:
+        window = min(window, (s.now - s.first_sweep_started_at).total_seconds())
+    expected = max(window / poll_interval_seconds, 1.0)
     m.append(Metric("SweepCoverage1h", round(min(s.sweeps_last_hour / expected, 1.0), 4), "None"))
     if s.calls_total_15m:
         rate = s.calls_ok_15m / s.calls_total_15m
@@ -90,7 +97,8 @@ SELECT
     (SELECT COUNT(*) FROM ops.sweeps
         WHERE feed = 'bus' AND started_at > %(now)s - INTERVAL '10 minutes'),
     (SELECT COUNT(*) FROM ops.sweeps
-        WHERE feed = 'bus' AND started_at > %(now)s - INTERVAL '10 minutes' AND vehicles > 0)
+        WHERE feed = 'bus' AND started_at > %(now)s - INTERVAL '10 minutes' AND vehicles > 0),
+    (SELECT MIN(started_at) FROM ops.sweeps WHERE feed = 'bus')
 """
 
 SLOTS_SQL = """
@@ -104,7 +112,7 @@ WHERE slot_type = 'logical'
 def read_snapshot(conn: psycopg.Connection, now: datetime) -> Snapshot:
     row = conn.execute(SNAPSHOT_SQL, {"now": now}).fetchone()
     slots = tuple((a, w, lag) for a, w, lag in conn.execute(SLOTS_SQL).fetchall())
-    return Snapshot(now, row[0], row[1], row[2], row[3], row[4], row[5], row[6], slots)
+    return Snapshot(now, *row[:7], first_sweep_started_at=row[7], slots=slots)
 
 
 def disk_used_pct(path: str = "/") -> float:

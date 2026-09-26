@@ -15,12 +15,15 @@ from zoneinfo import ZoneInfo
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).parent))
-from spike_match import load_scheduled  # noqa: E402
+from spike_match import load_scheduled_by_pid  # noqa: E402
 
 from ghost_ledger.config import get_settings  # noqa: E402
 
 CHICAGO = ZoneInfo("America/Chicago")
 GRACE = timedelta(minutes=10)
+# Bus Tracker stst is the time at pattern distance 0; GTFS starts at the first stop, which
+# can sit a few hundred feet in (#3: 361 ft, 28 s later). Accept a GTFS start 0-120 s later.
+START_TOLERANCE_S = 120
 
 
 def local(s: str) -> datetime:
@@ -31,7 +34,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--since", required=True)
     p.add_argument("--until")
-    p.add_argument("--rt", default="79")
+    p.add_argument("--rt", default="79", help='route to match, or "all"')
     args = p.parse_args()
     since = local(args.since)
     until = local(args.until) if args.until else datetime.now(CHICAGO)
@@ -50,10 +53,10 @@ def main() -> None:
             (since, until),
         ).fetchall()
         trips = conn.execute(
-            "SELECT DISTINCT p.rt, pt.rtdir, p.stsd, p.stst FROM ops.bus_positions p "
-            "JOIN ops.patterns pt USING (pid) "
-            "WHERE p.fetched_at >= %s AND p.fetched_at < %s AND p.rt = %s AND p.stsd IS NOT NULL",
-            (since, until, args.rt),
+            "SELECT DISTINCT rt, pid, stsd, stst FROM ops.bus_positions "
+            "WHERE fetched_at >= %s AND fetched_at < %s AND (rt = %s OR %s = 'all') "
+            "AND stsd IS NOT NULL",
+            (since, until, args.rt, args.rt),
         ).fetchall()
         sightings = conn.execute(
             "SELECT p.vid, p.fetched_at, p.rt, p.stsd, p.stst FROM ops.bus_positions p "
@@ -80,29 +83,34 @@ def main() -> None:
     for endpoint, n, failed, retried, max_ms in calls:
         print(f"calls         {endpoint}: {n}, failed {failed}, retried {retried}, max {max_ms} ms")
 
-    # Route match against the GTFS schedule. After midnight, buses report the previous
-    # service day with stst past 24:00 (e.g. Sep 25 at 24:47), while CTA's GTFS lists the
-    # same trip on the next day at 00:47: try the reported key, then the rolled-over one.
+    # Route match against the GTFS schedule on (rt, pid, service day, start). After midnight,
+    # buses report the previous service day with stst past 24:00 (e.g. Sep 25 at 24:47), while
+    # CTA's GTFS lists the same trip on the next day at 00:47: try the reported day, then the
+    # rolled-over one. A trip matches when exactly one GTFS trip starts 0-120 s after stst.
+    routes = {t[0] for t in trips}
     sched: dict[tuple, list] = {}
     for d in {t[2] for t in trips} | {t[2] + timedelta(days=1) for t in trips}:
-        for (rt, direction, stst), gtfs in load_scheduled({args.rt}, d).items():
-            sched[(rt, direction, d, stst)] = gtfs
+        for (rt, pid), starts in load_scheduled_by_pid(routes, d).items():
+            sched[(rt, pid, d)] = starts
 
-    def gtfs_key(k: tuple) -> tuple:
-        rt, direction, stsd, stst = k
-        if stst >= 86400 and len(sched.get(k, [])) != 1:
-            return (rt, direction, stsd + timedelta(days=1), stst - 86400)
-        return k
+    def candidates(rt: str, pid: int, stsd, stst: int) -> list:
+        for day, start in ((stsd, stst), (stsd + timedelta(days=1), stst - 86400)):
+            found = [
+                s for s in sched.get((rt, pid, day), []) if 0 <= s[0] - start <= START_TOLERANCE_S
+            ]
+            if found:
+                return found
+        return []
 
-    keys = [gtfs_key((rt, d.removesuffix("bound"), stsd, stst)) for rt, d, stsd, stst in trips]
-    exact = sum(1 for k in keys if len(sched.get(k, [])) == 1)
+    unmatched = [(t, n) for t in trips if (n := len(candidates(*t))) != 1]
+    exact = len(trips) - len(unmatched)
+    label = f"#{args.rt}" if args.rt != "all" else "all"
     print(
-        f"match #{args.rt}     {exact}/{len(keys)} trips match exactly one GTFS trip "
-        f"({exact / max(len(keys), 1):.1%})"
+        f"match {label:<7} {exact}/{len(trips)} trips match exactly one GTFS trip "
+        f"({exact / max(len(trips), 1):.1%})"
     )
-    for k in keys:
-        if len(sched.get(k, [])) != 1:
-            print(f"  unmatched: {k} ({len(sched.get(k, []))} candidates)")
+    for t, n in unmatched:
+        print(f"  unmatched: {t} ({n} candidates)")
 
     # churn: gaps in a bus's reports on the same trip
     by_vid: dict[str, list] = defaultdict(list)

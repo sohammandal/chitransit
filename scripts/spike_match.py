@@ -63,6 +63,32 @@ def load_scheduled(routes: set[str], day: date) -> dict[tuple, list[dict]]:
     return index
 
 
+def load_scheduled_by_pid(routes: set[str], day: date) -> dict[tuple, list[tuple[int, str]]]:
+    """(rt, pid) -> sorted [(first departure seconds, trip_id)] for GTFS trips active on `day`.
+
+    CTA's GTFS shape_id is a 3-digit service prefix + the Bus Tracker pid (68218415 -> 18415),
+    so trips join on pid with no direction words (N5's patterns say Northbound, GTFS says East).
+    """
+    with zipfile.ZipFile(GTFS) as zf:
+        services = active_services(zf, day)
+        trips = {
+            r["trip_id"]: r
+            for r in gtfs_rows(zf, "trips.txt")
+            if r["route_id"] in routes and r["service_id"] in services
+        }
+        first: dict[str, tuple[int, int]] = {}
+        for r in gtfs_rows(zf, "stop_times.txt"):
+            tid = r["trip_id"]
+            if tid in trips:
+                seq = int(r["stop_sequence"])
+                if tid not in first or seq < first[tid][0]:
+                    first[tid] = (seq, hms_to_seconds(r["departure_time"]))
+    index: dict[tuple, list[tuple[int, str]]] = defaultdict(list)
+    for tid, trip in trips.items():
+        index[(trip["route_id"], int(trip["shape_id"][3:]))].append((first[tid][1], tid))
+    return {k: sorted(v) for k, v in index.items()}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--rt", nargs="+", default=["79"])

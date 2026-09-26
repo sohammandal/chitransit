@@ -14,3 +14,8 @@ output "box_iam_user" {
 output "alerts_topic_arn" {
   value = aws_sns_topic.alerts.arn
 }
+
+output "lake" {
+  description = "compose.prod.yml (debezium) must name the same bucket and Glue database"
+  value       = { bucket = aws_s3_bucket.lake.bucket, glue_database = aws_glue_catalog_database.ingress.name }
+}

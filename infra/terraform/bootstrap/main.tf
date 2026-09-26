@@ -238,6 +238,27 @@ data "aws_iam_policy_document" "apply_writes" {
     ]
     resources = ["arn:aws:iam::${data.aws_caller_identity.me.account_id}:user/ghost-ledger-*"]
   }
+  statement {
+    sid = "LakeBucket"
+    actions = [
+      "s3:CreateBucket", "s3:DeleteBucket", "s3:PutBucketVersioning", "s3:PutEncryptionConfiguration",
+      "s3:PutBucketPublicAccessBlock", "s3:PutLifecycleConfiguration", "s3:PutBucketTagging",
+    ]
+    resources = ["arn:aws:s3:::ghost-ledger-lake-*"]
+  }
+  statement {
+    sid = "LakeCatalog"
+    actions = [
+      "glue:CreateDatabase", "glue:UpdateDatabase", "glue:DeleteDatabase",
+      "glue:TagResource", "glue:UntagResource",
+    ]
+    resources = [
+      "arn:aws:glue:${var.region}:${data.aws_caller_identity.me.account_id}:catalog",
+      "arn:aws:glue:${var.region}:${data.aws_caller_identity.me.account_id}:database/ghost_ledger_*",
+      "arn:aws:glue:${var.region}:${data.aws_caller_identity.me.account_id}:table/ghost_ledger_*/*",
+      "arn:aws:glue:${var.region}:${data.aws_caller_identity.me.account_id}:userDefinedFunction/ghost_ledger_*/*",
+    ]
+  }
 }
 
 resource "aws_iam_role_policy" "ci_apply_writes" {
