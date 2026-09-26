@@ -26,10 +26,13 @@ variable "region" {
   default = "us-east-2"
 }
 
-variable "github_repo" {
-  description = "owner/name of the repo whose Actions may assume the CI roles"
+# GitHub's OIDC `sub` claim for this repo uses the immutable format (owner and repo IDs), so a
+# renamed or recreated repo with the same name can never assume these roles. Check the prefix:
+#   gh api repos/<owner>/<repo>/actions/oidc/customization/sub   -> sub_claim_prefix
+variable "github_sub_prefix" {
+  description = "The repo's OIDC sub claim prefix (sub_claim_prefix)"
   type        = string
-  default     = "sohammandal/cta-ghost-ledger"
+  default     = "repo:sohammandal@18245872/cta-ghost-ledger@1388304114"
 }
 
 data "aws_caller_identity" "me" {}
@@ -108,8 +111,8 @@ data "aws_iam_policy_document" "trust_plan" {
       test     = "StringEquals"
       variable = "${local.oidc_host}:sub"
       values = [
-        "repo:${var.github_repo}:pull_request",
-        "repo:${var.github_repo}:ref:refs/heads/main",
+        "${var.github_sub_prefix}:pull_request",
+        "${var.github_sub_prefix}:ref:refs/heads/main",
       ]
     }
   }
@@ -132,7 +135,7 @@ data "aws_iam_policy_document" "trust_apply" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_host}:sub"
-      values   = ["repo:${var.github_repo}:environment:prod"]
+      values   = ["${var.github_sub_prefix}:environment:prod"]
     }
   }
 }

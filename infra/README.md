@@ -30,7 +30,9 @@ infra/
    | `TF_ALERT_EMAIL` | where alarms go |
    | `TF_SSH_PUBLIC_KEY` | contents of `~/.ssh/ghost_ledger.pub` |
 5. **GitHub environment** `prod`, deployments limited to the `main` branch (Settings →
-   Environments). The apply role only trusts jobs in this environment.
+   Environments). The apply role only trusts jobs in this environment. The trust uses the repo's
+   immutable OIDC subject (`gh api repos/<owner>/<repo>/actions/oidc/customization/sub`); if it
+   ever changes, update `github_sub_prefix` in `terraform/bootstrap/main.tf`.
 6. **Plan**: push to `main` touching `infra/` (or Actions → terraform → Run workflow with the
    run ID left empty). Read the plan in that run's log; note the **run ID** (in its URL).
    From the laptop instead: copy `prod/backend.hcl.example` → `backend.hcl` and
