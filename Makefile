@@ -1,4 +1,4 @@
-.PHONY: install lint test env guard up down psql migrate migrate-status new-migration db-reset check-db routes vehicles
+.PHONY: install lint test env guard up down psql migrate migrate-status new-migration db-reset check-db routes vehicles poll
 
 # Environment: dev (laptop, default) or prod (Lightsail box). Prod needs CONFIRM=prod:
 #   make migrate ENV=prod CONFIRM=prod
@@ -56,6 +56,9 @@ db-reset: guard     ## drop the local volume and rebuild from migrations (never 
 
 check-db: guard
 	$(CLI) check-db
+
+poll: guard         ## run the bus poller (make poll SWEEPS=4 to stop early)
+	$(CLI) poll $(if $(SWEEPS),--sweeps $(SWEEPS))
 
 routes:             ## smoke-test the Bus Tracker key
 	$(CLI) routes

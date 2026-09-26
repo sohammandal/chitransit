@@ -51,3 +51,82 @@ ON CONFLICT (pid) DO UPDATE SET
     changed_at = EXCLUDED.changed_at
 WHERE p.content_hash IS DISTINCT FROM EXCLUDED.content_hash
 """
+
+# --- Per-sweep writes (all in one transaction; see poller.py) ---
+
+INSERT_SWEEP = """
+INSERT INTO ops.sweeps (feed, started_at, finished_at, calls_total, calls_ok, vehicles)
+VALUES ('bus', %(started_at)s, %(finished_at)s, %(calls_total)s, %(calls_ok)s, %(vehicles)s)
+RETURNING sweep_id
+"""
+
+INSERT_RAW_POLL = """
+INSERT INTO ops.raw_polls (
+    sweep_id, feed, endpoint, request_params, fetched_at, latency_ms, attempts,
+    http_status, error, api_errors, vehicle_count, payload
+)
+VALUES (
+    %(sweep_id)s, 'bus', %(endpoint)s, %(request_params)s, %(fetched_at)s, %(latency_ms)s,
+    %(attempts)s, %(http_status)s, %(error)s, %(api_errors)s, %(vehicle_count)s, %(payload)s
+)
+RETURNING poll_id
+"""
+
+# The same (vid, observed_at) comes back when a bus hasn't reported since the last sweep.
+INSERT_POSITION = """
+INSERT INTO ops.bus_positions (
+    vid, observed_at, tmstmp_local, fetched_at, rt, pid, pdist, lat, lon, hdg, dly, des,
+    tatripid, tablockid, origtatripno, stst, stsd, psgld, poll_id, sweep_id
+)
+VALUES (
+    %(vid)s, %(observed_at)s, %(tmstmp_local)s, %(fetched_at)s, %(rt)s, %(pid)s, %(pdist)s,
+    %(lat)s, %(lon)s, %(hdg)s, %(dly)s, %(des)s, %(tatripid)s, %(tablockid)s,
+    %(origtatripno)s, %(stst)s, %(stsd)s, %(psgld)s, %(poll_id)s, %(sweep_id)s
+)
+ON CONFLICT (vid, observed_at) DO NOTHING
+"""
+
+# Not published for CDC; updated only when the bus reported a new position.
+UPSERT_LIVE_BOARD = """
+INSERT INTO ops.bus_live_board AS b (
+    vid, observed_at, rt, pid, pdist, lat, lon, dly, des, stst, stsd, psgld, last_poll_id
+)
+VALUES (
+    %(vid)s, %(observed_at)s, %(rt)s, %(pid)s, %(pdist)s, %(lat)s, %(lon)s, %(dly)s, %(des)s,
+    %(stst)s, %(stsd)s, %(psgld)s, %(poll_id)s
+)
+ON CONFLICT (vid) DO UPDATE SET
+    observed_at = EXCLUDED.observed_at,
+    rt = EXCLUDED.rt,
+    pid = EXCLUDED.pid,
+    pdist = EXCLUDED.pdist,
+    lat = EXCLUDED.lat,
+    lon = EXCLUDED.lon,
+    dly = EXCLUDED.dly,
+    des = EXCLUDED.des,
+    stst = EXCLUDED.stst,
+    stsd = EXCLUDED.stsd,
+    psgld = EXCLUDED.psgld,
+    last_poll_id = EXCLUDED.last_poll_id,
+    updated_at = NOW()
+WHERE b.observed_at IS DISTINCT FROM EXCLUDED.observed_at
+"""
+
+DELETE_LIVE_BOARD = "DELETE FROM ops.bus_live_board WHERE vid = %(vid)s"
+
+# Yesterday through two days ahead (UTC), so late reports near midnight still land.
+ENSURE_PARTITIONS = "SELECT ops.ensure_bus_positions_partitions(%(today)s::DATE - 1, 4)"
+
+# --- Startup state ---
+
+LOAD_ASSIGNMENTS = "SELECT vid, rt, direction, stsd, stst FROM ops.bus_assignments"
+
+# The observed_at bound prunes partitions (tmstmp can lag fetched_at by a few minutes).
+LOAD_LAST_SEEN = """
+SELECT DISTINCT ON (vid) vid, rt, fetched_at
+FROM ops.bus_positions
+WHERE fetched_at > %(since)s AND observed_at > %(since)s - INTERVAL '1 hour'
+ORDER BY vid, fetched_at DESC
+"""
+
+LOAD_PATTERNS = "SELECT pid, rtdir, content_hash FROM ops.patterns"

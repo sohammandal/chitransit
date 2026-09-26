@@ -1,0 +1,404 @@
+"""Bus poller: sweep every route every 30 s into the Postgres system of record.
+
+One sweep = up to 13 getvehicles calls (10 routes each), plus any pattern fetches. All
+API calls happen first; then everything the sweep learned is written in ONE transaction
+(sweeps, raw_polls, bus_positions, live board, patterns, assignments), so CDC sees each
+sweep atomically, in commit order (DDIA ch. 12-13: one system of record, no dual writes).
+
+Run with `ghost-ledger poll` (or `make poll`). Rules: docs/PLAN.md.
+"""
+
+import hashlib
+import json
+import logging
+import math
+import threading
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
+
+import psycopg
+from psycopg.types.json import Jsonb
+
+from ghost_ledger.bustracker import ApiResult, BusTrackerClient, chunked, parse_tmstmp
+from ghost_ledger.bustracker import resolve_tmstmp as resolve
+from ghost_ledger.config import ROUTES_PER_CALL, Settings
+from ghost_ledger.ingest import sql
+from ghost_ledger.ingest.presence import PresenceTracker, Sighting, TripKey
+
+log = logging.getLogger("ghost_ledger.poller")
+
+# Leave this much of each interval unused so a slow sweep can't overlap the next one.
+SWEEP_SAFETY_SECONDS = 2.0
+PATTERN_REFRESH_EVERY = timedelta(hours=24)
+PATTERN_REFRESH_ROUTES_PER_SWEEP = 5
+PARTITION_CHECK_EVERY = timedelta(hours=1)
+ROUTES_REFRESH_EVERY = timedelta(hours=24)
+
+
+def direction_of(rtdir: str) -> str:
+    """'Westbound' -> 'West', matching GTFS trips.direction."""
+    return rtdir.removesuffix("bound")
+
+
+def pattern_hash(pattern: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(pattern, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _int(value: Any) -> int | None:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_vehicle(v: dict[str, Any], fetched_at: datetime) -> dict[str, Any]:
+    """One getvehicles entry -> a bus_positions row (without poll_id / sweep_id)."""
+    tmstmp_local = parse_tmstmp(v["tmstmp"])
+    stsd = v.get("stsd") or None
+    return {
+        "vid": str(v["vid"]),
+        "observed_at": resolve(tmstmp_local, fetched_at),
+        "tmstmp_local": tmstmp_local,
+        "fetched_at": fetched_at,
+        "rt": str(v["rt"]),
+        "pid": _int(v.get("pid")),
+        "pdist": _int(v.get("pdist")),
+        "lat": _float(v.get("lat")),
+        "lon": _float(v.get("lon")),
+        "hdg": _int(v.get("hdg")),
+        "dly": bool(v.get("dly")) if v.get("dly") is not None else None,
+        "des": v.get("des"),
+        "tatripid": v.get("tatripid"),
+        "tablockid": v.get("tablockid"),
+        "origtatripno": v.get("origtatripno"),
+        "stst": _int(v.get("stst")),
+        "stsd": date.fromisoformat(stsd) if stsd else None,
+        "psgld": v.get("psgld"),
+    }
+
+
+def next_tick(previous: float, interval: float, now: float) -> float:
+    """The next scheduled start after `now`, skipping ticks a slow sweep overran."""
+    tick = previous + interval
+    if tick <= now:
+        tick += math.ceil((now - tick) / interval) * interval
+        if tick <= now:
+            tick += interval
+    return tick
+
+
+@dataclass
+class Call:
+    endpoint: str
+    params: dict[str, str]  # never contains the API key
+    result: ApiResult
+    fetched_at: datetime
+    routes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SweepSummary:
+    sweep_id: int | None
+    calls_total: int
+    calls_ok: int
+    vehicles: int
+    new_positions: int
+    patterns_written: int
+    assigned: int
+    gone: int
+    seconds: float
+
+
+class Poller:
+    def __init__(
+        self,
+        settings: Settings,
+        client: BusTrackerClient,
+        connect: Callable[[], psycopg.Connection] | None = None,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.settings = settings
+        self.client = client
+        self._connect = connect or (lambda: psycopg.connect(settings.database_url))
+        self.now = now
+        self.monotonic = monotonic
+        self.conn: psycopg.Connection | None = None
+        self.routes: list[str] = []
+        self.patterns: dict[int, tuple[str, str]] = {}  # pid -> (rtdir, content_hash)
+        self.presence = PresenceTracker(timedelta(minutes=settings.assignment_grace_minutes))
+        self._refresh_queue: list[str] = []
+        self._next_pattern_refresh = self.now()
+        self._next_partition_check = self.now()
+        self._next_routes_refresh = self.now()
+        self._pending_calls: list[Call] = []
+
+    # ---------- startup and state ----------
+
+    def start(self) -> None:
+        self._ensure_connection()
+        self._ensure_partitions(force=True)
+        self._load_state()
+        self._refresh_routes(force=True)
+        log.info(
+            "poller started: env=%s routes=%d patterns=%d assignments=%d grace=%s",
+            self.settings.env, len(self.routes), len(self.patterns),
+            len(self.presence.trips), self.presence.grace,
+        )  # fmt: skip
+
+    def _ensure_connection(self) -> psycopg.Connection:
+        if self.conn is None or self.conn.closed or self.conn.broken:
+            self.conn = self._connect()
+        return self.conn
+
+    def _load_state(self) -> None:
+        """Rebuild in-memory state from the database, e.g. after a restart or a failed write."""
+        conn = self._ensure_connection()
+        with conn.transaction():
+            self.patterns = {
+                pid: (rtdir, h) for pid, rtdir, h in conn.execute(sql.LOAD_PATTERNS).fetchall()
+            }
+            trips = {
+                vid: TripKey(rt, direction, stsd, stst)
+                for vid, rt, direction, stsd, stst in conn.execute(sql.LOAD_ASSIGNMENTS)
+            }
+            since = self.now() - max(self.presence.grace * 3, timedelta(hours=1))
+            last_seen = {
+                vid: (rt, fetched_at)
+                for vid, rt, fetched_at in conn.execute(sql.LOAD_LAST_SEEN, {"since": since})
+            }
+        self.presence = PresenceTracker(self.presence.grace, trips, last_seen)
+
+    def _ensure_partitions(self, force: bool = False) -> None:
+        if not force and self.now() < self._next_partition_check:
+            return
+        conn = self._ensure_connection()
+        with conn.transaction():
+            conn.execute(sql.ENSURE_PARTITIONS, {"today": self.now().date()})
+        self._next_partition_check = self.now() + PARTITION_CHECK_EVERY
+
+    def _refresh_routes(self, force: bool = False) -> None:
+        if not force and self.now() < self._next_routes_refresh:
+            return
+        if self.settings.poll_routes:
+            self.routes = list(self.settings.poll_routes)
+        else:
+            call = self._call("getroutes", {}, self.client.get_routes)
+            if call.result.ok and call.result.body.get("routes"):
+                self.routes = [str(r["rt"]) for r in call.result.body["routes"]]
+            elif not self.routes:
+                raise RuntimeError(f"cannot list routes at startup: {call.result.error}")
+        self._next_routes_refresh = self.now() + ROUTES_REFRESH_EVERY
+
+    # ---------- one sweep ----------
+
+    def _call(self, endpoint: str, params: dict[str, str], fn, routes=None) -> Call:
+        result = fn()
+        call = Call(endpoint, params, result, self.now(), list(routes or []))
+        self._pending_calls.append(call)
+        return call
+
+    def sweep(self) -> SweepSummary:
+        t0 = self.monotonic()
+        deadline = t0 + self.settings.poll_interval_seconds - SWEEP_SAFETY_SECONDS
+        started_at = self.now()
+        self._ensure_partitions()
+        self._refresh_routes()
+
+        vehicle_calls: list[Call] = []
+        for batch in chunked(self.routes, ROUTES_PER_CALL):
+            params = {"rt": ",".join(batch), "tmres": "s"}
+            if self.monotonic() > deadline:
+                skipped = ApiResult(error="skipped: sweep deadline")
+                call = Call("getvehicles", params, skipped, self.now(), batch)
+                self._pending_calls.append(call)
+            else:
+                call = self._call(
+                    "getvehicles", params, lambda b=batch: self.client.get_vehicles(b), batch
+                )
+            vehicle_calls.append(call)
+
+        polled_routes = {rt for c in vehicle_calls if c.result.ok for rt in c.routes}
+        positions: list[tuple[Call, dict[str, Any]]] = []
+        for call in vehicle_calls:
+            for v in call.result.body.get("vehicle", []):
+                try:
+                    positions.append((call, parse_vehicle(v, call.fetched_at)))
+                except (KeyError, ValueError) as exc:
+                    log.warning("skipping unparseable vehicle %s: %s", v.get("vid"), exc)
+
+        pattern_rows = self._fetch_patterns(positions, deadline)
+
+        sightings = []
+        for _, p in positions:
+            trip = None
+            known = self.patterns.get(p["pid"]) if p["pid"] is not None else None
+            if known and p["stsd"] and p["stst"] is not None:
+                trip = TripKey(p["rt"], direction_of(known[0]), p["stsd"], p["stst"])
+            sightings.append(Sighting(p["vid"], p["rt"], trip, p["fetched_at"]))
+        changes = self.presence.observe(sightings, polled_routes, started_at)
+
+        calls, self._pending_calls = self._pending_calls, []
+        try:
+            summary = self._write(
+                started_at, calls, positions, pattern_rows, changes, sightings, t0
+            )
+        except psycopg.Error:
+            # The sweep is lost (visible as a gap in ops.sweeps); memory may now be ahead of
+            # the database, so rebuild it from the database before the next sweep.
+            log.exception("sweep write failed; reloading state from the database")
+            if self.conn is not None and not self.conn.closed:
+                self.conn.close()
+            self.conn = None
+            try:
+                self._load_state()
+            except psycopg.Error:
+                log.exception("database still unreachable")
+            raise
+        return summary
+
+    def _fetch_patterns(self, positions, deadline: float) -> list[dict[str, Any]]:
+        """Fetch unseen pids now; refresh known ones a few routes per sweep, once a day."""
+        rows = []
+        unseen = {}
+        for _, p in positions:
+            if p["pid"] is not None and p["pid"] not in self.patterns:
+                unseen.setdefault(p["pid"], p["rt"])
+        for pid, rt in unseen.items():
+            if self.monotonic() > deadline:
+                break
+            call = self._call(
+                "getpatterns", {"pid": str(pid)}, lambda p=pid: self.client.get_pattern(p), [rt]
+            )
+            rows += self._pattern_rows(call, rt)
+
+        if self.now() >= self._next_pattern_refresh and not self._refresh_queue:
+            self._refresh_queue = list(self.routes)
+            self._next_pattern_refresh = self.now() + PATTERN_REFRESH_EVERY
+        for _ in range(PATTERN_REFRESH_ROUTES_PER_SWEEP):
+            if not self._refresh_queue or self.monotonic() > deadline:
+                break
+            rt = self._refresh_queue.pop(0)
+            call = self._call(
+                "getpatterns", {"rt": rt}, lambda r=rt: self.client.get_patterns(r), [rt]
+            )
+            rows += self._pattern_rows(call, rt)
+        return rows
+
+    def _pattern_rows(self, call: Call, rt: str) -> list[dict[str, Any]]:
+        rows = []
+        for ptr in call.result.body.get("ptr", []) if call.result.ok else []:
+            pid, h = int(ptr["pid"]), pattern_hash(ptr)
+            if self.patterns.get(pid, (None, None))[1] == h:
+                continue
+            self.patterns[pid] = (ptr["rtdir"], h)
+            rows.append({
+                "pid": pid, "rt": rt, "rtdir": ptr["rtdir"], "length_ft": _float(ptr.get("ln")),
+                "content_hash": h, "pattern": Jsonb(ptr), "seen_at": call.fetched_at,
+            })  # fmt: skip
+        return rows
+
+    def _write(self, started_at, calls, positions, pattern_rows, changes, sightings, t0):
+        conn = self._ensure_connection()
+        finished_at = self.now()
+        vehicle_calls = [c for c in calls if c.endpoint == "getvehicles"]
+        with conn.transaction(), conn.cursor() as cur:
+            sweep_id = cur.execute(sql.INSERT_SWEEP, {
+                "started_at": started_at, "finished_at": finished_at,
+                "calls_total": len(vehicle_calls),
+                "calls_ok": sum(c.result.ok for c in vehicle_calls),
+                "vehicles": len(positions),
+            }).fetchone()[0]  # fmt: skip
+
+            poll_ids: dict[int, int] = {}
+            for call in calls:
+                r = call.result
+                poll_ids[id(call)] = cur.execute(sql.INSERT_RAW_POLL, {
+                    "sweep_id": sweep_id, "endpoint": call.endpoint,
+                    "request_params": Jsonb(call.params), "fetched_at": call.fetched_at,
+                    "latency_ms": r.latency_ms, "attempts": r.attempts,
+                    "http_status": r.http_status, "error": r.error,
+                    "api_errors": Jsonb(r.api_errors) if r.api_errors else None,
+                    "vehicle_count": len(r.body.get("vehicle", [])) if r.ok else None,
+                    "payload": Jsonb(r.body) if (not r.ok and r.body) else None,
+                }).fetchone()[0]  # fmt: skip
+
+            rows = [
+                {**p, "poll_id": poll_ids[id(call)], "sweep_id": sweep_id} for call, p in positions
+            ]
+            cur.executemany(sql.INSERT_POSITION, rows)
+            new_positions = cur.rowcount if rows else 0
+            cur.executemany(sql.UPSERT_LIVE_BOARD, rows)
+
+            if pattern_rows:
+                cur.executemany(sql.UPSERT_PATTERN, pattern_rows)
+
+            by_vid = {r["vid"]: r for r in rows}
+            assigned = []
+            for s in changes.assigned:
+                p = by_vid[s.vid]
+                assigned.append({
+                    "vid": s.vid, "rt": s.trip.rt, "direction": s.trip.direction,
+                    "stsd": s.trip.stsd, "stst": s.trip.stst, "pid": p["pid"],
+                    "tablockid": p["tablockid"], "tatripid": p["tatripid"],
+                    "origtatripno": p["origtatripno"], "first_seen_at": p["observed_at"],
+                    "sweep_id": sweep_id,
+                })  # fmt: skip
+            if assigned:
+                cur.executemany(sql.UPSERT_ASSIGNMENT, assigned)
+            if changes.gone:
+                gone = [{"vid": vid} for vid in changes.gone]
+                cur.executemany(sql.DELETE_ASSIGNMENT, gone)
+                cur.executemany(sql.DELETE_LIVE_BOARD, gone)
+
+        return SweepSummary(
+            sweep_id=sweep_id,
+            calls_total=len(vehicle_calls),
+            calls_ok=sum(c.result.ok for c in vehicle_calls),
+            vehicles=len(positions),
+            new_positions=new_positions,
+            patterns_written=len(pattern_rows),
+            assigned=len(assigned),
+            gone=len(changes.gone),
+            seconds=round(self.monotonic() - t0, 2),
+        )
+
+    # ---------- the loop ----------
+
+    def run(self, stop: threading.Event | None = None, max_sweeps: int | None = None) -> None:
+        stop = stop or threading.Event()
+        self.start()
+        interval = self.settings.poll_interval_seconds
+        tick = self.monotonic()
+        done = 0
+        while not stop.is_set():
+            try:
+                s = self.sweep()
+                log.info(
+                    "sweep %s: calls %d/%d, buses %d, new positions %d, patterns %d, "
+                    "assigned %d, gone %d, %.2fs",
+                    s.sweep_id, s.calls_ok, s.calls_total, s.vehicles, s.new_positions,
+                    s.patterns_written, s.assigned, s.gone, s.seconds,
+                )  # fmt: skip
+            except psycopg.Error:
+                pass  # logged in sweep(); the next tick retries with a fresh connection
+            done += 1
+            if max_sweeps is not None and done >= max_sweeps:
+                break
+            tick = next_tick(tick, interval, self.monotonic())
+            stop.wait(max(0.0, tick - self.monotonic()))
+        if self.conn is not None:
+            self.conn.close()
+        log.info("poller stopped after %d sweeps", done)

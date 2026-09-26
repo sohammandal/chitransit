@@ -4,6 +4,9 @@ The poller itself is week-1 step 3 (docs/PLAN.md).
 """
 
 import argparse
+import logging
+import signal
+import threading
 
 import psycopg
 
@@ -76,6 +79,18 @@ def cmd_check_db(_: argparse.Namespace) -> None:
     print("bus_positions partitions:", ", ".join(p[0] for p in partitions) or "(none)")
 
 
+def cmd_poll(args: argparse.Namespace) -> None:
+    from ghost_ledger.ingest.poller import Poller
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    settings = get_settings()
+    stop = threading.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: stop.set())  # finish the current sweep, then exit
+    with BusTrackerClient(require_bus_key(settings)) as client:
+        Poller(settings, client).run(stop=stop, max_sweeps=args.sweeps)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="ghost-ledger")
     sub = parser.add_subparsers(required=True)
@@ -88,6 +103,9 @@ def main() -> None:
     vehicles = sub.add_parser("vehicles", help="Live buses for up to 10 routes")
     vehicles.add_argument("--rt", nargs="+", default=["79"])
     vehicles.set_defaults(func=cmd_vehicles)
+    poll = sub.add_parser("poll", help="Run the bus poller (Ctrl-C stops after the sweep)")
+    poll.add_argument("--sweeps", type=int, default=None, help="stop after N sweeps")
+    poll.set_defaults(func=cmd_poll)
     sub.add_parser("check-db", help="Check Postgres, WAL level and ops schema").set_defaults(
         func=cmd_check_db
     )
