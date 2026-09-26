@@ -62,8 +62,38 @@ jobs:
             terraform -chdir=infra/terraform/$stack validate
           done
 
+  # dbt: build every model with zero rows against the real sources (read-only role), then run
+  # the data tests and the business-rule unit tests. Catches SQL, ref and logic regressions
+  # before the nightly job runs the change on real data.
+  transform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GTFS_ROOT: s3://ghost-ledger-lake-354894954112/gtfs
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0  # no floating major tag upstream
+        with:
+          enable-cache: true
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: us-east-2
+
+      - name: Install
+        run: uv sync --frozen --group transform
+
+      - name: dbt build --empty (schema, data tests, unit tests)
+        working-directory: transform
+        run: uv run --group transform dbt build --profiles-dir . --empty
+
   image:
-    needs: [test, terraform]
+    needs: [test, terraform, transform]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15

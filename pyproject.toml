@@ -18,6 +18,9 @@ dev = [
     "ruff>=0.12",
     "sqlfluff>=3.0",
 ]
+transform = [
+    "dbt-duckdb>=1.11.0",
+]
 
 [project.scripts]
 ghost-ledger = "ghost_ledger.cli:main"

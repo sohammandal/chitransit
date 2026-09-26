@@ -267,6 +267,77 @@ resource "aws_iam_role_policy" "ci_apply_writes" {
   policy = data.aws_iam_policy_document.apply_writes.json
 }
 
+# ---------- transform role: the nightly dbt job ----------
+# Reads Ingress (Glue + S3) and writes only the lake's gtfs/ and analytics/ prefixes. Only
+# workflows on main (schedule, manual dispatch) can assume it.
+
+data "aws_iam_policy_document" "trust_transform" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "${local.oidc_host}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "${local.oidc_host}:sub"
+      values   = ["${var.github_sub_prefix}:ref:refs/heads/main"]
+    }
+  }
+}
+
+resource "aws_iam_role" "transform" {
+  name                 = "ghost-ledger-transform"
+  assume_role_policy   = data.aws_iam_policy_document.trust_transform.json
+  max_session_duration = 3600
+}
+
+locals {
+  lake_arn = "arn:aws:s3:::ghost-ledger-lake-${data.aws_caller_identity.me.account_id}"
+  glue_arn = "arn:aws:glue:${var.region}:${data.aws_caller_identity.me.account_id}"
+}
+
+data "aws_iam_policy_document" "transform" {
+  statement {
+    sid       = "LakeList"
+    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
+    resources = [local.lake_arn]
+  }
+  statement {
+    sid       = "LakeRead"
+    actions   = ["s3:GetObject"]
+    resources = ["${local.lake_arn}/*"]
+  }
+  statement {
+    sid       = "LakeWriteDerived"
+    actions   = ["s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"]
+    resources = ["${local.lake_arn}/gtfs/*", "${local.lake_arn}/analytics/*"]
+  }
+  statement {
+    sid = "IngressCatalogRead"
+    actions = [
+      "glue:GetCatalog", "glue:GetCatalogs", "glue:GetDatabase", "glue:GetDatabases",
+      "glue:GetTable", "glue:GetTables",
+    ]
+    resources = [
+      "${local.glue_arn}:catalog",
+      "${local.glue_arn}:database/ghost_ledger_ingress",
+      "${local.glue_arn}:table/ghost_ledger_ingress/*",
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "transform" {
+  name   = "ghost-ledger-transform"
+  role   = aws_iam_role.transform.id
+  policy = data.aws_iam_policy_document.transform.json
+}
+
 # ---------- outputs: copy these into GitHub repo variables ----------
 
 output "state_bucket" {
@@ -279,4 +350,8 @@ output "ci_plan_role_arn" {
 
 output "ci_apply_role_arn" {
   value = aws_iam_role.ci_apply.arn
+}
+
+output "transform_role_arn" {
+  value = aws_iam_role.transform.arn
 }

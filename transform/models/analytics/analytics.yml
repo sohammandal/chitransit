@@ -1,0 +1,42 @@
+version: 2
+
+models:
+  - name: trip_status
+    description: >
+      One row per scheduled bus trip and service date (GTFS feed in force that day), with
+      what happened to it. Grain: (service_date, trip_id).
+    columns:
+      - name: status
+        description: >
+          ran | flagged (CTA marked it canceled, dyn=1) | silent (not seen, not flagged,
+          while the feed and the prediction sampler were both watching) | unknown (not enough
+          evidence) | pending (not over yet).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [ran, flagged, silent, unknown, pending]
+      - name: matched_on
+        description: "pattern: same pid and start; route: same route and start (bus on a detour pattern)."
+      - name: flagged
+        description: CTA flagged the trip canceled in at least one sampled prediction (even if it then ran).
+      - name: sweep_coverage
+        description: Share of the trip's scheduled minutes with a fully successful sweep.
+      - name: flags_sampled
+        description: Predictions were sampled in the 30 minutes before the trip was due.
+
+  - name: route_hour_delivery
+    description: >
+      trip_status counted per service date, route, direction and scheduled start hour
+      (Chicago), without pending trips. Grain: (service_date, rt, direction, start_hour).
+
+  - name: stop_hour_service
+    description: >
+      Headways, gaps (> 2x scheduled headway) and bunching (< 25%) per stop, route,
+      direction and clock hour, terminals excluded, gated on sweep coverage >= 90%.
+      Grain: (service_date, rt, direction, stop_id, hour_start).
+    columns:
+      - name: bunched
+        description: Headways under 25% of the scheduled headway; NULL when the hour wasn't watched enough.
+      - name: gaps
+        description: Headways over 2x the scheduled headway; NULL when the hour wasn't watched enough.

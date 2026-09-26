@@ -1,6 +1,6 @@
 [sqlfluff]
-# Postgres is the system of record (db/migrations). When dbt arrives (week 3),
-# add a nested .sqlfluff in the dbt project with dialect = duckdb and templater = dbt.
+# Postgres is the system of record (db/migrations). The dbt project (transform/) is
+# excluded in .pre-commit-config.yaml; dbt parse and unit tests validate it in CI.
 dialect = postgres
 templater = raw
 max_line_length = 100

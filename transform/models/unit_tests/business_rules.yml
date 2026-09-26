@@ -1,0 +1,113 @@
+# Unit tests: fixed inputs -> exact outputs for the rules the numbers depend on.
+unit_tests:
+  - name: observed_trips_shift_trips_after_midnight_to_the_next_service_date
+    description: >
+      Buses report a trip after midnight as stst >= 86,400 on the previous stsd; CTA's GTFS
+      lists it on the next date. Reports missing pid/stsd/stst can't be keyed and are dropped.
+    model: int_observed_trips
+    overrides:
+      vars: {start_date: "2026-09-26", end_date: "2026-09-26"}
+    given:
+      - input: ref('stg_bus_positions')
+        rows:
+          # 00:30 on Sep 26, trip that began at 24:10 on service day Sep 25
+          - {vid: "1", observed_at: "2026-09-26 00:30:00-05", rt: "9", pid: 10, pdist: 500, stsd: "2026-09-25", stst: 87000}
+          - {vid: "1", observed_at: "2026-09-26 00:31:00-05", rt: "9", pid: 10, pdist: 900, stsd: "2026-09-25", stst: 87000}
+          # an ordinary daytime trip
+          - {vid: "2", observed_at: "2026-09-26 08:00:00-05", rt: "9", pid: 10, pdist: 100, stsd: "2026-09-26", stst: 28800}
+          # no pid: can't be matched to a pattern
+          - {vid: "3", observed_at: "2026-09-26 08:00:00-05", rt: "9", pid: null, pdist: 100, stsd: "2026-09-26", stst: 28800}
+          # the previous service day's ordinary trip: outside the window
+          - {vid: "4", observed_at: "2026-09-25 22:00:00-05", rt: "9", pid: 10, pdist: 100, stsd: "2026-09-25", stst: 79200}
+    expect:
+      rows:
+        - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 600, n_reports: 2, n_buses: 1, min_pdist: 500, max_pdist: 900}
+        - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 28800, n_reports: 1, n_buses: 1, min_pdist: 100, max_pdist: 100}
+
+  - name: stop_passes_interpolate_forward_progress_only
+    description: >
+      A stop between two reports is passed in proportion to the distance covered. A report
+      behind the furthest point reached (pdist jumped back) starts no step, and pairs more
+      than 5 minutes apart are not interpolated.
+    model: int_stop_passes
+    overrides:
+      vars: {start_date: "2026-09-26", end_date: "2026-09-26"}
+    given:
+      - input: ref('stg_bus_positions')
+        rows:
+          - {vid: "1", observed_at: "2026-09-26 10:00:00-05", rt: "9", pid: 10, pdist: 0, stsd: "2026-09-26", stst: 36000}
+          - {vid: "1", observed_at: "2026-09-26 10:00:40-05", rt: "9", pid: 10, pdist: 1000, stsd: "2026-09-26", stst: 36000}
+          # jumps back to 0: no step starts here
+          - {vid: "1", observed_at: "2026-09-26 10:01:10-05", rt: "9", pid: 10, pdist: 0, stsd: "2026-09-26", stst: 36000}
+          - {vid: "1", observed_at: "2026-09-26 10:01:40-05", rt: "9", pid: 10, pdist: 1200, stsd: "2026-09-26", stst: 36000}
+          # 10 minutes later: too long a gap to interpolate stop 5
+          - {vid: "1", observed_at: "2026-09-26 10:11:40-05", rt: "9", pid: 10, pdist: 3000, stsd: "2026-09-26", stst: 36000}
+      - input: ref('stg_pattern_stops')
+        rows:
+          - {pid: 10, seq: 1, stop_id: "A", pdist: 0}
+          - {pid: 10, seq: 2, stop_id: "B", pdist: 500}
+          - {pid: 10, seq: 3, stop_id: "C", pdist: 1000}
+          - {pid: 10, seq: 4, stop_id: "D", pdist: 1100}
+          - {pid: 10, seq: 5, stop_id: "E", pdist: 2000}
+    expect:
+      rows:
+        - {seq: 1, stop_id: "A", passed_at: "2026-09-26 10:00:00-05"}
+        - {seq: 2, stop_id: "B", passed_at: "2026-09-26 10:00:20-05"}
+        - {seq: 3, stop_id: "C", passed_at: "2026-09-26 10:00:40-05"}
+
+  - name: trip_status_rules
+    description: >
+      ran on pid+start (GTFS start 0-120 s after the bus's stst), ran on route+start for a
+      detour pid, flagged when not seen but dyn=1, silent only when fully swept and
+      predictions were sampled, unknown otherwise (incl. a start 200 s off schedule).
+    model: trip_status
+    overrides:
+      vars: {as_of: "2026-09-27 06:00:00-05"}
+    given:
+      - input: ref('int_scheduled_trips')
+        rows:
+          - {service_date: "2026-09-26", trip_id: "T1", feed_id: "f", rt: "9", direction: "North", pid: 10, start_s: 36000, end_s: 36120, scheduled_start: "2026-09-26 10:00:00-05", scheduled_end: "2026-09-26 10:02:00-05"}
+          - {service_date: "2026-09-26", trip_id: "T2", feed_id: "f", rt: "9", direction: "North", pid: 10, start_s: 37800, end_s: 37920, scheduled_start: "2026-09-26 10:30:00-05", scheduled_end: "2026-09-26 10:32:00-05"}
+          - {service_date: "2026-09-26", trip_id: "T3", feed_id: "f", rt: "9", direction: "North", pid: 10, start_s: 39600, end_s: 39720, scheduled_start: "2026-09-26 11:00:00-05", scheduled_end: "2026-09-26 11:02:00-05"}
+          - {service_date: "2026-09-26", trip_id: "T4", feed_id: "f", rt: "9", direction: "North", pid: 10, start_s: 41400, end_s: 41520, scheduled_start: "2026-09-26 11:30:00-05", scheduled_end: "2026-09-26 11:32:00-05"}
+          - {service_date: "2026-09-26", trip_id: "T5", feed_id: "f", rt: "9", direction: "North", pid: 10, start_s: 43200, end_s: 43320, scheduled_start: "2026-09-26 12:00:00-05", scheduled_end: "2026-09-26 12:02:00-05"}
+          - {service_date: "2026-09-26", trip_id: "T6", feed_id: "f", rt: "9", direction: "North", pid: 10, start_s: 45000, end_s: 45120, scheduled_start: "2026-09-26 12:30:00-05", scheduled_end: "2026-09-26 12:32:00-05"}
+      - input: ref('int_observed_trips')
+        rows:
+          # T1: same pid, bus stst 50 s before the GTFS first departure
+          - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 35950, first_seen_at: "2026-09-26 10:00:10-05", last_seen_at: "2026-09-26 10:02:00-05", n_reports: 5}
+          # T2: detour pid 99, 10 s before
+          - {service_date: "2026-09-26", rt: "9", pid: 99, start_s: 37790, first_seen_at: "2026-09-26 10:30:10-05", last_seen_at: "2026-09-26 10:32:00-05", n_reports: 3}
+          # T6's neighbor: 200 s before T6, outside the 120 s tolerance
+          - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 44800, first_seen_at: "2026-09-26 12:27:00-05", last_seen_at: "2026-09-26 12:29:00-05", n_reports: 4}
+      - input: ref('stg_patterns')
+        rows:
+          - {pid: 10, rt: "9", direction: "North"}
+          - {pid: 99, rt: "9", direction: "North"}
+      - input: ref('int_trip_flags')
+        rows:
+          - {service_date: "2026-09-26", rt: "9", direction: "North", start_s: 39590, first_flagged_at: "2026-09-26 10:40:00-05", n_flagged_samples: 2}
+      - input: ref('int_feed_minutes')
+        rows:
+          # T4 fully watched: sampled before, swept all 3 minutes -> silent
+          - {minute: "2026-09-26 11:20:00-05", swept: true, predictions_sampled: true}
+          - {minute: "2026-09-26 11:30:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 11:31:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 11:32:00-05", swept: true, predictions_sampled: false}
+          # T5: predictions sampled but one of three minutes not swept -> unknown
+          - {minute: "2026-09-26 11:50:00-05", swept: true, predictions_sampled: true}
+          - {minute: "2026-09-26 12:00:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 12:02:00-05", swept: true, predictions_sampled: false}
+          # T6: fully watched, but a bus ran 200 s early (no match) -> silent
+          - {minute: "2026-09-26 12:20:00-05", swept: true, predictions_sampled: true}
+          - {minute: "2026-09-26 12:30:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 12:31:00-05", swept: true, predictions_sampled: false}
+          - {minute: "2026-09-26 12:32:00-05", swept: true, predictions_sampled: false}
+    expect:
+      rows:
+        - {trip_id: "T1", status: "ran", matched_on: "pattern", flagged: false}
+        - {trip_id: "T2", status: "ran", matched_on: "route", flagged: false}
+        - {trip_id: "T3", status: "flagged", matched_on: null, flagged: true}
+        - {trip_id: "T4", status: "silent", matched_on: null, flagged: false}
+        - {trip_id: "T5", status: "unknown", matched_on: null, flagged: false}
+        - {trip_id: "T6", status: "silent", matched_on: null, flagged: false}

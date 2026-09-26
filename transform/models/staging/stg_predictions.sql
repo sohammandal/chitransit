@@ -1,0 +1,42 @@
+-- One row per prediction in a sampled getpredictions response (raw_responses: the exact
+-- bytes CTA sent). dyn = 1 marks the trip as canceled at that stop, 4 as expressed.
+with polls as (
+    select poll_id, fetched_at
+    from {{ source('ingress', 'ghost_ops_raw_polls') }}
+    where
+        endpoint = 'getpredictions'
+        and fetched_at >= {{ service_ts(window_start() ~ " - 1", 0) }}
+        and fetched_at < {{ service_ts(window_end() ~ " + 2", 0) }}
+    qualify row_number() over (partition by poll_id order by __lsn) = 1
+),
+
+responses as (
+    select poll_id, body
+    from {{ source('ingress', 'ghost_ops_raw_responses') }}
+    where
+        fetched_at >= {{ service_ts(window_start() ~ " - 1", 0) }}
+        and fetched_at < {{ service_ts(window_end() ~ " + 2", 0) }}
+    qualify row_number() over (partition by poll_id order by __lsn) = 1
+),
+
+prd as (
+    select
+        polls.poll_id,
+        polls.fetched_at,
+        unnest(from_json(json_extract(responses.body, '$."bustime-response".prd'), '["JSON"]')) as p
+    from polls
+    inner join responses using (poll_id)
+)
+
+select
+    poll_id,
+    fetched_at,
+    p ->> 'stpid' as stpid,
+    p ->> 'rt' as rt,
+    p ->> 'rtdir' as rtdir,
+    p ->> 'vid' as vid,
+    p ->> 'typ' as typ,
+    (p ->> 'dyn')::int as dyn,
+    (p ->> 'stsd')::date as stsd,
+    (p ->> 'stst')::int as stst
+from prd

@@ -1,0 +1,37 @@
+version: 2
+
+models:
+  - name: stg_bus_positions
+    description: One row per bus report. Grain (vid, observed_at); CDC duplicates removed.
+    columns:
+      - name: vid
+        data_tests: [not_null]
+      - name: observed_at
+        data_tests: [not_null]
+      - name: rt
+        data_tests: [not_null]
+  - name: stg_sweeps
+    columns:
+      - name: sweep_id
+        data_tests: [unique, not_null]
+  - name: stg_predictions
+    description: One row per prediction in a sampled getpredictions response.
+    columns:
+      - name: dyn
+        description: "0 normal, 1 canceled, 4 expressed (12 is hidden from the public)."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1, 4, 12]
+              config:
+                severity: warn
+  - name: stg_patterns
+    columns:
+      - name: pid
+        data_tests: [unique, not_null]
+  - name: stg_gtfs_bus_trips
+    description: Bus trips of every loaded GTFS feed. Grain (feed_id, trip_id).
+    columns:
+      - name: pid
+        description: shape_id without its 3-digit prefix = the Bus Tracker pid.
+        data_tests: [not_null]

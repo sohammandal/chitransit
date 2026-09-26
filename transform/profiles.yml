@@ -1,0 +1,22 @@
+# Reads Ingress straight from the Glue Iceberg catalog with the AWS credential chain
+# (laptop: aws configure export-credentials; CI: the OIDC role). Output: a local DuckDB file.
+ghost_ledger:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DBT_DUCKDB_PATH', 'target/ghost_ledger.duckdb') }}"
+      threads: 4
+      extensions: [httpfs, aws, iceberg]
+      settings:
+        TimeZone: America/Chicago
+      secrets:
+        - type: s3
+          provider: credential_chain
+          region: us-east-2
+      attach:
+        - path: "354894954112"
+          alias: glue
+          type: iceberg
+          options:
+            endpoint_type: glue

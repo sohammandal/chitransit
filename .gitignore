@@ -50,3 +50,7 @@ tmp*/
 *.tfplan
 infra/terraform/**/terraform.tfvars
 infra/terraform/**/backend.hcl
+
+# dbt (per-machine id, logs)
+transform/.user.yml
+transform/logs/

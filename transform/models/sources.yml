@@ -1,0 +1,37 @@
+version: 2
+
+sources:
+  - name: ingress
+    description: >
+      The CDC log of prod Postgres as Iceberg tables (Glue database ghost_ledger_ingress).
+      One row per change with __op (r snapshot, c insert, u update, d delete), __lsn and
+      __source_sequence. At-least-once: staging models deduplicate on each table's key.
+    database: glue
+    schema: ghost_ledger_ingress
+    tables:
+      - name: ghost_ops_bus_positions
+      - name: ghost_ops_sweeps
+        description: One row per 30 s sweep; commits every 5 minutes, so it is the freshness probe.
+        loaded_at_field: finished_at
+        config:
+          freshness:
+            warn_after: {count: 30, period: minute}
+            error_after: {count: 3, period: hour}
+      - name: ghost_ops_raw_polls
+      - name: ghost_ops_raw_responses
+      - name: ghost_ops_patterns
+
+  - name: gtfs
+    description: >
+      CTA GTFS feeds as Parquet (transform/load_gtfs.py), all columns text, one feed_id per
+      version. GTFS_ROOT: ../data/gtfs_parquet locally, s3://... in the nightly job.
+    meta:
+      external_location: "read_parquet('{{ env_var('GTFS_ROOT', '../data/gtfs_parquet') }}/{name}/*/*.parquet', hive_partitioning = true)"
+    tables:
+      - name: feeds
+      - name: trips
+      - name: stop_times
+      - name: calendar
+      - name: calendar_dates
+      - name: routes
+      - name: stops

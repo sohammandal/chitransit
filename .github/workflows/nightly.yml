@@ -1,0 +1,71 @@
+name: nightly
+
+# The batch layer (DDIA ch. 11): load a new GTFS feed if CTA published one, rebuild the
+# Intermediate and analytics models from Ingress for a window of service dates, test them,
+# and publish the analytics tables to the lake. Everything is derived and idempotent: a rerun
+# of the same window rewrites the same partitions. Run it by hand with a date range to
+# rebuild history after a logic change (replay from the log).
+
+on:
+  schedule:
+    - cron: "0 11 * * *"  # 06:00 CDT / 05:00 CST: yesterday's service day is over by then
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "First service date to rebuild (YYYY-MM-DD). Empty = the last 3 days."
+        default: ""
+      end_date:
+        description: "Last service date to rebuild (YYYY-MM-DD)."
+        default: ""
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write  # OIDC: assume the transform role, no stored AWS keys
+
+env:
+  AWS_REGION: us-east-2
+  LAKE: s3://ghost-ledger-lake-354894954112
+  GTFS_ROOT: s3://ghost-ledger-lake-354894954112/gtfs
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0  # no floating major tag upstream
+        with:
+          enable-cache: true
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_TRANSFORM_ROLE_ARN }}
+          aws-region: us-east-2
+
+      - name: Install
+        run: uv sync --frozen --group transform
+
+      - name: Load GTFS (skipped when the feed is unchanged)
+        run: uv run --group transform python transform/load_gtfs.py --root "$GTFS_ROOT"
+
+      - name: Ingress freshness
+        working-directory: transform
+        run: uv run --group transform dbt source freshness --profiles-dir .
+
+      - name: Build and test (dbt build)
+        working-directory: transform
+        env:
+          START: ${{ inputs.start_date }}
+          END: ${{ inputs.end_date }}
+        run: |
+          vars="{}"
+          if [ -n "$START" ]; then vars="{start_date: '$START', end_date: '${END:-$START}'}"; fi
+          uv run --group transform dbt build --profiles-dir . --vars "$vars"
+
+      - name: Publish analytics to the lake
+        run: uv run --group transform python transform/publish.py --db transform/target/ghost_ledger.duckdb --to "$LAKE/analytics"

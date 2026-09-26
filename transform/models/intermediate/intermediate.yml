@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: int_scheduled_trips
+    description: Bus trips scheduled per service date by the GTFS feed in force. Grain (service_date, trip_id).
+    columns:
+      - name: feed_id
+        data_tests: [not_null]
+      - name: scheduled_start
+        data_tests: [not_null]
+  - name: int_observed_trips
+    description: Trips the feed showed, keyed (service_date, rt, pid, start_s) after the midnight shift.
+  - name: int_trip_flags
+    description: Trips flagged canceled (dyn=1) in sampled predictions. Grain (service_date, rt, direction, start_s).
+  - name: int_feed_minutes
+    description: Per minute, whether a clean sweep ran and whether predictions were sampled.
+    columns:
+      - name: minute
+        data_tests: [unique, not_null]
+  - name: int_stop_passes
+    description: Interpolated stop passes. Grain (service_date, rt, pid, start_s, vid, seq).
+    columns:
+      - name: passed_at
+        data_tests: [not_null]
+  - name: int_scheduled_departures
+    description: Scheduled departures per stop. Grain (service_date, trip_id, stop_sequence).

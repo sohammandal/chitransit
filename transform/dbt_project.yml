@@ -1,0 +1,29 @@
+# Intermediate and analytics models, derived from Ingress (Iceberg via Glue) and GTFS versions.
+# Every model covers a window of service dates (vars start_date/end_date), so a rerun of
+# the same window rebuilds the same rows (idempotent).
+name: ghost_ledger
+version: "1.0.0"
+profile: ghost_ledger
+config-version: 2
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+target-path: target
+clean-targets: [target]
+
+vars:
+  # Service dates to build (Chicago). Default: the last 3 complete service days.
+  start_date: null
+  end_date: null
+  days: 3
+  # "Now" for the pending check; pin it to replay a past run exactly. null = run time.
+  as_of: null
+
+models:
+  ghost_ledger:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: table
+    analytics:
+      +materialized: table
