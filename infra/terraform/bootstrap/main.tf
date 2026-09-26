@@ -228,11 +228,6 @@ data "aws_iam_policy_document" "apply_writes" {
     resources = ["arn:aws:sns:${var.region}:${data.aws_caller_identity.me.account_id}:ghost-ledger-*"]
   }
   statement {
-    sid       = "Budget"
-    actions   = ["budgets:ModifyBudget", "budgets:TagResource", "budgets:UntagResource"]
-    resources = ["arn:aws:budgets::${data.aws_caller_identity.me.account_id}:budget/ghost-ledger-*"]
-  }
-  statement {
     sid = "BoxIdentity"
     actions = [
       "iam:CreateUser", "iam:DeleteUser", "iam:TagUser", "iam:UntagUser",

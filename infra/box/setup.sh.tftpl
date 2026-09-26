@@ -1,0 +1,87 @@
+# Prod box first-boot setup (Ubuntu 24.04 on Lightsail), rendered by Terraform templatefile().
+# Lightsail runs user_data by APPENDING it to its own `#!/bin/sh` launch script (it is not
+# cloud-config), so this outer part must be plain POSIX sh and must never `exit`: it writes the
+# real setup script (bash) to disk and runs it. Here $${...} means a literal $ followed by {...};
+# $${deploy_sh} below (via chomp) is the only interpolation (tests/test_box_templates.py enforces that).
+# Safe to run again by hand on the box: sudo bash /root/ghost-ledger-setup.sh
+# Nothing secret is in here; secrets arrive later via `make prod-secrets` into /etc/ghost-ledger.
+
+cat > /root/ghost-ledger-setup.sh <<'GHOST_LEDGER_SETUP_EOF'
+#!/usr/bin/env bash
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update
+apt-get -y upgrade
+apt-get install -y ca-certificates curl unattended-upgrades
+
+# 2 GB swap: headroom for Postgres + the poller + Debezium's JVM (week 2) on 2 GB of RAM
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+# Docker Engine + Compose plugin from Docker's apt repo (compose.prod.yml uses !override,
+# which needs Compose >= 2.24.4; Ubuntu's own package can lag behind)
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  > /etc/apt/sources.list.d/docker.list
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<'EOF'
+{"log-driver": "json-file", "log-opts": {"max-size": "10m", "max-file": "5"}}
+EOF
+systemctl restart docker
+usermod -aG docker ubuntu
+
+install -d -m 0700 -o root -g root /etc/ghost-ledger
+install -d -m 0755 /opt/ghost-ledger
+
+cat > /usr/local/bin/ghost-ledger-deploy <<'GHOST_LEDGER_DEPLOY_EOF'
+${chomp(deploy_sh)}
+GHOST_LEDGER_DEPLOY_EOF
+chmod 0755 /usr/local/bin/ghost-ledger-deploy
+
+cat > /etc/systemd/system/ghost-ledger-deploy.service <<'EOF'
+[Unit]
+Description=Pull and deploy the ghost-ledger image if it changed
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ghost-ledger-deploy
+EOF
+
+cat > /etc/systemd/system/ghost-ledger-deploy.timer <<'EOF'
+[Unit]
+Description=Deploy ghost-ledger every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+cat > /etc/apt/apt.conf.d/52ghost-ledger-upgrades <<'EOF'
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "09:30";
+EOF
+
+systemctl daemon-reload
+systemctl enable --now ghost-ledger-deploy.timer
+echo "ghost-ledger setup complete"
+GHOST_LEDGER_SETUP_EOF
+
+bash /root/ghost-ledger-setup.sh > /var/log/ghost-ledger-setup.log 2>&1 \
+  || echo "ghost-ledger setup FAILED; see /var/log/ghost-ledger-setup.log"

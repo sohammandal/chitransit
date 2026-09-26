@@ -15,7 +15,7 @@ resource "aws_lightsail_instance" "box" {
   # IPv4 only: the firewall below restricts IPv4 CIDRs, and Lightsail computes an IPv6
   # rule itself (possibly ::/0) when the instance is dual-stack. Nothing here needs IPv6.
   ip_address_type = "ipv4"
-  user_data = templatefile("${path.module}/../../box/cloud-init.yaml.tftpl", {
+  user_data = templatefile("${path.module}/../../box/setup.sh.tftpl", {
     deploy_sh = file("${path.module}/../../box/deploy.sh")
   })
 

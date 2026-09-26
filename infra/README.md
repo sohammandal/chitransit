@@ -7,14 +7,16 @@ reasons: `docs/PLAN.md` (local) → Infrastructure, CI/CD, Monitoring.
 ```
 infra/
 ├── terraform/bootstrap/   # once, from the laptop, local state: state bucket, GitHub OIDC, CI roles
-├── terraform/prod/        # the box, static IP, SSH firewall, box IAM user, SNS, alarms, budget
-└── box/                   # cloud-init (first boot), deploy.sh (pull-based deploy), push-secrets.sh
+├── terraform/prod/        # the box, static IP, SSH firewall, box IAM user, SNS, alarms
+└── box/                   # setup.sh.tftpl (first boot), deploy.sh (pull-based deploy), push-secrets.sh
 ```
 
 ## First-time setup (in order)
 
-1. **AWS CLI login** with an admin identity: `aws login` (or `aws configure sso`), region
-   `us-east-2`. Check: `aws sts get-caller-identity`.
+1. **AWS CLI login** as an IAM admin user (not root) with `AdministratorAccess` +
+   `SignInLocalDevelopmentAccess`: `aws login --profile ghost-ledger`, region `us-east-2`. Check:
+   `aws sts get-caller-identity --profile ghost-ledger`. The Makefile exports these session
+   credentials for Terraform, because Terraform's S3 backend can't read `aws login` sessions.
 2. **SSH key** (once): `make ssh-key` → `~/.ssh/ghost_ledger`.
 3. **Bootstrap**: `make tf-bootstrap` (shows the plan, asks to approve). Note the outputs:
    `state_bucket`, `ci_plan_role_arn`, `ci_apply_role_arn`.
@@ -66,6 +68,9 @@ infra/
 
 - **Never change `user_data` expecting an effect**: it's ignored after first boot (changing it
   would otherwise replace the instance and its database). `deploy.sh` updates itself from images.
-- **Template escapes**: in `cloud-init.yaml.tftpl` any `${...}` is interpolated, even in
-  comments. Write `$${...}` for a literal; `tests/test_box_templates.py` enforces this.
+- **Lightsail user_data is a shell script, not cloud-config**: Lightsail appends it to its own
+  `#!/bin/sh` launch script. `setup.sh.tftpl` keeps the outer part POSIX sh with no `exit`, and
+  runs the real setup (bash) from a file; its log is `/var/log/ghost-ledger-setup.log`.
+- **Template escapes**: in `setup.sh.tftpl` any `${...}` is interpolated, even in comments.
+  Write `$${...}` for a literal; `tests/test_box_templates.py` enforces this.
 - **The instance has `prevent_destroy`**. Destroying prod means removing that on purpose.

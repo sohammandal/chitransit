@@ -1,5 +1,6 @@
 # Timeliness alarms on the monitor's metrics (docs/PLAN.md, "Monitoring and alerts"), email
-# via SNS on ALARM and OK, and a cost guardrail. Integrity checks live in Dagster instead.
+# via SNS on ALARM and OK. Integrity checks live in Dagster instead. Cost: the account's
+# own AWS Budget ("My Monthly Cost Budget", $25, alerts at 85%/100%) covers this project.
 
 resource "aws_sns_topic" "alerts" {
   name = "ghost-ledger-prod-alerts"
@@ -83,28 +84,4 @@ resource "aws_cloudwatch_metric_alarm" "this" {
   treat_missing_data  = each.value.missing
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
-}
-
-resource "aws_budgets_budget" "monthly" {
-  name         = "ghost-ledger-monthly"
-  budget_type  = "COST"
-  limit_amount = tostring(var.monthly_budget_usd)
-  limit_unit   = "USD"
-  time_unit    = "MONTHLY"
-
-  notification {
-    comparison_operator        = "GREATER_THAN"
-    threshold                  = 100
-    threshold_type             = "PERCENTAGE"
-    notification_type          = "ACTUAL"
-    subscriber_email_addresses = [var.alert_email]
-  }
-
-  notification {
-    comparison_operator        = "GREATER_THAN"
-    threshold                  = 100
-    threshold_type             = "PERCENTAGE"
-    notification_type          = "FORECASTED"
-    subscriber_email_addresses = [var.alert_email]
-  }
 }

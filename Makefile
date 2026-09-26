@@ -100,7 +100,12 @@ rehearse-down:      ## stop the rehearsal and delete its data
 	rm -rf $(REHEARSAL)
 
 # ---------- prod infrastructure (step 4; docs/PLAN.md) ----------
-TF_PROD = terraform -chdir=infra/terraform/prod
+# AWS access from the laptop: `aws login --profile ghost-ledger` (12 h sessions). Terraform's
+# S3 backend can't read `aws login` sessions yet, so export them as plain env credentials.
+AWS_PROFILE_NAME ?= ghost-ledger
+AWS_ENV = eval "$$(aws configure export-credentials --profile $(AWS_PROFILE_NAME) --format env)" \
+	&& export AWS_REGION=us-east-2 &&
+TF_PROD = $(AWS_ENV) terraform -chdir=infra/terraform/prod
 PROD_IP = $$($(TF_PROD) output -raw box_ip)
 PROD_SSH = ssh -i ~/.ssh/ghost_ledger ubuntu@$(PROD_IP)
 
@@ -109,7 +114,7 @@ ssh-key:            ## create the dedicated SSH key for the box (once)
 		ssh-keygen -t ed25519 -f ~/.ssh/ghost_ledger -C ghost-ledger-lightsail -N ""
 
 tf-bootstrap:       ## one-time: state bucket, GitHub OIDC, CI roles (local state, asks to approve)
-	cd infra/terraform/bootstrap && terraform init && terraform apply
+	$(AWS_ENV) cd infra/terraform/bootstrap && terraform init && terraform apply
 
 tf-plan:            ## plan prod from the laptop (needs backend.hcl + terraform.tfvars)
 	$(TF_PROD) init -backend-config=backend.hcl && $(TF_PROD) plan
@@ -122,7 +127,7 @@ prod-ssh:
 
 prod-secrets:       ## write prod.env + ghcr.env on the box, then deploy (CONFIRM=prod; safe to re-run)
 	@[ "$(CONFIRM)" = prod ] || { echo "This writes secrets to the prod box. Re-run with CONFIRM=prod."; exit 1; }
-	infra/box/push-secrets.sh $(PROD_IP)
+	AWS_PROFILE=$(AWS_PROFILE_NAME) infra/box/push-secrets.sh $(PROD_IP)
 
 prod-status:        ## services, last deploy, and the monitor's latest metrics
 	$(PROD_SSH) 'cd /opt/ghost-ledger && sudo docker compose -p ghost-ledger ps --format "table {{.Service}}\t{{.Status}}"; sudo journalctl -u ghost-ledger-deploy -n 3 --no-pager -o cat; sudo docker logs --tail 1 ghost-ledger-monitor-1'

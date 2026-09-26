@@ -40,8 +40,3 @@ variable "ssh_public_key" {
   description = "Contents of ~/.ssh/ghost_ledger.pub"
   type        = string
 }
-
-variable "monthly_budget_usd" {
-  type    = number
-  default = 20
-}
