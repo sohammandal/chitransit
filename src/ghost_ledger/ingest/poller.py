@@ -48,6 +48,8 @@ ROUTES_REFRESH_EVERY = timedelta(hours=24)
 # a canceled trip is missing from ~27% of looks at its stops (Sep 26), so each trip needs
 # several looks before "never announced" is believable.
 PREDICTION_SAMPLE_EVERY = timedelta(minutes=5)
+# CTA Customer Alerts (reroutes): keyless, off-quota. Kept raw; dbt reads them as context.
+ALERTS_SAMPLE_EVERY = timedelta(minutes=10)
 
 
 def direction_of(rtdir: str) -> str:
@@ -167,6 +169,7 @@ class Poller:
         self._next_pattern_refresh = self.now()
         self._next_partition_check = self.now()
         self._next_routes_refresh = self.now()
+        self._next_alerts = self.now()
         self._pending_calls: list[Call] = []
 
     # ---------- startup and state ----------
@@ -266,6 +269,7 @@ class Poller:
 
         pattern_rows = self._fetch_patterns(positions, deadline)
         self._sample_predictions(deadline)
+        self._sample_alerts(deadline)
 
         sightings = []
         for _, p in positions:
@@ -343,6 +347,15 @@ class Poller:
                 "getpredictions", {"stpid": ",".join(batch), "tmres": "s"},
                 lambda b=batch: self.client.get_predictions(b), [self.stops[s] for s in batch],
             )  # fmt: skip
+
+    def _sample_alerts(self, deadline: float) -> None:
+        if self.now() < self._next_alerts or self.monotonic() > deadline:
+            return
+        # All alerts in full-network mode; only the polled routes when POLL_ROUTES is set
+        routes = list(self.settings.poll_routes or [])
+        params = {"routeid": ",".join(routes)} if routes else {}
+        self._call("alerts", params, lambda: self.client.get_alerts(routes), routes)
+        self._next_alerts = self.now() + ALERTS_SAMPLE_EVERY
 
     def _pattern_rows(self, call: Call, rt: str) -> list[dict[str, Any]]:
         rows = []

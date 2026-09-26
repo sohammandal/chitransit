@@ -22,6 +22,8 @@ MAX_ROUTES_PER_CALL = 10
 MAX_STOPS_PER_CALL = 10
 CHICAGO = ZoneInfo("America/Chicago")
 
+ALERTS_URL = "https://www.transitchicago.com/api/1.0/alerts.aspx"
+
 # Retries must fit inside one 30 s sweep of 13 calls.
 DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 MAX_ATTEMPTS = 3
@@ -163,6 +165,30 @@ class BusTrackerClient:
         serious = [e.get("msg", "") for e in body.get("error", [])]
         serious = [m for m in serious if m not in BENIGN_API_ERRORS]
         return f"API error: {'; '.join(serious)}" if serious else None
+
+    def get_alerts(self, routes: list[str] | None = None) -> ApiResult:
+        """Active CTA Customer Alerts (reroutes, disruptions): a separate, keyless API that
+        doesn't count against the Bus Tracker quota. One attempt; the next sample retries."""
+        result = ApiResult(attempts=1)
+        started = time.monotonic()
+        params = {"outputType": "JSON", "activeonly": "true"}
+        if routes:
+            params["routeid"] = ",".join(routes)
+        try:
+            response = self._http.get(ALERTS_URL, params=params)
+            result.http_status = response.status_code
+            result.raw = response.text.replace("\x00", "\\u0000")
+            if response.status_code >= 400:
+                result.error = f"HTTP {response.status_code}"
+            else:
+                result.body = response.json().get("CTAAlerts", {})
+                # 0 = alerts, 50 = none match the filter; anything else is a failure
+                if result.body.get("ErrorCode") not in ("0", "50"):
+                    result.error = f"API error: {result.body.get('ErrorMessage')}"
+        except (httpx.TransportError, ValueError) as exc:
+            result.error = f"{type(exc).__name__}: {exc}"
+        result.latency_ms = round((time.monotonic() - started) * 1000)
+        return result
 
     def get_routes(self) -> ApiResult:
         return self.call("getroutes")

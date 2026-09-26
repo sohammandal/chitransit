@@ -92,6 +92,14 @@ class FakeCta:
     def handler(self, request: httpx.Request) -> httpx.Response:
         endpoint = request.url.path.rsplit("/", 1)[-1]
         self.calls.append(endpoint)
+        if endpoint == "alerts.aspx":  # Customer Alerts: keyless
+            assert "key" not in request.url.params
+            alert = {
+                "AlertId": "1",
+                "Impact": "Planned Reroute",
+                "EventStart": "2026-09-25T09:00:00",
+            }
+            return httpx.Response(200, json={"CTAAlerts": {"ErrorCode": "0", "Alert": [alert]}})
         assert "key" in request.url.params  # the key is sent, never stored
         if endpoint == "getvehicles":
             if self.fail_vehicles:
@@ -128,7 +136,8 @@ class Clock:
 def cleanup(conn):
     test_polls = (
         "SELECT poll_id FROM ops.raw_polls WHERE request_params->>'rt' LIKE 'GLT%%' "
-        "OR request_params->>'pid' = %s OR request_params->>'stpid' LIKE 'GLT%%'"
+        "OR request_params->>'pid' = %s OR request_params->>'stpid' LIKE 'GLT%%' "
+        "OR request_params->>'routeid' LIKE 'GLT%%'"
     )
     conn.execute(f"DELETE FROM ops.raw_responses WHERE poll_id IN ({test_polls})", (str(PID),))
     conn.execute("DELETE FROM ops.bus_positions WHERE vid LIKE 'GLT-%%'")
@@ -193,10 +202,24 @@ def test_poller_lifecycle_against_the_database(db):
     assert sorted(sampled[0].split(",")) == [STOPS[0], STOPS[1]]
     assert json.loads(sampled[1])["bustime-response"]["prd"][0]["dyn"] == 1
 
-    # 2. same report again: no new position, no assignment write
+    # Customer Alerts sampled for the polled routes, stored raw, no key in the request
+    alerts = conn.execute(
+        "SELECT p.sweep_id, p.error, r.body FROM ops.raw_polls p JOIN ops.raw_responses r "
+        "USING (poll_id) WHERE p.endpoint = 'alerts' AND p.request_params->>'routeid' = %s",
+        (",".join(ROUTES),),
+    ).fetchall()
+    assert [(a[0], a[1]) for a in alerts] == [(s1.sweep_id, None)]
+    assert json.loads(alerts[0][2])["CTAAlerts"]["Alert"][0]["Impact"] == "Planned Reroute"
+
+    # 2. same report again: no new position, no assignment write, no alerts call yet
     clock.t = T0 + timedelta(seconds=30)
     s2 = poller.sweep()
     assert (s2.new_positions, s2.assigned, s2.patterns_written) == (0, 0, 0)
+    n_alerts = (
+        "SELECT COUNT(*) FROM ops.raw_polls "
+        "WHERE endpoint = 'alerts' AND request_params->>'routeid' = %s"
+    )
+    assert one(conn, n_alerts, ",".join(ROUTES)) == (1,)
 
     # 3. the bus starts its next trip
     clock.t = T0 + timedelta(seconds=60)
