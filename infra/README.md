@@ -1,13 +1,13 @@
 # Prod infrastructure runbook
 
-Prod is one Lightsail box (us-east-2) running Postgres, the poller and the monitor, deployed by
-pulling `ghcr.io/sohammandal/ghost-ledger:main`. Everything in AWS is Terraform. Design and
+Prod is one Lightsail box (us-east-2) running Postgres, the poller, the monitor and Debezium
+(CDC to Iceberg on S3, Glue catalog), deployed by pulling `ghcr.io/sohammandal/ghost-ledger:main`. Everything in AWS is Terraform. Design and
 reasons: `docs/PLAN.md` (local) → Infrastructure, CI/CD, Monitoring.
 
 ```
 infra/
 ├── terraform/bootstrap/   # once, from the laptop, local state: state bucket, GitHub OIDC, CI roles
-├── terraform/prod/        # the box, static IP, SSH firewall, box IAM user, SNS, alarms
+├── terraform/prod/        # the box, static IP, SSH firewall, box IAM user, SNS, alarms, lake bucket + Glue db
 └── box/                   # setup.sh.tftpl (first boot), deploy.sh (pull-based deploy), push-secrets.sh
 ```
 
@@ -65,6 +65,14 @@ infra/
   password and a still-active AWS key, then force-redeploys so containers read the new file).
   It never deletes an active AWS key; after a rotation, delete the old one once prod is healthy.
 - **Query prod**: `make prod-tunnel`, then `psql postgresql://ghost:<pw>@localhost:15432/ghost_ledger`.
+- **Check CDC**: with the tunnel open, `scripts/check_ingress.py` (usage in its docstring) compares
+  Ingress (Iceberg via Glue, read with DuckDB) against Postgres and rebuilds `bus_assignments`
+  from the change log. Debezium runs under compose profile `cdc`, which `deploy.sh` enables; its
+  config is `cdc/debezium/application.prod.properties`, and its offsets live in Iceberg, so a
+  restart resumes where it stopped.
+- **Stop CDC on purpose** (drill): pause the timer first, or deploy.sh restarts Debezium within
+  5 minutes: `sudo systemctl stop ghost-ledger-deploy.timer && sudo docker stop ghost-ledger-debezium-1`.
+  The slot keeps WAL (capped at 2 GB); `cdc-slot-inactive` emails after 10 minutes.
 
 ## Things that are easy to break
 
@@ -75,4 +83,9 @@ infra/
   runs the real setup (bash) from a file; its log is `/var/log/ghost-ledger-setup.log`.
 - **Template escapes**: in `setup.sh.tftpl` any `${...}` is interpolated, even in comments.
   Write `$${...}` for a literal; `tests/test_box_templates.py` enforces this.
-- **The instance has `prevent_destroy`**. Destroying prod means removing that on purpose.
+- **The instance and the lake bucket have `prevent_destroy`**. Destroying either means removing
+  that on purpose. The lake is versioned (old versions kept 30 days); the box can't delete tables.
+- **Deploy order for AWS-dependent services**: apply the Terraform first, then ship the compose
+  change. A Debezium that starts before its bucket/catalog exist creates a slot, crash-loops and
+  holds WAL.
+- **`docker logs` spans container restarts**: filter with `--since` when checking a restart.
