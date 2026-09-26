@@ -66,11 +66,11 @@ monitor:            ## print the monitor's metrics once (dry run, never sends)
 # ---------- prod image and local rehearsal of the prod stack (step 4a) ----------
 # The rehearsal runs the real deploy path (infra/box/deploy.sh + compose.prod.yml) on the
 # laptop under project ghost-ledger-rehearsal, with a throwaway env file in data/rehearsal/,
-# 2 routes (shared API quota) and metrics to the log.
+# 2 routes (shared API quota), metrics to the log, and no CDC (no AWS on the laptop).
 REHEARSAL = $(CURDIR)/data/rehearsal
-REHEARSAL_ENV = IMAGE=ghost-ledger:local DIR=$(REHEARSAL) ENV_FILE=$(REHEARSAL)/prod.env \
+REHEARSAL_ENV = COMPOSE_PROFILES= IMAGE=ghost-ledger:local DIR=$(REHEARSAL) ENV_FILE=$(REHEARSAL)/prod.env \
 	BIN=$(REHEARSAL)/ghost-ledger-deploy PROJECT=ghost-ledger-rehearsal SKIP_PULL=1
-REHEARSAL_COMPOSE = IMAGE=ghost-ledger:local ENV_FILE=$(REHEARSAL)/prod.env \
+REHEARSAL_COMPOSE = COMPOSE_PROFILES= IMAGE=ghost-ledger:local ENV_FILE=$(REHEARSAL)/prod.env \
 	docker compose -p ghost-ledger-rehearsal -f $(REHEARSAL)/compose.yml \
 	-f $(REHEARSAL)/compose.prod.yml --env-file $(REHEARSAL)/prod.env
 

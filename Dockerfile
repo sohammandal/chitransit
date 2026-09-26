@@ -18,6 +18,7 @@ WORKDIR /app
 COPY --from=build --chown=app:app /app/.venv /app/.venv
 COPY db ./db
 COPY compose.yml compose.prod.yml infra/box/deploy.sh ./deploy/
+COPY cdc/debezium/application.prod.properties ./deploy/cdc/
 ARG GIT_SHA=unknown
 ENV PATH="/app/.venv/bin:$PATH" \
     GHOST_LEDGER_ENV=prod \

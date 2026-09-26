@@ -14,8 +14,10 @@ ENV_FILE="${ENV_FILE:-/etc/ghost-ledger/prod.env}"
 BIN="${BIN:-/usr/local/bin/ghost-ledger-deploy}"
 GHCR_ENV="${GHCR_ENV:-/etc/ghost-ledger/ghcr.env}"
 PROJECT="${PROJECT:-ghost-ledger}"
-# compose.prod.yml interpolates these, and compose reads them from the environment
-export IMAGE ENV_FILE
+# compose.prod.yml interpolates these, and compose reads them from the environment.
+# COMPOSE_PROFILES=cdc runs Debezium; the laptop rehearsal sets it empty (no AWS there).
+COMPOSE_PROFILES="${COMPOSE_PROFILES-cdc}"
+export IMAGE ENV_FILE COMPOSE_PROFILES
 
 log() { echo "$(date -u +%FT%TZ) deploy: $*"; }
 
@@ -50,11 +52,13 @@ if [ "${SKIP_PULL:-0}" != 1 ]; then
 fi
 after=$(docker image inspect --format '{{.Id}}' "$IMAGE")
 
-running=""
+running="" expected="unknown"
 if [ -f "$DIR/compose.prod.yml" ]; then
   running=$(compose ps --status running --services 2>/dev/null | sort | tr '\n' ' ')
+  # every long-running service of the active profiles (migrate is a one-shot job)
+  expected=$(compose config --services 2>/dev/null | grep -vx migrate | sort | tr '\n' ' ')
 fi
-if [ "$before" = "$after" ] && [ "$running" = "monitor poller postgres " ] \
+if [ "$before" = "$after" ] && [ "$running" = "$expected" ] \
   && [ "${FORCE:-0}" != 1 ]; then
   exit 0  # nothing changed and everything is up
 fi
@@ -64,7 +68,8 @@ tmp=$(mktemp -d)
 cid=$(docker create "$IMAGE")
 docker cp -q "$cid:/app/deploy/." "$tmp/"
 docker rm "$cid" >/dev/null
-for f in compose.yml compose.prod.yml; do
+mkdir -p "$DIR/cdc"
+for f in compose.yml compose.prod.yml cdc/application.prod.properties; do
   cp "$tmp/$f" "$DIR/$f.new" && mv -f "$DIR/$f.new" "$DIR/$f"
 done
 # Replace this script by rename (new inode), never in place: bash is still reading it.
