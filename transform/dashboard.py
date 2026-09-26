@@ -55,6 +55,11 @@ def load(src: str, days: int) -> dict:
         group by all order by 1
         """
     ).fetchall()
+    # Days before collection began (or a total outage) are all unknown: nothing to show.
+    watched = {d for d, st, n in by_day if st != "unknown" and n}
+    by_day = [r for r in by_day if r[0] in watched]
+    if not by_day:
+        return {"by_day": [], "latest": None, "routes": [], "health": []}
     latest = max(d for d, _, _ in by_day)
     routes = con.execute(
         f"""
@@ -96,6 +101,7 @@ def load(src: str, days: int) -> dict:
         group by all order by 1 desc
         """
     ).fetchall()
+    health = [r for r in health if r[0] in watched]
     return {"by_day": by_day, "latest": latest, "routes": routes, "health": health}
 
 
