@@ -202,6 +202,7 @@
         const vid = e.features?.[0]?.properties?.vid as string | undefined;
         const b = vid ? buses.get(vid) : undefined;
         if (!b) return;
+        about = false;
         selected = b.v;
         showRoute(b.v);
       });
@@ -242,6 +243,7 @@
       <svg viewBox="0 0 44 16" aria-hidden="true"><path d="M3 8H41" /><circle cx="8" cy="8" r="4.5" /><circle cx="16" cy="8" r="4.5" /><circle cx="36" cy="8" r="4.5" /></svg>
       <span><span class="chi">chi</span>transit<b>.fyi</b></span>
     </a>
+    <span class="tag">Unofficial</span>
     <p class="status" aria-live="polite">
       {#if failed && count === null}
         Can't reach the live feed. Retrying.
@@ -249,8 +251,8 @@
         Connecting…
       {:else}
         <span class="dot" class:stale={failed}></span>
-        <strong>{count}</strong> buses on the road
-        <span class="muted">· {failed ? "reconnecting" : `updated ${ago} s ago`}</span>
+        <span><strong>{count}</strong> buses on the road</span>
+        <span class="updated">{failed ? "Reconnecting…" : `Updated ${ago} s ago`}</span>
       {/if}
     </p>
     <label class="filter">
@@ -268,33 +270,57 @@
   </header>
 
   {#if selected}
-    <section class="sheet" aria-label={`Bus ${selected.vid}`}>
+    <section class="sheet bus" aria-label={`Route ${selected.rt} bus ${selected.vid}`}>
       <button class="close" onclick={clearSelection} aria-label="Close">×</button>
-      <h2><span class="rt">{selected.rt}</span>{selected.dir ?? ""}</h2>
-      <p>To <strong>{selected.des}</strong></p>
-      <p class="gap">
+      <header class="bus-head">
+        <span class="rt">{selected.rt}</span>
+        <div>
+          <h2>{selected.dir ?? "Bus"}</h2>
+          <p class="to">to {selected.des}</p>
+        </div>
+      </header>
+      <div class="headline">
         {#if selected.at_terminal}
-          At the end of the line.
+          <strong>{(selected.pdist ?? 0) < 1000 ? "Starting its trip" : "Finishing its trip"}</strong>
+          <span>{(selected.pdist ?? 0) < 1000 ? "At the first stop" : "At the last stop"}</span>
         {:else if selected.gap_s != null}
-          The bus ahead passed here <strong>{minutes(selected.gap_s)}</strong> ago.
+          <strong>{minutes(selected.gap_s)}</strong>
+          <span>since the bus ahead passed here</span>
         {:else}
-          Gap to the bus ahead: not known yet.
+          <strong>Gap unknown</strong>
+          <span>No bus ahead on this route yet, or it just joined</span>
         {/if}
-      </p>
-      <p class="muted">Bus {selected.vid}{selected.dly ? " · CTA marks it delayed" : ""} · position {selectedAge} s old</p>
+      </div>
+      <ul class="facts">
+        <li>Bus {selected.vid}</li>
+        <li>Seen {selectedAge} s ago</li>
+        {#if selected.dly}<li class="late">Delayed, per CTA</li>{/if}
+      </ul>
     </section>
   {/if}
 
   <footer class="foot">
-    <button class="link" onclick={() => (about = !about)} aria-expanded={about}>Unofficial · about</button>
+    <button class="link" onclick={() => { about = !about; if (about) clearSelection(); }} aria-expanded={about}>About</button>
   </footer>
 
   {#if about}
-    <section class="sheet about" aria-label="About">
+    <section class="sheet about" aria-label="About chitransit.fyi">
       <button class="close" onclick={() => (about = false)} aria-label="Close">×</button>
-      <h2>About chitransit.fyi</h2>
-      <p>Every CTA bus, updated every 30 seconds. Positions can be up to about a minute old and glide between updates. The route drawn when you tap a bus is the pattern it is running now.</p>
-      <p class="muted">Data provided by Chicago Transit Authority. chitransit.fyi is an independent project and is not affiliated with, made by, or endorsed by the CTA. Figures are our own estimates; data may be delayed or incomplete. Official info: <a href="https://www.transitchicago.com">transitchicago.com</a>. Map © OpenStreetMap contributors, OpenFreeMap.</p>
+      <h2>Every CTA bus, live</h2>
+      <dl>
+        <dt>Updates</dt>
+        <dd>Every 30 seconds. Buses glide between updates; a position can be up to a minute old.</dd>
+        <dt>Tap a bus</dt>
+        <dd>See the route it's running and how long ago the bus ahead passed.</dd>
+        <dt>Amber buses</dt>
+        <dd>CTA marks them delayed.</dd>
+      </dl>
+      <div class="fine">
+        <p>Data provided by Chicago Transit Authority.</p>
+        <p>chitransit.fyi is an independent project. It is not affiliated with, made by, or endorsed by the CTA. Figures are our own estimates, and data may be delayed or incomplete.</p>
+        <p>Official info: <a href="https://www.transitchicago.com">transitchicago.com</a></p>
+        <p>Map data © OpenStreetMap contributors, tiles by OpenFreeMap</p>
+      </div>
     </section>
   {/if}
 </div>
@@ -315,7 +341,10 @@
   .brand svg { width: 52px; height: 19px; flex: none; }
   .brand path { stroke: var(--fog); stroke-width: 2.5; stroke-linecap: round; }
   .brand circle { fill: var(--flag-blue); stroke: var(--surface); stroke-width: 2; }
-  .status { margin: 0; font-size: 15px; }
+  .tag { position: absolute; top: 14px; right: 14px; font-size: 12px; font-weight: 600; color: var(--fog); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 8px; }
+  .status { margin: 0; font-size: 15px; display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: baseline; }
+  .status .dot { align-self: center; margin: 0; }
+  .updated { grid-column: 2; color: var(--fog); font-size: 13px; }
   .status strong { font-size: 17px; font-weight: 800; }
   .muted { color: var(--fog); font-size: 13px; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--flag-blue); margin-right: 6px; vertical-align: 1px; animation: pulse 2s infinite; }
@@ -329,17 +358,31 @@
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .sheet {
     position: absolute; z-index: 3; right: calc(12px + var(--safe-right)); bottom: calc(40px + var(--safe-bottom));
-    width: 300px; background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
-    padding: 14px 16px 16px; display: grid; gap: 6px;
+    width: 320px; background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 16px 18px 18px; display: grid; gap: 14px;
   }
-  .sheet h2 { margin: 0 32px 2px 0; font-size: 19px; display: flex; align-items: center; gap: 8px; }
+  .sheet h2 { margin: 0; font-size: 20px; line-height: 1.15; }
   .sheet p { margin: 0; }
-  .sheet .gap strong { color: var(--asphalt); }
-  .rt { display: inline-grid; place-items: center; min-width: 44px; height: 30px; padding: 0 8px; border-radius: 8px; background: var(--asphalt); color: var(--surface); font-weight: 900; }
-  .close { position: absolute; top: 4px; right: 4px; width: 44px; height: 44px; border: 0; background: none; color: var(--fog); font-size: 24px; cursor: pointer; }
+  .close { position: absolute; top: 6px; right: 6px; width: 44px; height: 44px; border: 0; border-radius: 50%; background: none; color: var(--fog); font-size: 26px; line-height: 1; cursor: pointer; }
+  .close:hover { background: var(--concrete); }
+
+  .bus-head { display: flex; align-items: center; gap: 12px; padding-right: 36px; }
+  .rt { display: inline-grid; place-items: center; min-width: 48px; height: 40px; padding: 0 10px; border-radius: 10px; background: var(--asphalt); color: var(--surface); font-size: 20px; font-weight: 900; }
+  .to { color: var(--fog); font-size: 15px; margin-top: 2px; }
+  .headline { display: grid; gap: 2px; padding: 12px 14px; border-radius: 12px; background: var(--flag-blue-soft); }
+  .headline strong { font-size: 28px; font-weight: 800; line-height: 1.1; letter-spacing: -0.01em; }
+  .headline span { font-size: 14px; color: var(--asphalt); opacity: 0.8; }
+  .facts { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--fog); }
+  .facts .late { color: var(--signal-amber); font-weight: 700; }
+
+  .about { left: calc(12px + var(--safe-left)); right: auto; bottom: calc(62px + var(--safe-bottom)); width: min(400px, calc(100vw - 24px)); }
+  .about h2 { padding-right: 36px; }
+  .about dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 10px 16px; font-size: 15px; }
+  .about dt { font-weight: 700; }
+  .about dd { margin: 0; color: var(--asphalt); }
+  .fine { border-top: 1px solid var(--rule); padding-top: 12px; display: grid; gap: 6px; font-size: 13px; color: var(--fog); line-height: 1.45; }
   .foot { position: absolute; z-index: 2; left: calc(12px + var(--safe-left)); bottom: calc(10px + var(--safe-bottom)); }
-  .link { font: inherit; font-size: 13px; color: var(--asphalt); background: var(--surface); border: 0; border-radius: 999px; padding: 8px 12px; min-height: 36px; box-shadow: var(--shadow); cursor: pointer; }
-  .about { left: calc(12px + var(--safe-left)); right: auto; width: min(420px, calc(100vw - 24px)); }
+  .link { font: inherit; font-size: 14px; font-weight: 600; color: var(--asphalt); background: var(--surface); border: 0; border-radius: 999px; padding: 8px 16px; min-height: 40px; box-shadow: var(--shadow); cursor: pointer; }
 
   /* Phones: full-width top bar and bottom sheets, clear of the notch and home indicator. */
   @media (max-width: 640px) {
