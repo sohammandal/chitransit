@@ -61,3 +61,7 @@ site/dist/
 site/.astro/
 site/public/data/
 site/public/live/
+
+# Browser test output (site/e2e)
+site/playwright-report/
+site/test-results/

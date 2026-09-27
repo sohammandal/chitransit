@@ -7,9 +7,13 @@
   },
   "scripts": {
     "dev": "astro dev",
-    "build": "astro check && astro build",
+    "build": "astro check && vitest run && astro build",
     "preview": "astro preview",
-    "check": "astro check"
+    "check": "astro check",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "e2e:prod": "playwright test",
+    "budget": "node scripts/budget.mjs"
   },
   "dependencies": {
     "@astrojs/svelte": "9.0.1",
@@ -20,6 +24,9 @@
   },
   "devDependencies": {
     "@astrojs/check": "0.9.10",
-    "typescript": "6.0.3"
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^24.19.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11"
   }
 }

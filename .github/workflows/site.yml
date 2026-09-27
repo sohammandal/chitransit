@@ -1,19 +1,29 @@
 name: site
 
-# Build the Astro site (site/) and publish it to the site bucket behind chitransit.fyi.
+# Build, test and publish the Astro site (site/) behind chitransit.fyi.
+#
+#   test    every PR and push: type check, unit tests, build, size budget, then every view in a
+#           real browser (desktop + phone) against the build with fixed data (site/e2e).
+#   deploy  main only, and only the exact build that passed `test`:
+#             1. prod must already serve the nightly files the site reads (data first, then code)
+#             2. keep a copy of the live pages, publish (hashed bundles first, then pages)
+#             3. wait until prod serves this commit, then smoke-test it in a browser
+#             4. if that fails, put the previous pages back and fail the run (GitHub emails)
+#
 # Pages only: live/ is the poller's, data/ and ops/ are the nightly's, and the transform role
-# is denied live/* anyway. Hashed assets are immutable; HTML revalidates within a minute.
+# is denied live/* anyway. Old hashed bundles are never deleted, so a rollback's pages still
+# find theirs.
 
 on:
   push:
     branches: [main]
     paths: ["site/**", ".github/workflows/site.yml"]
   pull_request:
-    paths: ["site/**"]
+    paths: ["site/**", ".github/workflows/site.yml"]
   workflow_dispatch:
 
 concurrency:
-  group: site
+  group: site-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
   cancel-in-progress: false
 
 permissions:
@@ -22,14 +32,16 @@ permissions:
 
 env:
   SITE: s3://ghost-ledger-site-354894954112
+  URL: https://www.chitransit.fyi
+
+defaults:
+  run:
+    working-directory: site
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: site
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
@@ -40,22 +52,122 @@ jobs:
           cache-dependency-path: site/package-lock.json
 
       - name: Install
-        run: npm ci
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
 
-      - name: Type check and build
+      - name: Type check, unit tests, build
+        env:
+          PUBLIC_BUILD: ${{ github.sha }}
         run: npm run build
 
+      - name: Size budget
+        run: npm run budget
+
+      - name: Every view in a browser (desktop + phone)
+        run: npm run e2e
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: e2e-report
+          path: |
+            site/playwright-report
+            site/test-results
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: site/dist
+          retention-days: 7
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Install (browser for the smoke test)
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: dist
+          path: site/dist
+
+      - name: Prod has the data this build reads
+        run: |
+          for f in routes.json headways.json summary.json; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$URL/data/v1/$f")
+            if [ "$code" != 200 ]; then
+              echo "::error::$URL/data/v1/$f returned $code: run the nightly first (data, then code)"; exit 1
+            fi
+          done
+
       - uses: aws-actions/configure-aws-credentials@v6
-        if: github.event_name != 'pull_request'
         with:
           role-to-assume: ${{ vars.AWS_TRANSFORM_ROLE_ARN }}
           aws-region: us-east-2
 
-      - name: Publish
-        if: github.event_name != 'pull_request'
+      - name: Keep a copy of the live pages
         run: |
-          # Hashed bundles never change under the same name.
+          aws s3 sync "$SITE" ../previous --only-show-errors \
+            --exclude "_astro/*" --exclude "live/*" --exclude "data/*" --exclude "ops/*"
+          test -f ../previous/index.html && touch ../previous.complete
+
+      - name: Publish
+        id: publish
+        run: |
+          # Hashed bundles never change under the same name, and are never deleted.
           aws s3 sync dist/_astro "$SITE/_astro" --cache-control "public, max-age=31536000, immutable" --only-show-errors
           # Pages and root files: revalidate quickly. Never touch the data the pipelines own.
           aws s3 sync dist "$SITE" --delete --cache-control "public, max-age=60" \
             --exclude "_astro/*" --exclude "live/*" --exclude "data/*" --exclude "ops/*" --only-show-errors
+
+      - name: Wait for prod to serve this commit
+        run: |
+          # Pages are cached for up to 60 s at the edge.
+          for i in $(seq 1 36); do
+            if curl -s "$URL/?v=$GITHUB_SHA" | grep -q "name=\"build\" content=\"$GITHUB_SHA\""; then
+              echo "live after ~$((i * 10)) s"; exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::prod still serves the old build after 6 min"; exit 1
+
+      - name: Smoke-test prod in a browser
+        env:
+          BASE_URL: ${{ env.URL }}
+          EXPECT_BUILD: ${{ github.sha }}
+        run: npm run e2e:prod
+
+      - name: Roll back to the previous pages
+        # Only once publishing started, and only from a complete copy (a partial one with
+        # --delete would remove live pages).
+        if: failure() && steps.publish.outcome != 'skipped'
+        run: |
+          if [ -f ../previous.complete ]; then
+            aws s3 sync ../previous "$SITE" --delete --cache-control "public, max-age=60" --only-show-errors \
+              --exclude "_astro/*" --exclude "live/*" --exclude "data/*" --exclude "ops/*"
+            echo "::error::deploy failed; the previous pages are back (live again within ~60 s)"
+          fi
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: smoke-report
+          path: |
+            site/playwright-report
+            site/test-results
+          retention-days: 14

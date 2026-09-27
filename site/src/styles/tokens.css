@@ -3,6 +3,7 @@
 :root {
   --concrete: #f2f4f3;   /* page ground */
   --surface: #ffffff;    /* panels over the map */
+  --surface2: #e6eaec;   /* hover on concrete rows */
   --asphalt: #1c2227;    /* ink */
   --fog: #6c767e;        /* secondary text */
   --rule: #d8dde0;
@@ -23,6 +24,7 @@
   :root {
     --concrete: #12181d;
     --surface: #1a2228;
+    --surface2: #25303a;
     --asphalt: #eef1f3;
     --fog: #9aa5ae;
     --rule: #2c363e;

@@ -1,0 +1,60 @@
+<script lang="ts">
+  // City level: where service is falling apart right now, worst first.
+  import { minutes } from "../lib/format";
+  import type { Problem } from "../lib/problems";
+
+  let { problems, names, onOpen }: {
+    problems: Problem[];
+    names: Record<string, string>;
+    onOpen: (rt: string) => void;
+  } = $props();
+
+  const together = $derived(problems.filter((p) => p.kind === "together").length);
+  const waits = $derived(problems.length - together);
+  const every = (p: Problem) => (p.scheduled_s ? `, scheduled every ${Math.round(p.scheduled_s / 60)} min` : "");
+</script>
+
+<header>
+  <h2>Right now</h2>
+  {#if problems.length}
+    <p class="tally"><b>{waits}</b> long waits <span aria-hidden="true">|</span> <b>{together}</b> places with buses arriving together</p>
+  {:else}
+    <p class="tally">No long waits or buses arriving together at the moment.</p>
+  {/if}
+</header>
+
+<ul>
+  {#each problems as p (p.kind + p.pid + p.buses[0].vid)}
+    <li>
+      <button class="row" onclick={() => onOpen(p.rt)}>
+        <span class="rt">{p.rt}</span>
+        <span class="what">
+          <b>{p.kind === "together" ? `${p.buses.length} buses together` : "Long wait"}</b>
+          <span>{names[p.rt] ?? `Route ${p.rt}`} {p.dir.toLowerCase()}{every(p)}</span>
+        </span>
+        <span class="wait">{p.wait_s != null ? minutes(p.wait_s) : "?"}<small>{p.kind === "together" ? "wait after them" : "since the last bus"}</small></span>
+      </button>
+    </li>
+  {/each}
+</ul>
+
+<style>
+  header { display: grid; gap: 2px; }
+  h2 { margin: 0; font-size: 20px; line-height: 1.15; }
+  .tally { margin: 0; font-size: 13px; color: var(--fog); }
+  .tally b { color: var(--asphalt); font-size: 15px; }
+  .tally span { color: var(--rule); margin-inline: 4px; }
+  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .row {
+    width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center;
+    text-align: left; font: inherit; color: inherit; border: 0; background: var(--concrete); border-radius: 12px;
+    padding: 9px 10px; min-height: 56px; cursor: pointer;
+  }
+  .row:hover { background: var(--surface2); }
+  .rt { display: inline-grid; place-items: center; min-width: 48px; height: 30px; padding: 0 8px; border-radius: 8px; background: var(--asphalt); color: var(--surface); font-weight: 900; font-size: 15px; }
+  .what { display: grid; gap: 1px; min-width: 0; }
+  .what b { font-size: 15px; }
+  .what span { font-size: 13px; line-height: 1.3; color: var(--fog); }
+  .wait { font-weight: 900; font-size: 17px; color: var(--star-red); text-align: right; line-height: 1.1; }
+  .wait small { display: block; font-size: 11px; font-weight: 600; color: var(--fog); }
+</style>

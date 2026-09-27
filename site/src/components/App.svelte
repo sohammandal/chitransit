@@ -1,0 +1,189 @@
+<script lang="ts">
+  // The whole app: a map of every bus, and a panel with three levels.
+  //   city  (/)             : "Right now", the worst long waits and buses arriving together
+  //   route (/route/66/)    : the route as a line per direction, and how yesterday went
+  //   bus   (tap a bus)     : the gap ahead of and behind that bus
+  // The URL tracks the route, so a route page can be shared and Back works.
+  import { onMount } from "svelte";
+  import * as data from "../lib/data";
+  import { pollFeed } from "../lib/feed";
+  import { dayLabel } from "../lib/format";
+  import { findProblems, scheduledGap } from "../lib/problems";
+  import type { Feed, Headways, Pattern, Summary, Vehicle } from "../lib/types";
+  import About from "./About.svelte";
+  import BusCard from "./BusCard.svelte";
+  import MapView from "./MapView.svelte";
+  import RightNow from "./RightNow.svelte";
+  import RouteView from "./RouteView.svelte";
+  import Sheet from "./Sheet.svelte";
+  import TopBar from "./TopBar.svelte";
+
+  type Size = "peek" | "half" | "full";
+
+  let feed = $state<Feed | null>(null);
+  let failed = $state(false);
+  let now = $state(Date.now());
+  let names = $state<Record<string, string>>({});
+  let hw = $state<Headways | null>(null);
+  let summary = $state<Summary | null>(null);
+  let patterns = $state<Map<number, Pattern>>(new Map());
+
+  let route = $state<string | null>(null);
+  let selected = $state<string | null>(null);
+  let about = $state(false);
+  let size = $state<Size>("peek");
+  let phone = $state(false);
+  let topH = $state(0);
+
+  const vehicles = $derived(feed?.vehicles ?? []);
+  const at = $derived(feed ? new Date(feed.generated_at) : new Date(now));
+  const age = $derived(feed ? Math.max(0, Math.round((now - at.getTime()) / 1000)) : null);
+  const gapFor = (v: Vehicle) => scheduledGap(hw, v.rt, v.dir, at);
+  const problems = $derived(findProblems(vehicles, gapFor));
+
+  const routeBuses = $derived(route ? vehicles.filter((v) => v.rt === route) : []);
+  const bus = $derived(selected ? vehicles.find((v) => v.vid === selected) : undefined);
+  const shapes = $derived(route ? [...patterns.values()].filter((p) => p.rt === route) : []);
+  const level = $derived(about ? "about" : bus ? "bus" : route ? "route" : "city");
+
+  // Map padding keeps the route clear of the panel: beside it on wide screens, above it on phones.
+  const padding = $derived(phone
+    ? { top: 130, bottom: Math.round(window.innerHeight * (size === "peek" ? 0.38 : 0.56)) + 16, left: 40, right: 40 }
+    : { top: 40, bottom: 40, left: 400, right: 60 });
+
+  // Load the open route's patterns (a route's buses can switch patterns mid-day).
+  $effect(() => {
+    for (const b of routeBuses) {
+      const pid = b.pid;
+      if (pid == null || patterns.has(pid)) continue;
+      data.pattern(pid).then((p) => { patterns = new Map(patterns).set(pid, p); }).catch(() => {});
+    }
+  });
+
+  // A bus that stops reporting falls back to its route.
+  $effect(() => { if (selected && feed && !bus) selected = null; });
+
+  function go(rt: string | null, push = true) {
+    route = rt;
+    selected = null;
+    about = false;
+    size = rt ? "half" : "peek";
+    if (push) history.pushState(null, "", rt ? `/route/${encodeURIComponent(rt)}/` : "/");
+    document.title = rt ? `${rt} ${names[rt] ?? ""} bus, live | chitransit.fyi` : "Chicago buses, live | chitransit.fyi";
+  }
+  const fromPath = () => decodeURIComponent(location.pathname.match(/^\/route\/([^/]+)/)?.[1] ?? "") || null;
+
+  function select(vid: string) {
+    const v = vehicles.find((x) => x.vid === vid);
+    if (!v) return;
+    if (v.rt !== route) go(v.rt);
+    selected = vid;
+    about = false;
+    if (size === "peek") size = "half";
+  }
+  function back() {
+    if (about) about = false;
+    else if (selected) selected = null;
+    else if (route) go(null);
+  }
+  const grow = () => (size = size === "peek" ? "half" : size === "half" ? "full" : "peek");
+  const hasRoute = (rt: string) => {
+    if (!vehicles.some((v) => v.rt === rt)) return false;
+    go(rt);
+    return true;
+  };
+
+  onMount(() => {
+    document.querySelector(".shell")?.remove(); // index.astro's static shell, for the first paint
+    route = fromPath();
+    if (route) size = "half";
+    const narrow = window.matchMedia("(max-width: 640px)");
+    const onWidth = () => (phone = narrow.matches);
+    onWidth();
+    narrow.addEventListener("change", onWidth);
+    const onPop = () => go(fromPath(), false);
+    window.addEventListener("popstate", onPop);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") back(); };
+    window.addEventListener("keydown", onKey);
+
+    data.routeNames().then((r) => (names = r)).catch(() => {});
+    data.headways().then((h) => (hw = h)).catch(() => {});
+    data.summary().then((s) => (summary = s)).catch(() => {});
+    const stop = pollFeed((f) => { feed = f; failed = false; }, () => (failed = true));
+    const tick = window.setInterval(() => (now = Date.now()), 1000);
+    return () => {
+      stop();
+      window.clearInterval(tick);
+      narrow.removeEventListener("change", onWidth);
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("keydown", onKey);
+    };
+  });
+</script>
+
+<MapView {vehicles} {route} {selected} {shapes} {padding} onSelect={select} />
+
+<div class="side" style:--top-h="{topH}px">
+  <div class="top" bind:clientHeight={topH}>
+    <TopBar count={feed ? vehicles.length : null} {age} {failed} onRoute={hasRoute} />
+    <button class="about-btn" onclick={() => { about = !about; if (about && size === "peek") size = "half"; }} aria-expanded={about}>About</button>
+  </div>
+  {#if feed || about}
+    <Sheet {size} onToggle={grow}>
+      {#if level === "about"}
+        <About onClose={() => (about = false)} />
+      {:else if level === "bus" && bus}
+        {@const pattern = bus.pid != null ? patterns.get(bus.pid) : undefined}
+        <BusCard
+          {bus}
+          behind={vehicles.find((v) => v.ahead === bus.vid && v.pid === bus.pid)}
+          {pattern}
+          lineBuses={vehicles.filter((v) => v.pid === bus.pid)}
+          scheduled={gapFor(bus)}
+          routeName={names[bus.rt]}
+          age={Math.max(0, Math.round(now / 1000 - bus.t))}
+          onBack={() => (selected = null)}
+          onSelect={select}
+        />
+      {:else if level === "route" && route}
+        <RouteView
+          rt={route}
+          name={names[route]}
+          buses={routeBuses}
+          {patterns}
+          scheduledFor={(dir) => scheduledGap(hw, route!, dir, at)}
+          day={summary?.routes[route]}
+          dayName={summary ? dayLabel(summary.date, new Date(now)) : ""}
+          {selected}
+          onSelect={select}
+          onClose={() => go(null)}
+        />
+      {:else}
+        <RightNow {problems} {names} onOpen={(rt) => go(rt)} />
+      {/if}
+    </Sheet>
+  {/if}
+</div>
+
+<style>
+  /* Wide screens: one column on the left, top bar above the panel. */
+  .side {
+    position: fixed; z-index: 2; top: calc(12px + var(--safe-top)); left: calc(12px + var(--safe-left));
+    bottom: calc(12px + var(--safe-bottom)); width: 368px;
+    display: flex; flex-direction: column; gap: 10px; pointer-events: none;
+  }
+  .side > :global(*) { pointer-events: auto; }
+  .side :global(.sheet) { flex: 0 1 auto; }
+  .top { position: relative; }
+  .about-btn {
+    position: absolute; top: 10px; right: 10px; min-height: 32px; padding: 0 12px;
+    border: 1px solid var(--rule); border-radius: 999px; background: var(--surface);
+    font: inherit; font-size: 13px; font-weight: 700; color: var(--fog); cursor: pointer;
+  }
+  .about-btn[aria-expanded="true"] { color: var(--asphalt); border-color: var(--asphalt); }
+
+  /* Phones: the top bar spans the top; the panel is a bottom sheet (Sheet.svelte). */
+  @media (max-width: 640px) {
+    .side { top: calc(8px + var(--safe-top)); left: calc(8px + var(--safe-left)); right: calc(8px + var(--safe-right)); bottom: auto; width: auto; }
+  }
+</style>

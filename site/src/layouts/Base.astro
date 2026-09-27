@@ -20,11 +20,13 @@ const { title, description } = Astro.props;
     <meta name="theme-color" content="#f2f4f3" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#12181d" media="(prefers-color-scheme: dark)" />
     <meta name="apple-mobile-web-app-title" content="chitransit" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2" />
     <!-- Start the slow handshakes early: the one font face, the basemap host. -->
     <link rel="preload" href={overpassLatin} as="font" type="font/woff2" crossorigin />
     <link rel="preconnect" href="https://tiles.openfreemap.org" crossorigin />
+    <!-- Which commit is live: the deploy waits for this before testing prod. -->
+    <meta name="build" content={import.meta.env.PUBLIC_BUILD ?? "local"} />
     <title>{title}</title>
   </head>
   <body>

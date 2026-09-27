@@ -1,6 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
-import LiveMap from "../components/LiveMap.svelte";
+import App from "../components/App.svelte";
 ---
 <Base
   title="Chicago buses, live | chitransit.fyi"
@@ -14,7 +14,7 @@ import LiveMap from "../components/LiveMap.svelte";
     </span>
     <span class="wait">Connecting to the live feed…</span>
   </div>
-  <LiveMap client:only="svelte" />
+  <App client:only="svelte" />
   <noscript>The live map needs JavaScript.</noscript>
 </Base>
 

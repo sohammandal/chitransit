@@ -1,0 +1,23 @@
+---
+// One page per route, so /route/66/ loads directly and can be shared. The app itself reads
+// the route from the URL; this page only gives it a proper title for links and tabs.
+import { existsSync, readFileSync } from "node:fs";
+import Base from "../../layouts/Base.astro";
+import App from "../../components/App.svelte";
+
+export async function getStaticPaths() {
+  const local = "public/data/v1/routes.json";
+  const names: Record<string, string> = existsSync(local)
+    ? JSON.parse(readFileSync(local, "utf8"))
+    : await fetch("https://www.chitransit.fyi/data/v1/routes.json").then((r) => r.json());
+  return Object.entries(names).map(([rt, name]) => ({ params: { rt }, props: { rt, name } }));
+}
+const { rt, name } = Astro.props;
+---
+<Base
+  title={`${rt} ${name} bus, live | chitransit.fyi`}
+  description={`Every ${rt} ${name} bus, live, with the gaps between them and how yesterday's service went. Unofficial.`}
+>
+  <App client:only="svelte" />
+  <noscript>The live map needs JavaScript.</noscript>
+</Base>
