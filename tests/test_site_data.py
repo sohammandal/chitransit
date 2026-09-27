@@ -1,0 +1,43 @@
+"""The site's data contract (transform/site_data.py check): catches a broken nightly before it
+overwrites the files the live site reads."""
+
+import importlib.util
+from datetime import date
+from pathlib import Path
+
+SRC = Path(__file__).parents[1] / "transform/site_data.py"
+spec = importlib.util.spec_from_file_location("site_data", SRC)
+site_data = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(site_data)
+
+TODAY = date(2026, 9, 27)
+ROUTES = {"66": "Chicago"}
+HEADWAYS = {"2026-09-27": {"66|East": {"14": 9.0}}}
+COUNTS = {
+    "scheduled": 373, "ran": 346, "announced": 6,
+    "silent_proven": 2, "silent_possible": 11, "not_judged": 10,
+}  # fmt: skip
+
+
+def summary(**change):
+    return {"date": "2026-09-26", "routes": {"66": COUNTS | change}}
+
+
+def test_good_files_pass():
+    assert site_data.check(ROUTES, HEADWAYS, summary(), TODAY) == []
+
+
+def test_each_break_is_caught():
+    cases = [
+        ({}, HEADWAYS, summary()),  # no routes
+        (ROUTES, {"2026-09-26": HEADWAYS["2026-09-27"]}, summary()),  # no schedule for today
+        (ROUTES, {"2026-09-27": {"66": {"14": 9.0}}}, summary()),  # key without direction
+        (ROUTES, {"2026-09-27": {"66|East": {"14": 0}}}, summary()),  # zero gap
+        (ROUTES, HEADWAYS, {"date": "2026-09-26", "routes": {}}),  # empty summary
+        (ROUTES, HEADWAYS, summary() | {"date": "2026-09-20"}),  # stale summary
+        (ROUTES, HEADWAYS, summary(ran=345)),  # doesn't add up
+        (ROUTES, HEADWAYS, summary(silent_proven=12)),  # proven > possible
+        (ROUTES, HEADWAYS, {"date": "2026-09-26", "routes": {"66": {"ran": 1}}}),  # renamed fields
+    ]
+    for routes, headways, s in cases:
+        assert site_data.check(routes, headways, s, TODAY), (routes, headways, s)

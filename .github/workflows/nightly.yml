@@ -86,8 +86,19 @@ jobs:
           # The internal ops view (unlinked); the public pages are the Astro site (site.yml).
           aws s3 cp ops-site/index.html "$SITE/ops/index.html" --content-type text/html --cache-control "max-age=300" --only-show-errors
 
-      - name: Site data (pattern shapes for the live map)
+      - name: Scheduled gaps for today and tomorrow (the site's "right now" rules)
+        working-directory: transform
         run: |
+          # Schedule only (GTFS, no Ingress). Rebuilds int_scheduled_trips for these two days in
+          # the local DuckDB file after the analytics are published, so nothing public changes.
+          today=$(TZ=America/Chicago date +%F)
+          tomorrow=$(TZ=America/Chicago date -d tomorrow +%F)
+          uv run --group transform dbt run -s +site_headways --profiles-dir . \
+            --vars "{start_date: '$today', end_date: '$tomorrow'}"
+
+      - name: Site data (route shapes, names, scheduled gaps, yesterday's summary)
+        run: |
+          # Checks the files against the site's contract first; on failure nothing is uploaded.
           uv run --group transform python transform/site_data.py --db transform/target/ghost_ledger.duckdb --out site-data
           aws s3 sync site-data "$SITE/data" --cache-control "public, max-age=3600" --only-show-errors
 

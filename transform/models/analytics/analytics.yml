@@ -66,3 +66,12 @@ models:
         data_tests: [unique, not_null]
       - name: coords
         data_tests: [not_null]
+  - name: site_routes
+    description: Route names (newest GTFS feed) for the site.
+    columns:
+      - name: rt
+        data_tests: [unique, not_null]
+  - name: site_headways
+    description: Scheduled gap between buses per route, direction and Chicago hour (60 min / trips starting that hour).
+  - name: site_route_summary
+    description: Per route and finished service day, trips by outcome; silent as proven to possible.

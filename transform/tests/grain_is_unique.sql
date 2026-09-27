@@ -18,3 +18,7 @@ union all
 select 'route_hour_delivery', count(*) from {{ ref('route_hour_delivery') }} group by service_date, rt, direction, start_hour having count(*) > 1
 union all
 select 'stop_hour_service', count(*) from {{ ref('stop_hour_service') }} group by service_date, rt, direction, stop_id, hour_start having count(*) > 1
+union all
+select 'site_headways', count(*) from {{ ref('site_headways') }} group by service_date, rt, direction, hour having count(*) > 1
+union all
+select 'site_route_summary', count(*) from {{ ref('site_route_summary') }} group by service_date, rt having count(*) > 1
