@@ -34,9 +34,9 @@
     {#if bus.at_terminal}
       <strong>{starting ? "Starting" : "Finishing"}</strong><span>its trip, at the {starting ? "first" : "last"} stop</span>
     {:else if bus.gap_s != null}
-      <strong>{minutes(bus.gap_s)}</strong><span>since the bus ahead passed here</span>
+      <strong>{minutes(bus.gap_s)}</strong><span>since the last bus passed here</span>
     {:else}
-      <strong>First</strong><span>no bus ahead on this stretch</span>
+      <strong>–</strong><span>no recent bus we can time here</span>
     {/if}
   </div>
   {#if behind?.gap_s != null && !bus.at_terminal}

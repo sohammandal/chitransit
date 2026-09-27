@@ -108,7 +108,7 @@ jobs:
 
       - name: Prod has the data this build reads
         run: |
-          for f in routes.json headways.json summary.json; do
+          for f in routes.json headways.json report.json; do
             code=$(curl -s -o /dev/null -w "%{http_code}" "$URL/data/v1/$f")
             if [ "$code" != 200 ]; then
               echo "::error::$URL/data/v1/$f returned $code: run the nightly first (data, then code)"; exit 1

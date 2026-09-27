@@ -14,7 +14,9 @@ export default defineConfig({
     worker: { format: "es" }, // MapLibre starts its worker with type: "module"
     server: {
       proxy: {
-        "/live": { target: "https://www.chitransit.fyi", changeOrigin: true },
+        // LIVE=local: read a local poller's feed from public/live instead (make poll with
+        // LIVE_TARGET=site/public/live/vehicles.json).
+        ...(process.env.LIVE === "local" ? {} : { "/live": { target: "https://www.chitransit.fyi", changeOrigin: true } }),
         "/data/v1/patterns": { target: "https://www.chitransit.fyi", changeOrigin: true },
       },
     },

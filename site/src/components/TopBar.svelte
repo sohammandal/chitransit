@@ -1,22 +1,51 @@
 <script lang="ts">
+  // Brand, live status and route search. Search suggests as you type and opens a route once
+  // typing pauses (lib/search.ts), so phones need no Return key; a tap on a suggestion or
+  // Return opens at once.
+  import { matchRoutes, toOpen } from "../lib/search";
   import Mark from "./Mark.svelte";
 
-  let { count, age, failed, onRoute }: {
+  let { count, age, failed, names, onOpen }: {
     count: number | null;
     age: number | null; // seconds since the feed was written
     failed: boolean;
-    onRoute: (rt: string) => boolean; // false if no such route is running
+    names: Record<string, string>;
+    onOpen: (rt: string, replace: boolean) => void; // replace: swap the history entry
   } = $props();
 
+  const PAUSE_MS = 400;
+
   let query = $state("");
-  let missing = $state(false);
+  let focused = $state(false);
+  let opened = $state<string | null>(null); // the route this search already opened
+  let timer = 0;
+
+  const matches = $derived(matchRoutes(query, names));
+  const showList = $derived(focused && query.trim() !== "" && matches.length > 0 && matches[0].rt !== opened);
+
+  function open(rt: string, done: boolean) {
+    if (rt !== opened) onOpen(rt, opened !== null);
+    opened = rt;
+    if (done) {
+      query = "";
+      opened = null;
+      (document.activeElement as HTMLElement | null)?.blur(); // phones: close the keyboard
+    }
+  }
+
+  function typed() {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      const rt = toOpen(query, names);
+      if (rt) open(rt, false);
+    }, PAUSE_MS);
+  }
 
   function submit(e: SubmitEvent) {
     e.preventDefault();
-    const rt = query.trim().toUpperCase();
-    if (!rt) return;
-    missing = !onRoute(rt);
-    if (!missing) (document.activeElement as HTMLElement | null)?.blur(); // phones: close the keyboard
+    window.clearTimeout(timer);
+    const rt = toOpen(query, names) ?? matches[0]?.rt;
+    if (rt) open(rt, true);
   }
 </script>
 
@@ -34,19 +63,35 @@
       <span class="updated">{failed ? "Reconnecting…" : `Updated ${age ?? 0} s ago`}</span>
     {/if}
   </p>
-  <form onsubmit={submit}>
+  <form onsubmit={submit} role="search">
     <label class="sr" for="route-q">Go to a route</label>
     <input
       id="route-q"
       bind:value={query}
-      oninput={() => (missing = false)}
-      placeholder="Route, e.g. 66"
+      oninput={typed}
+      onfocus={() => (focused = true)}
+      onblur={() => setTimeout(() => { focused = false; opened = null; }, 150)}
+      placeholder="Route number or name, e.g. 66"
       autocomplete="off"
       autocapitalize="characters"
       spellcheck="false"
       enterkeyhint="go"
+      aria-controls="route-list"
+      aria-expanded={showList}
     />
-    {#if missing}<p class="miss">No #{query.trim().toUpperCase()} buses on the road right now.</p>{/if}
+    {#if showList}
+      <ul id="route-list" class="list">
+        {#each matches as m (m.rt)}
+          <li>
+            <button type="button" onmousedown={(e) => e.preventDefault()} onclick={() => open(m.rt, true)}>
+              <span class="rt">{m.rt}</span><span class="name">{m.name}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {:else if focused && query.trim() && !matches.length}
+      <p class="miss">No route matches “{query.trim()}”.</p>
+    {/if}
   </form>
 </header>
 
@@ -69,6 +114,20 @@
     padding: 10px 12px; min-height: 44px; border-radius: 10px;
     border: 1.5px solid var(--rule); background: var(--concrete); color: var(--asphalt);
   }
-  .miss { margin: 6px 2px 0; font-size: 13px; color: var(--fog); }
+  /* Suggestions float over the map: the bar keeps its height, so the map's fit doesn't shift. */
+  form { position: relative; }
+  .list, .miss {
+    position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 6px);
+    background: var(--surface); border-radius: 12px; box-shadow: var(--shadow);
+  }
+  .list { list-style: none; margin: 0; padding: 4px; display: grid; gap: 2px; }
+  .list button {
+    width: 100%; display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 8px;
+    border: 0; border-radius: 10px; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer;
+  }
+  .list button:hover, .list button:focus-visible { background: var(--concrete); }
+  .rt { display: inline-grid; place-items: center; min-width: 44px; height: 28px; padding: 0 8px; border-radius: 8px; background: var(--asphalt); color: var(--surface); font-weight: 900; font-size: 14px; flex: none; }
+  .name { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .miss { margin: 0; padding: 12px 14px; font-size: 13px; color: var(--fog); }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>

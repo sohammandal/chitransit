@@ -10,12 +10,15 @@
 
   maplibregl.setWorkerUrl(workerUrl);
 
-  let { vehicles, route, selected, shapes, padding, onSelect }: {
+  let { vehicles, route, selected, shapes, padding, fit, fitNonce, focusNonce, onSelect }: {
     vehicles: Vehicle[];
     route: string | null;
     selected: string | null;
     shapes: Pattern[]; // the open route's patterns
     padding: { top: number; bottom: number; left: number; right: number };
+    fit: boolean; // frame the route (or the city) at all; false keeps the camera (a tapped bus)
+    fitNonce: number; // bumped on every request to frame again
+    focusNonce: number; // bumped to zoom in on the selected bus
     onSelect: (vid: string) => void;
   } = $props();
 
@@ -139,17 +142,37 @@
     if (!b) return;
     const p = map.project(b.to), { clientWidth: w, clientHeight: h } = container, m = 24;
     const hidden = p.x < padding.left + m || p.x > w - padding.right - m || p.y < padding.top + m || p.y > h - padding.bottom - m;
-    if (hidden) map.easeTo({ center: b.to, padding: fitPadding(), duration: 500 });
+    if (hidden) map.easeTo({ center: b.to, duration: 500 });
   });
 
   // The panel's padding, shrunk if it would leave less than ~120 px of map (small phones):
   // with padding larger than the canvas, MapLibre skips the fit entirely.
   function fitPadding() {
-    const room = (size: number, a: number, b: number) => Math.min(1, Math.max(0, size - 120) / Math.max(1, a + b));
+    // 170 = ~120 px of map left over + the 24 px margin fitBounds adds on each side
+    const room = (size: number, a: number, b: number) => Math.min(1, Math.max(0, size - 170) / Math.max(1, a + b));
     const v = room(container.clientHeight, padding.top, padding.bottom);
     const h = room(container.clientWidth, padding.left, padding.right);
     return { top: padding.top * v, bottom: padding.bottom * v, left: padding.left * h, right: padding.right * h };
   }
+
+  // Zoom in on the selected bus when asked (a tap on a route line), never closer-out than now.
+  let focused = 0;
+  $effect(() => {
+    if (!ready || !map || focusNonce === focused) return;
+    focused = focusNonce;
+    untrack(() => {
+      const b = selected ? positions.get(selected) : undefined;
+      if (b) map!.easeTo({ center: b.to, zoom: Math.max(map!.getZoom(), 15), duration: 700 });
+    });
+  });
+
+  // The panel's space is the map's own padding, the single source every move below relies on.
+  // (Passing padding to one animation makes MapLibre keep it, and the next fit then subtracts
+  // it twice: routes opened after closing one were squeezed on phones.)
+  $effect(() => {
+    if (!ready || !map) return;
+    map.setPadding(fitPadding());
+  });
 
   // Draw the open route and fit the map to it: to its buses at once, again when its shapes
   // arrive; back to the whole city when closed. Not on every feed (that would fight the user).
@@ -160,15 +183,16 @@
       ? { type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: shapes.map((p) => p.c) } }
       : empty);
     const running = route != null && vehicles.some((v) => v.rt === route);
-    const key = route ? `${route}|${shapes.length}|${running}` : "";
+    const key = `${fitNonce}|${route}|${shapes.length}|${running}`;
     if (key === fitted) return;
     fitted = key;
+    if (!fit) return;
     untrack(() => {
-      if (!route) return void map!.easeTo({ ...CITY, padding: fitPadding(), duration: 600 });
+      if (!route) return void map!.easeTo({ ...CITY, duration: 600 });
       const bounds = new maplibregl.LngLatBounds();
       for (const p of shapes) for (const c of p.c) bounds.extend(c);
       for (const v of vehicles) if (v.rt === route && v.lon != null && v.lat != null) bounds.extend([v.lon, v.lat]);
-      if (!bounds.isEmpty()) map!.fitBounds(bounds, { padding: fitPadding(), duration: 600, maxZoom: 14 });
+      if (!bounds.isEmpty()) map!.fitBounds(bounds, { padding: 24, duration: 600, maxZoom: 14 });
     });
   });
 
@@ -216,6 +240,14 @@
 <style>
   .map { position: absolute; inset: 0; }
   .map:not(:global(.ready)) :global(.maplibregl-ctrl-attrib-inner) { display: none; }
+  /* Folded credits: the same 29 px square as the buttons above, on the same right edge. */
+  .map :global(.maplibregl-ctrl-attrib.maplibregl-compact:not(.maplibregl-compact-show)) {
+    min-width: 29px; min-height: 29px; padding: 0; margin: 0 10px 10px 0;
+    border-radius: 4px; box-shadow: 0 0 0 2px rgb(0 0 0 / 0.1);
+  }
+  .map :global(.maplibregl-compact:not(.maplibregl-compact-show) .maplibregl-ctrl-attrib-button) {
+    width: 29px; height: 29px; border-radius: 4px; background-color: transparent; background-position: center;
+  }
   /* Phones: controls ride above the bottom sheet (App sets --sheet); pinch replaces +/-. */
   @media (max-width: 640px) {
     .map :global(.maplibregl-ctrl-bottom-right) { bottom: var(--sheet, 38dvh); transition: bottom 0.25s ease; }

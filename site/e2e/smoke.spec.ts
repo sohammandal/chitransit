@@ -12,7 +12,7 @@ test("live site: new build, live feed, nightly data, a route page", async ({ pag
   await expect(page.getByText(/\d+ buses on the road/)).toBeVisible({ timeout: 20_000 });
   await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
 
-  for (const f of ["routes.json", "headways.json", "summary.json"]) {
+  for (const f of ["routes.json", "headways.json", "report.json"]) {
     expect((await request.get(`/data/v1/${f}`)).ok(), f).toBe(true);
   }
 

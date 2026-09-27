@@ -1,15 +1,14 @@
 <script lang="ts">
   // The whole app: a map of every bus, and a panel with three levels.
   //   city  (/)             : "Right now", the worst long waits and buses arriving together
-  //   route (/route/66/)    : the route as a line per direction, and how yesterday went
+  //   route (/route/66/)    : Now (the route as a line per direction) and its Report card
   //   bus   (tap a bus)     : the gap ahead of and behind that bus
   // The URL tracks the route, so a route page can be shared and Back works.
   import { onMount } from "svelte";
   import * as data from "../lib/data";
   import { pollFeed } from "../lib/feed";
-  import { dayLabel } from "../lib/format";
   import { findProblems, scheduledGap } from "../lib/problems";
-  import type { Feed, Headways, Pattern, Summary, Vehicle } from "../lib/types";
+  import type { Feed, Headways, Pattern, Report, Vehicle } from "../lib/types";
   import About from "./About.svelte";
   import BusCard from "./BusCard.svelte";
   import MapView from "./MapView.svelte";
@@ -25,7 +24,7 @@
   let now = $state(Date.now());
   let names = $state<Record<string, string>>({});
   let hw = $state<Headways | null>(null);
-  let summary = $state<Summary | null>(null);
+  let report = $state<Report | null>(null);
   let patterns = $state<Map<number, Pattern>>(new Map());
 
   let route = $state<string | null>(null);
@@ -48,7 +47,7 @@
 
   // Map padding keeps the route clear of the panel: beside it on wide screens, above it on phones.
   const padding = $derived(phone
-    ? { top: 130, bottom: Math.round(window.innerHeight * (size === "peek" ? 0.38 : 0.56)) + 16, left: 40, right: 40 }
+    ? { top: topH + 20, bottom: Math.round(window.innerHeight * (size === "peek" ? 0.38 : 0.56)) + 16, left: 40, right: 40 }
     : { top: 40, bottom: 40, left: 400, right: 60 });
 
   // Load the open route's patterns (a route's buses can switch patterns mid-day).
@@ -69,35 +68,58 @@
   // A bus that stops reporting falls back to its route.
   $effect(() => { if (selected && feed && !bus) selected = null; });
 
-  function go(rt: string | null, push = true) {
+  // Map framing: asking for a route (search, a list row, the back link, Back/Forward) fits the
+  // map to it; tapping a bus on the map never moves the camera (the rider picked that view), and
+  // closing a route opened that way leaves the camera there too; tapping a bus on a route line
+  // zooms to it (focusNonce). Each fit bumps fitNonce.
+  let fit = $state(true);
+  let fitNonce = $state(0);
+  let focusNonce = $state(0);
+  function frame(on: boolean) {
+    fit = on;
+    if (on) fitNonce++;
+  }
+
+  /** Open a route (or the city). history: "push" a new entry, "replace" the current one (while
+   *  typing a search, so Back skips the in-between routes), or "none" (Back/Forward). */
+  function go(rt: string | null, history_: "push" | "replace" | "none" = "push", fitMap = true) {
+    frame(fitMap);
     route = rt;
     selected = null;
     about = false;
     size = rt ? "half" : "peek";
-    if (push) history.pushState(null, "", rt ? `/route/${encodeURIComponent(rt)}/` : "/");
+    const url = rt ? `/route/${encodeURIComponent(rt)}/` : "/";
+    if (history_ === "push") history.pushState(null, "", url);
+    else if (history_ === "replace") history.replaceState(null, "", url);
     document.title = rt ? `${rt} ${names[rt] ?? ""} bus, live | chitransit.fyi` : "Chicago buses, live | chitransit.fyi";
   }
   const fromPath = () => decodeURIComponent(location.pathname.match(/^\/route\/([^/]+)/)?.[1] ?? "") || null;
 
-  function select(vid: string) {
+  /** from "map": keep the camera; from "line": zoom the map to the bus. */
+  function select(vid: string, from: "map" | "line") {
     const v = vehicles.find((x) => x.vid === vid);
     if (!v) return;
-    if (v.rt !== route) go(v.rt);
+    if (v.rt !== route) go(v.rt, "push", false);
     selected = vid;
+    if (from === "line") {
+      frame(false); // no route fit on top of the zoom
+      focusNonce++;
+    }
     about = false;
     if (size === "peek") size = "half";
   }
+  /** Bus → its route (fits the route), route → city (the city view only if we'd framed the route). */
+  function toRoute() {
+    selected = null;
+    frame(true);
+  }
+  const close = () => go(null, "push", fit);
   function back() {
     if (about) about = false;
-    else if (selected) selected = null;
-    else if (route) go(null);
+    else if (selected) toRoute();
+    else if (route) close();
   }
   const grow = () => (size = size === "peek" ? "half" : size === "half" ? "full" : "peek");
-  const hasRoute = (rt: string) => {
-    if (!vehicles.some((v) => v.rt === rt)) return false;
-    go(rt);
-    return true;
-  };
 
   onMount(() => {
     document.querySelector(".shell")?.remove(); // index.astro's static shell, for the first paint
@@ -107,14 +129,14 @@
     const onWidth = () => (phone = narrow.matches);
     onWidth();
     narrow.addEventListener("change", onWidth);
-    const onPop = () => go(fromPath(), false);
+    const onPop = () => go(fromPath(), "none");
     window.addEventListener("popstate", onPop);
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") back(); };
     window.addEventListener("keydown", onKey);
 
     data.routeNames().then((r) => (names = r)).catch(() => {});
     data.headways().then((h) => (hw = h)).catch(() => {});
-    data.summary().then((s) => (summary = s)).catch(() => {});
+    data.report().then((r) => (report = r)).catch(() => {});
     const stop = pollFeed((f) => { feed = f; failed = false; }, () => (failed = true));
     const tick = window.setInterval(() => (now = Date.now()), 1000);
     return () => {
@@ -127,11 +149,11 @@
   });
 </script>
 
-<MapView {vehicles} {route} {selected} {shapes} {padding} onSelect={select} />
+<MapView {vehicles} {route} {selected} {shapes} {padding} {fit} {fitNonce} {focusNonce} onSelect={(vid) => select(vid, "map")} />
 
 <div class="side" style:--top-h="{topH}px">
   <div class="top" bind:clientHeight={topH}>
-    <TopBar count={feed ? vehicles.length : null} {age} {failed} onRoute={hasRoute} />
+    <TopBar count={feed ? vehicles.length : null} {age} {failed} {names} onOpen={(rt, replace) => go(rt, replace ? "replace" : "push")} />
     <button class="about-btn" onclick={() => { about = !about; if (about && size === "peek") size = "half"; }} aria-expanded={about}>About</button>
   </div>
   {#if feed || about}
@@ -148,8 +170,8 @@
           scheduled={gapFor(bus)}
           routeName={names[bus.rt]}
           age={Math.max(0, Math.round(now / 1000 - bus.t))}
-          onBack={() => (selected = null)}
-          onSelect={select}
+          onBack={toRoute}
+          onSelect={(vid) => select(vid, "line")}
         />
       {:else if level === "route" && route}
         <RouteView
@@ -158,11 +180,12 @@
           buses={routeBuses}
           {patterns}
           scheduledFor={(dir) => scheduledGap(hw, route!, dir, at)}
-          day={summary?.routes[route]}
-          dayName={summary ? dayLabel(summary.date, new Date(now)) : ""}
+          days={report?.days ?? []}
+          report={report?.routes[route]}
+          now={new Date(now)}
           {selected}
-          onSelect={select}
-          onClose={() => go(null)}
+          onSelect={(vid) => select(vid, "line")}
+          onClose={close}
         />
       {:else}
         <RightNow {problems} {names} onOpen={(rt) => go(rt)} />
@@ -182,7 +205,8 @@
   .side :global(.sheet) { flex: 0 1 auto; }
   .top { position: relative; }
   .about-btn {
-    position: absolute; top: 10px; right: 10px; min-height: 32px; padding: 0 12px;
+    position: absolute; top: 10px; right: 10px; height: 32px; padding: 4px 12px 0; /* Overpass sits high: nudge */
+    display: inline-flex; align-items: center; line-height: 1;
     border: 1px solid var(--rule); border-radius: 999px; background: var(--surface);
     font: inherit; font-size: 13px; font-weight: 700; color: var(--fog); cursor: pointer;
   }

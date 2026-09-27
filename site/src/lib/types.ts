@@ -40,3 +40,8 @@ export type RouteDay = {
 };
 
 export type Summary = { date: string; routes: Record<string, RouteDay> };
+
+/** The report card: every watched day so far. Rows align with `days`:
+ *  [scheduled, ran (incl. likely ran), canceled with notice, proven no-show, couldn't tell] */
+export type ReportRow = [number, number, number, number, number];
+export type Report = { days: string[]; city: ReportRow[]; routes: Record<string, ReportRow[]> };

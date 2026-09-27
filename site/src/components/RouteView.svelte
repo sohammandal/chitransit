@@ -1,19 +1,21 @@
 <script lang="ts">
-  // Route level: each direction as a straight line, then how the route did on the last
-  // finished day (silent trips as proven to possible).
+  // Route level, two tabs: Now (each direction as a straight line with its live buses) and
+  // Report card (how reliable the route has been on the days we watched).
   import { minutes } from "../lib/format";
-  import type { Pattern, RouteDay, Vehicle } from "../lib/types";
+  import type { Pattern, ReportRow, Vehicle } from "../lib/types";
   import Key from "./Key.svelte";
   import LineView from "./LineView.svelte";
+  import ReportCard from "./ReportCard.svelte";
 
-  let { rt, name, buses, patterns, scheduledFor, day, dayName, selected = null, onSelect, onClose }: {
+  let { rt, name, buses, patterns, scheduledFor, days, report, now, selected = null, onSelect, onClose }: {
     rt: string;
     name: string | undefined;
     buses: Vehicle[]; // this route's buses
     patterns: Map<number, Pattern>;
     scheduledFor: (dir: string) => number | null;
-    day: RouteDay | undefined;
-    dayName: string;
+    days: string[]; // the report card's watched days
+    report: ReportRow[] | undefined; // this route's rows, aligned with days
+    now: Date;
     selected?: string | null;
     onSelect: (vid: string) => void;
     onClose: () => void;
@@ -31,9 +33,7 @@
       return { dir, pid, onLine, partial: mine.length - onLine.length, scheduled: scheduledFor(dir) };
     });
   });
-  // Never came = proven only (the block's bus was seen before and after, never on this trip).
-  // Weaker silent cases join "Couldn't tell": a dead tracker looks the same as a ghost.
-  const unclear = $derived(day ? day.not_judged + day.silent_possible - day.silent_proven : 0);
+  let tab = $state<"now" | "report">("now");
 </script>
 
 <header>
@@ -45,6 +45,14 @@
   <button class="x" onclick={onClose} aria-label="Back to all routes">×</button>
 </header>
 
+<div class="tabs" role="tablist">
+  <button role="tab" aria-selected={tab === "now"} onclick={() => (tab = "now")}>Now</button>
+  <button role="tab" aria-selected={tab === "report"} onclick={() => (tab = "report")}>Report card</button>
+</div>
+
+{#if tab === "report"}
+  <ReportCard {days} rows={report} {now} />
+{:else}
 {#each directions as d (d.dir)}
   <div class="dir line">
     <p class="lab"><b>{d.dir}</b>{#if d.scheduled}<span>scheduled every {minutes(d.scheduled)}</span>{/if}</p>
@@ -60,20 +68,6 @@
 {#if buses.length}
   <Key />
 {/if}
-
-{#if day}
-  <div class="dir day-block">
-    <p class="lab"><b>{dayName}</b><span>{day.scheduled} trips scheduled</span></p>
-    <dl class="day">
-      <div><dt>Ran</dt><dd>{day.ran}</dd></div>
-      <div><dt>Canceled, with notice</dt><dd>{day.announced}</dd></div>
-      <div><dt>Never came, no notice</dt><dd>{day.silent_proven}</dd></div>
-      <div><dt>Couldn't tell</dt><dd>{unclear}</dd></div>
-    </dl>
-    {#if unclear}
-      <p class="note">Couldn't tell: no clear signal either way. Some of these trips may not have run; some are buses whose trackers were off.</p>
-    {/if}
-  </div>
 {/if}
 
 <style>
@@ -87,10 +81,8 @@
   .lab { margin: 0; display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--fog); }
   .lab b { color: var(--asphalt); font-size: 14px; }
   .note { margin: 0; font-size: 12px; color: var(--fog); }
-  .day-block { gap: 8px; }
   .line { gap: 6px; padding-top: 6px; }
-  .day { margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; }
-  .day div { background: var(--surface); padding: 8px; display: flex; flex-direction: column-reverse; justify-content: flex-end; gap: 2px; }
-  .day dt { font-size: 11px; color: var(--fog); line-height: 1.25; }
-  .day dd { margin: 0; font-size: 17px; font-weight: 800; line-height: 1.1; }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 3px; border-radius: 10px; background: var(--concrete); }
+  .tabs button { min-height: 36px; border: 0; border-radius: 8px; background: none; font: inherit; font-size: 14px; font-weight: 700; color: var(--fog); cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: var(--surface); color: var(--asphalt); box-shadow: 0 1px 3px rgb(0 0 0 / 0.12); }
 </style>
