@@ -1,0 +1,52 @@
+/* chitransit.fyi design tokens. Colors come from the city flag, not from CTA:
+   flag blue is the brand and every live bus; star red is reserved for trouble. */
+:root {
+  --concrete: #f2f4f3;   /* page ground */
+  --surface: #ffffff;    /* panels over the map */
+  --asphalt: #1c2227;    /* ink */
+  --fog: #6c767e;        /* secondary text */
+  --rule: #d8dde0;
+  --flag-blue: #1f86c0;  /* buses, brand (deepened from #2F9FD6 for contrast on light maps) */
+  --flag-blue-soft: #d9edf8;
+  --star-red: #d7262e;   /* trouble only */
+  --signal-amber: #c98a0c;
+  --shadow: 0 10px 30px rgb(28 34 39 / 0.16);
+  --radius: 14px;
+  --font: "Overpass Variable", "Overpass", system-ui, -apple-system, sans-serif;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --concrete: #12181d;
+    --surface: #1a2228;
+    --asphalt: #eef1f3;
+    --fog: #9aa5ae;
+    --rule: #2c363e;
+    --flag-blue: #5bb8e8;
+    --flag-blue-soft: #16374b;
+    --star-red: #ff5a60;
+    --signal-amber: #f0b43c;
+    --shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+    color-scheme: dark;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--concrete);
+  color: var(--asphalt);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-text-size-adjust: 100%;
+  font-variant-numeric: tabular-nums;
+}
+a { color: var(--flag-blue); }
+:focus-visible { outline: 2px solid var(--flag-blue); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

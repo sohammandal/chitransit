@@ -1,0 +1,28 @@
+---
+import "@fontsource-variable/overpass";
+import "../styles/tokens.css";
+
+interface Props {
+  title: string;
+  description: string;
+}
+const { title, description } = Astro.props;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="description" content={description} />
+    <!-- Preview: keep search engines out until launch (docs/SITE.md) -->
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#f2f4f3" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#12181d" media="(prefers-color-scheme: dark)" />
+    <meta name="apple-mobile-web-app-title" content="chitransit" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

@@ -1,0 +1,11 @@
+---
+import Base from "../layouts/Base.astro";
+import LiveMap from "../components/LiveMap.svelte";
+---
+<Base
+  title="Chicago buses, live | chitransit.fyi"
+  description="Every CTA bus on one map, updated every 30 seconds, with the gap to the bus ahead. Unofficial."
+>
+  <LiveMap client:only="svelte" />
+  <noscript>The live map needs JavaScript.</noscript>
+</Base>

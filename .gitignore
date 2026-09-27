@@ -54,3 +54,10 @@ infra/terraform/**/backend.hcl
 # dbt (per-machine id, logs)
 transform/.user.yml
 transform/logs/
+
+# Site (Astro): dependencies, build output, generated types; data is published, never committed
+node_modules/
+site/dist/
+site/.astro/
+site/public/data/
+site/public/live/

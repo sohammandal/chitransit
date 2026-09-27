@@ -57,3 +57,12 @@ models:
         description: Headways under 25% of the scheduled headway; NULL when the hour wasn't watched enough.
       - name: gaps
         description: Headways over 2x the scheduled headway; NULL when the hour wasn't watched enough.
+  - name: site_patterns
+    description: >
+      Each pattern's shape (coords, [lon, lat] in sequence) and stops (with feet along it) as
+      of the run, published one JSON per pid for the site's live map.
+    columns:
+      - name: pid
+        data_tests: [unique, not_null]
+      - name: coords
+        data_tests: [not_null]
