@@ -1,5 +1,7 @@
 -- For every scheduled trip no bus reported: physical evidence about the bus that should have
--- run it (the block's bus, from the trips before or after it in its GTFS block). Absence
+-- run it (the block's bus: the nearest trip before it in its GTFS block that a bus reported,
+-- else the nearest after, each within 3 hours; a bus from a different part of the day may
+-- have been swapped out and can't vouch either way). Absence
 -- from the feed alone can't tell a ghost from a bus driving with a dead tracker; where that
 -- bus was can.
 --   bus_on_this_pattern : the block's bus, or a bus CTA predicted for this trip (dyn = 0, at
@@ -8,6 +10,9 @@
 --   bus_elsewhere       : visible during the trip's scheduled time, not on its pattern
 --                         (still on an earlier trip, laid over, another route): it didn't run
 --                         it, and its tracker worked. Strong ghost evidence.
+--   dark_between_same_bus : the same bus ran the block's trips before and after, and was
+--                         invisible during this one: a tracker outage across several trips,
+--                         not a skip (Sep 26: 13 such "silent" trips, e.g. #124 bus 8105)
 --   reappeared_far_end  : invisible during the trip, next seen within 500 m of the trip's last
 --                         stop: it drove the trip with a dead tracker
 --   reappeared_same_end : invisible during the trip, next seen within 500 m of its first stop:
@@ -23,23 +28,29 @@ matches as (
 ),
 
 neighbors as (
+    -- the nearest reported trip on each side in the block (an unreported trip's vid is null)
     select
         s.service_date,
         s.trip_id,
-        lag(m.n_reports >= 2) over blk as prev_ran,
-        lag(m.last_vid) over blk as prev_vid,
-        lead(m.n_reports >= 2) over blk as next_ran,
-        lead(m.first_vid) over blk as next_vid,
+        last_value(m.last_vid ignore nulls) over (
+            partition by s.service_date, s.feed_id, s.block_id order by s.scheduled_start
+            range between interval 3 hour preceding and current row
+        ) as prev_vid,
+        first_value(m.first_vid ignore nulls) over (
+            partition by s.service_date, s.feed_id, s.block_id order by s.scheduled_start
+            range between current row and interval 3 hour following
+        ) as next_vid,
         m.trip_id is not null as matched
     from scheduled as s
     left join matches as m on s.service_date = m.service_date and s.trip_id = m.trip_id
-    window blk as (partition by s.service_date, s.feed_id, s.block_id order by s.start_s)
 ),
 
 unseen as (
     select
         s.*,
-        case when n.prev_ran then n.prev_vid when n.next_ran then n.next_vid end as block_vid
+        coalesce(n.prev_vid, n.next_vid) as block_vid,
+        n.prev_vid,
+        n.next_vid
     from scheduled as s
     inner join neighbors as n on s.service_date = n.service_date and s.trip_id = n.trip_id
     where not n.matched
@@ -117,6 +128,7 @@ measured as (
         u.service_date,
         u.trip_id,
         u.block_vid,
+        u.prev_vid is not null and u.prev_vid = u.next_vid as same_bus_both_sides,
         coalesce(d.n_seen, 0) as n_seen_during,
         coalesce(d.n_on_this_pattern, 0) + coalesce(pp.n, 0) as n_on_this_pattern,
         a.reappeared_at,
@@ -144,6 +156,7 @@ select
         when n_on_this_pattern > 0 then 'bus_on_this_pattern'
         when block_vid is null then 'no_block_bus'
         when n_seen_during > 0 then 'bus_elsewhere'
+        when same_bus_both_sides then 'dark_between_same_bus'
         when reappeared_at is null then 'bus_not_seen_again'
         when m_from_last_stop <= {{ var('rule_reappear_m') }} and m_from_last_stop < m_from_first_stop then 'reappeared_far_end'
         when m_from_first_stop <= {{ var('rule_reappear_m') }} then 'reappeared_same_end'

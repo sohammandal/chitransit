@@ -8,7 +8,8 @@
 --   unknown    : not watched (feed swept < 90% of the trip's minutes), or the route ran
 --                detour patterns within an hour of it (reason says which)
 --   likely_ran : matched with a single report; or not seen, but the block's bus was on this
---                trip's pattern under another key during it, or vanished and reappeared at
+--                trip's pattern under another key during it, ran its block's trips on both
+--                sides while dark in between, or vanished and reappeared at
 --                the trip's far end (it drove the trip with a dead tracker)
 --   silent     : not seen, not announced, and CTA's predictions at its own stops were
 --                sampled at least twice in the 30 minutes before it was due (stops that
@@ -130,7 +131,8 @@ decided as (
             when sweep_coverage < {{ var('rule_coverage_min') }} then 'unknown'
             when detour and n_reports is null then 'unknown'
             when n_reports = 1 then 'likely_ran'
-            when ghost_evidence in ('bus_on_this_pattern', 'reappeared_far_end') then 'likely_ran'
+            when ghost_evidence in ('bus_on_this_pattern', 'reappeared_far_end', 'dark_between_same_bus')
+                then 'likely_ran'
             when flags_sampled then 'silent'
             else 'missing'
         end as status

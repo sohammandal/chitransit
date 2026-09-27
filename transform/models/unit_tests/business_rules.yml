@@ -114,7 +114,8 @@ unit_tests:
       Where the block's bus was decides between a dead tracker and a ghost: reappearing at the
       far end means it drove the trip; at the same end, it sat; seen elsewhere during the trip,
       it didn't run it; the block's bus or CTA's predicted bus on the trip's own pattern ran it
-      under another key.
+      under another key; the same bus on both sides and dark between is a tracker outage. The
+      block's bus is the nearest reported trip on either side within 3 hours.
     model: int_missing_trip_evidence
     given:
       - input: ref('int_scheduled_trips')
@@ -131,6 +132,14 @@ unit_tests:
           - {service_date: "2026-09-26", trip_id: "X6", feed_id: "f", rt: "9", direction: "North", block_id: "E6", pid: 10, start_s: 59400, end_s: 60600, scheduled_start: "2026-09-26 16:30:00-05", scheduled_end: "2026-09-26 16:50:00-05"}
           - {service_date: "2026-09-26", trip_id: "X5", feed_id: "f", rt: "9", direction: "North", block_id: "E5", pid: 10, start_s: 55800, end_s: 57000, scheduled_start: "2026-09-26 15:30:00-05", scheduled_end: "2026-09-26 15:50:00-05"}
           - {service_date: "2026-09-26", trip_id: "X7", feed_id: "f", rt: "9", direction: "North", block_id: "E7", pid: 10, start_s: 63000, end_s: 64200, scheduled_start: "2026-09-26 17:30:00-05", scheduled_end: "2026-09-26 17:50:00-05"}
+          # E8: V8 runs 18:00 and 19:30, dark for the two trips between (a tracker outage)
+          - {service_date: "2026-09-26", trip_id: "P8a", feed_id: "f", rt: "9", direction: "North", block_id: "E8", pid: 10, start_s: 64800, end_s: 66000, scheduled_start: "2026-09-26 18:00:00-05", scheduled_end: "2026-09-26 18:20:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X8a", feed_id: "f", rt: "9", direction: "North", block_id: "E8", pid: 10, start_s: 66600, end_s: 67800, scheduled_start: "2026-09-26 18:30:00-05", scheduled_end: "2026-09-26 18:50:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X8b", feed_id: "f", rt: "9", direction: "North", block_id: "E8", pid: 10, start_s: 68400, end_s: 69600, scheduled_start: "2026-09-26 19:00:00-05", scheduled_end: "2026-09-26 19:20:00-05"}
+          - {service_date: "2026-09-26", trip_id: "P8b", feed_id: "f", rt: "9", direction: "North", block_id: "E8", pid: 10, start_s: 70200, end_s: 71400, scheduled_start: "2026-09-26 19:30:00-05", scheduled_end: "2026-09-26 19:50:00-05"}
+          # E9: the block's only reported trip is 4 hours earlier: too far to speak for X9
+          - {service_date: "2026-09-26", trip_id: "P9", feed_id: "f", rt: "9", direction: "North", block_id: "E9", pid: 10, start_s: 28800, end_s: 30000, scheduled_start: "2026-09-26 08:00:00-05", scheduled_end: "2026-09-26 08:20:00-05"}
+          - {service_date: "2026-09-26", trip_id: "X9", feed_id: "f", rt: "9", direction: "North", block_id: "E9", pid: 10, start_s: 43200, end_s: 44400, scheduled_start: "2026-09-26 12:00:00-05", scheduled_end: "2026-09-26 12:20:00-05"}
       - input: ref('int_trip_matches')
         rows:
           - {service_date: "2026-09-26", trip_id: "P1", matched_on: "pattern", n_reports: 5, first_vid: "V1", last_vid: "V1"}
@@ -138,6 +147,9 @@ unit_tests:
           - {service_date: "2026-09-26", trip_id: "P3", matched_on: "pattern", n_reports: 5, first_vid: "V3", last_vid: "V3"}
           - {service_date: "2026-09-26", trip_id: "P4", matched_on: "pattern", n_reports: 5, first_vid: "V4", last_vid: "V4"}
           - {service_date: "2026-09-26", trip_id: "P6", matched_on: "pattern", n_reports: 5, first_vid: "V6", last_vid: "V6"}
+          - {service_date: "2026-09-26", trip_id: "P8a", matched_on: "pattern", n_reports: 1, first_vid: "V8", last_vid: "V8"}
+          - {service_date: "2026-09-26", trip_id: "P8b", matched_on: "pattern", n_reports: 5, first_vid: "V8", last_vid: "V8"}
+          - {service_date: "2026-09-26", trip_id: "P9", matched_on: "pattern", n_reports: 5, first_vid: "V9", last_vid: "V9"}
       - input: ref('int_scheduled_departures')
         rows:
           - {service_date: "2026-09-26", trip_id: "X1", stop_id: "A", stop_sequence: 1, departs_at: "2026-09-26 11:30:00-05"}
@@ -184,6 +196,10 @@ unit_tests:
         - {trip_id: "X5", block_vid: null, evidence: "no_block_bus"}
         - {trip_id: "X6", block_vid: "V6", evidence: "bus_not_seen_again"}
         - {trip_id: "X7", block_vid: null, evidence: "bus_on_this_pattern"}
+        # a single report (P8a) still identifies the block's bus
+        - {trip_id: "X8a", block_vid: "V8", evidence: "dark_between_same_bus"}
+        - {trip_id: "X8b", block_vid: "V8", evidence: "dark_between_same_bus"}
+        - {trip_id: "X9", block_vid: null, evidence: "no_block_bus"}
 
   - name: trip_status_rules
     description: >
