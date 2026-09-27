@@ -35,3 +35,13 @@ def test_heredoc_terminators_cannot_collide_with_the_deploy_script():
     deploy = (ROOT / "infra/box/deploy.sh").read_text()
     for marker in ("GHOST_LEDGER_SETUP_EOF", "GHOST_LEDGER_DEPLOY_EOF"):
         assert marker not in deploy
+
+
+def test_deploy_gives_cosign_a_home_under_systemd():
+    # systemd runs deploy.sh with no HOME, so cosign couldn't find docker's registry login and
+    # every signed image was refused as "not signed" (Sep 27). HOME must be set before cosign
+    # or docker runs, and cosign's own error must reach the log.
+    script = (ROOT / "infra/box/deploy.sh").read_text()
+    home = script.index('export HOME="${HOME:-/root}"')
+    assert home < script.index("| docker login ghcr.io") and home < script.index('"$COSIGN" verify')
+    assert 'log "cosign: ' in script

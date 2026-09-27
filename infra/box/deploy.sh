@@ -37,6 +37,10 @@ ISSUER="https://token.actions.githubusercontent.com"
 COSIGN_VERSION="v3.1.3"
 COSIGN_SHA256="4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
 COSIGN="${COSIGN:-/usr/local/bin/cosign}"
+# systemd runs this with no HOME: docker login still writes /root/.docker/config.json, but
+# cosign then can't find it and asks the private registry anonymously (UNAUTHORIZED), which
+# looked like "not signed" and refused every image (Sep 27). Give both tools the same home.
+export HOME="${HOME:-/root}"
 
 ensure_cosign() {
   if [ -x "$COSIGN" ] && echo "$COSIGN_SHA256  $COSIGN" | sha256sum -c --status; then
@@ -58,8 +62,12 @@ signed_by_main() {
     | grep -m1 "^${IMAGE%:*}@sha256:" || true)
   [ -n "$digest" ] || { log "no registry digest for $IMAGE"; return 1; }
   ensure_cosign || { log "cannot install cosign"; return 1; }
-  "$COSIGN" verify --certificate-identity "$SIGNER" --certificate-oidc-issuer "$ISSUER" \
-    "$digest" >/dev/null 2>&1
+  local out
+  if ! out=$("$COSIGN" verify --certificate-identity "$SIGNER" --certificate-oidc-issuer "$ISSUER" \
+    "$digest" 2>&1 >/dev/null); then
+    log "cosign: $(printf '%s' "$out" | tail -1 | cut -c1-200)"  # why, not just "refused"
+    return 1
+  fi
 }
 
 if [ ! -f "$ENV_FILE" ]; then
