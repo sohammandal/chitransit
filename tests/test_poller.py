@@ -366,3 +366,19 @@ def test_sweeps_commit_with_the_live_feed_on(db, tmp_path):
     assert one(conn, "SELECT COUNT(*) FROM ops.sweeps WHERE sweep_id = %s", s.sweep_id) == (1,)
     assert json.loads(feed.read_text())["vehicles"][0]["vid"] == VID
     poller.conn.close()
+
+
+@pytest.mark.db
+def test_a_wild_report_time_is_skipped_not_fatal_to_the_sweep(db):
+    """One report dated far from the fetch has no day partition: inserting it would roll back
+    the whole sweep. It is skipped; the rest of the sweep commits."""
+    settings, conn = db
+    fake = FakeCta()
+    fake.vehicles = [bus(64890, "20270925 19:21:44")]  # a year ahead of the fetch
+    client = BusTrackerClient("k", transport=httpx.MockTransport(fake.handler))
+    poller = Poller(settings, client, now=Clock(T0))
+    poller.start()
+    s = poller.sweep()
+    assert s.new_positions == 0
+    assert one(conn, "SELECT COUNT(*) FROM ops.sweeps WHERE sweep_id = %s", s.sweep_id) == (1,)
+    poller.conn.close()

@@ -1,4 +1,4 @@
-.PHONY: install lint test env guard up down psql migrate migrate-status new-migration db-reset check-db routes vehicles poll monitor image rehearse rehearse-logs rehearse-psql rehearse-down ssh-key tf-bootstrap tf-plan prod-ip prod-ssh prod-secrets prod-status prod-logs prod-tunnel transform transform-ci dashboard
+.PHONY: box-deploy-script install lint test env guard up down psql migrate migrate-status new-migration db-reset check-db routes vehicles poll monitor image rehearse rehearse-logs rehearse-psql rehearse-down ssh-key tf-bootstrap tf-plan prod-ip prod-ssh prod-secrets prod-status prod-logs prod-tunnel transform transform-ci dashboard
 
 # Environment: dev (laptop, default) or prod (Lightsail box). Prod needs CONFIRM=prod:
 #   make migrate ENV=prod CONFIRM=prod
@@ -69,7 +69,7 @@ monitor:            ## print the monitor's metrics once (dry run, never sends)
 # 2 routes (shared API quota), metrics to the log, and no CDC (no AWS on the laptop).
 REHEARSAL = $(CURDIR)/data/rehearsal
 REHEARSAL_ENV = COMPOSE_PROFILES= IMAGE=ghost-ledger:local DIR=$(REHEARSAL) ENV_FILE=$(REHEARSAL)/prod.env \
-	BIN=$(REHEARSAL)/ghost-ledger-deploy PROJECT=ghost-ledger-rehearsal SKIP_PULL=1
+	BIN=$(REHEARSAL)/ghost-ledger-deploy PROJECT=ghost-ledger-rehearsal SKIP_PULL=1 VERIFY=0
 REHEARSAL_COMPOSE = COMPOSE_PROFILES= IMAGE=ghost-ledger:local ENV_FILE=$(REHEARSAL)/prod.env \
 	docker compose -p ghost-ledger-rehearsal -f $(REHEARSAL)/compose.yml \
 	-f $(REHEARSAL)/compose.prod.yml --env-file $(REHEARSAL)/prod.env
@@ -128,6 +128,10 @@ prod-ssh:
 prod-secrets:       ## write prod.env + ghcr.env on the box, then deploy (CONFIRM=prod; safe to re-run)
 	@[ "$(CONFIRM)" = prod ] || { echo "This writes secrets to the prod box. Re-run with CONFIRM=prod."; exit 1; }
 	AWS_PROFILE=$(AWS_PROFILE_NAME) infra/box/push-secrets.sh $(PROD_IP)
+
+box-deploy-script:  ## install infra/box/deploy.sh on the box (CONFIRM=prod; it never updates itself)
+	@[ "$(CONFIRM)" = prod ] || { echo "This replaces the root-run deploy script on the prod box. Re-run with CONFIRM=prod."; exit 1; }
+	$(PROD_SSH) 'sudo install -m 0755 /dev/stdin /usr/local/bin/ghost-ledger-deploy' < infra/box/deploy.sh
 
 prod-status:        ## services, last deploy, and the monitor's latest metrics
 	$(PROD_SSH) 'cd /opt/ghost-ledger && sudo docker compose -p ghost-ledger ps --format "table {{.Service}}\t{{.Status}}"; sudo journalctl -u ghost-ledger-deploy -n 3 --no-pager -o cat; sudo docker logs --tail 1 ghost-ledger-monitor-1'

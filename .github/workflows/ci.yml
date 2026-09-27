@@ -100,6 +100,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write  # keyless signing: the signature names this workflow on main
     steps:
       - uses: actions/checkout@v7
         with:
@@ -131,6 +132,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - if: steps.changed.outputs.build == 'true'
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -142,3 +144,14 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/ghost-ledger:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # The box deploys only images signed by this job on main (infra/box/deploy.sh), so
+      # pushing an image to the registry some other way can't reach prod.
+      - if: steps.changed.outputs.build == 'true'
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - if: steps.changed.outputs.build == 'true'
+        name: Sign the image (keyless, by digest)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "ghcr.io/${{ github.repository_owner }}/ghost-ledger@${DIGEST}"

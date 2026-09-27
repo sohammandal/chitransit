@@ -119,6 +119,13 @@ resource "aws_cloudfront_response_headers_policy" "site" {
       value    = "noindex, nofollow"
       override = true
     }
+    # Report-only until verified against the live map (browsers log violations, block
+    # nothing); then it moves to security_headers_config.content_security_policy.
+    items {
+      header   = "Content-Security-Policy-Report-Only"
+      value    = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob: https://tiles.openfreemap.org; connect-src 'self' https://tiles.openfreemap.org; worker-src 'self' blob:; child-src blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
+      override = true
+    }
   }
   security_headers_config {
     content_type_options {
@@ -126,7 +133,12 @@ resource "aws_cloudfront_response_headers_policy" "site" {
     }
     strict_transport_security {
       access_control_max_age_sec = 31536000
+      include_subdomains         = true
       override                   = true
+    }
+    frame_options {
+      frame_option = "DENY"
+      override     = true
     }
     referrer_policy {
       referrer_policy = "strict-origin-when-cross-origin"
@@ -211,12 +223,13 @@ resource "aws_s3_bucket_policy" "site" {
   policy = data.aws_iam_policy_document.site_read.json
 }
 
-# The poller writes the live feed and nothing else in the site bucket.
+# The poller writes the live feed and nothing else in the site bucket: one exact key, so a
+# stolen box key can't plant pages (say live/login.html) on chitransit.fyi.
 data "aws_iam_policy_document" "box_live" {
   statement {
     sid       = "LiveFeed"
     actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.site.arn}/live/*"]
+    resources = ["${aws_s3_bucket.site.arn}/live/vehicles.json"]
   }
 }
 

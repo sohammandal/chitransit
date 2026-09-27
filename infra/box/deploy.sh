@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Pull-based deploy. On the box, ghost-ledger-deploy.timer runs this every 5 minutes as
 # /usr/local/bin/ghost-ledger-deploy. It pulls the image, and only if the image changed
-# (or a service isn't running): extracts compose files + this script from the image, then
-# `docker compose up -d`. The migrate job runs before the poller; the poller finishes its
+# (or a service isn't running): verifies the image was signed by ci.yml on main (keyless
+# cosign; an unsigned or foreign image is refused and nothing restarts), extracts the
+# compose files from it, then `docker compose up -d`. This script itself never comes from
+# the image: it changes only by `make box-deploy-script` (it runs as root). The migrate job runs before the poller; the poller finishes its
 # sweep on SIGTERM. CI never connects to the box.
 #
 # Health gate: after a deploy, a sweep must commit within ~2 minutes. If none does, the
@@ -12,7 +14,7 @@
 # (expand, then contract; see CLAUDE.md).
 #
 # Overridable for the local rehearsal: IMAGE, DIR, ENV_FILE, BIN, SKIP_PULL=1, FORCE=1,
-# HEALTH_CHECKS.
+# HEALTH_CHECKS, VERIFY=0 (no registry, nothing to verify).
 set -euo pipefail
 
 IMAGE="${IMAGE:-ghcr.io/sohammandal/ghost-ledger:main}"
@@ -27,6 +29,38 @@ COMPOSE_PROFILES="${COMPOSE_PROFILES-cdc}"
 export IMAGE ENV_FILE COMPOSE_PROFILES
 
 log() { echo "$(date -u +%FT%TZ) deploy: $*"; }
+
+# Only images signed by the main-branch image job may run here.
+VERIFY="${VERIFY:-1}"
+SIGNER="https://github.com/sohammandal/cta-ghost-ledger/.github/workflows/ci.yml@refs/heads/main"
+ISSUER="https://token.actions.githubusercontent.com"
+COSIGN_VERSION="v3.1.3"
+COSIGN_SHA256="4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
+COSIGN="${COSIGN:-/usr/local/bin/cosign}"
+
+ensure_cosign() {
+  if [ -x "$COSIGN" ] && echo "$COSIGN_SHA256  $COSIGN" | sha256sum -c --status; then
+    return 0
+  fi
+  local tmp
+  tmp=$(mktemp)
+  curl -fsSL -o "$tmp" \
+    "https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION/cosign-linux-amd64"
+  echo "$COSIGN_SHA256  $tmp" | sha256sum -c --status || { rm -f "$tmp"; return 1; }
+  install -m 0755 "$tmp" "$COSIGN" && rm -f "$tmp"
+  log "installed cosign $COSIGN_VERSION"
+}
+
+# True if the pulled image (by digest) carries a signature from ci.yml on main.
+signed_by_main() {
+  local digest
+  digest=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$IMAGE" \
+    | grep -m1 "^${IMAGE%:*}@sha256:" || true)
+  [ -n "$digest" ] || { log "no registry digest for $IMAGE"; return 1; }
+  ensure_cosign || { log "cannot install cosign"; return 1; }
+  "$COSIGN" verify --certificate-identity "$SIGNER" --certificate-oidc-issuer "$ISSUER" \
+    "$digest" >/dev/null 2>&1
+}
 
 if [ ! -f "$ENV_FILE" ]; then
   log "no $ENV_FILE yet (run make prod-secrets from the laptop); nothing to do"
@@ -80,9 +114,8 @@ deploy() {
   for f in compose.yml compose.prod.yml cdc/application.prod.properties; do
     cp "$tmp/$f" "$DIR/$f.new" && mv -f "$DIR/$f.new" "$DIR/$f"
   done
-  # Replace this script by rename (new inode), never in place: bash is still reading it.
-  if [ -w "$(dirname "$BIN")" ]; then
-    cp "$tmp/deploy.sh" "$BIN.new" && chmod 0755 "$BIN.new" && mv -f "$BIN.new" "$BIN"
+  if [ -f "$tmp/deploy.sh" ] && ! cmp -s "$tmp/deploy.sh" "$BIN"; then
+    log "note: the image carries a newer deploy.sh; install it with make box-deploy-script"
   fi
   rm -rf "$tmp"
   sha=$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$IMAGE" \
@@ -108,6 +141,12 @@ if [ "${SKIP_PULL:-0}" != 1 ]; then
   docker pull -q "$IMAGE" >/dev/null
 fi
 after=$(image_id "$IMAGE")
+if [ "$after" != "$before" ] && [ "$VERIFY" = 1 ] && ! signed_by_main; then
+  # Not built and signed by ci.yml on main: put the tag back and change nothing.
+  log "REFUSED ${after:7:12}: not signed by ci.yml on main; staying on the current image"
+  [ -n "$before" ] && docker tag "$before" "$IMAGE"
+  exit 0
+fi
 if [ -f "$BAD_FILE" ] && [ "$after" = "$(cat "$BAD_FILE")" ] && [ -n "$(image_id "$LAST_GOOD")" ]; then
   # This image already failed its health check here: stay on the last good one.
   docker tag "$LAST_GOOD" "$IMAGE"

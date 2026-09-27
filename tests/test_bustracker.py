@@ -173,3 +173,15 @@ def test_raw_never_holds_the_key_or_a_nul():
     with make_client(lambda request: httpx.Response(200, text=text)) as client:
         raw = client.get_routes().raw
     assert KEY not in raw and "\x00" not in raw and "a\\u0000b" in raw
+
+
+def test_a_reply_that_is_json_but_not_an_object_is_a_failure_not_a_crash():
+    client = make_client(lambda request: httpx.Response(200, json=["not", "an", "object"]))
+    result = client.get_vehicles(["79"])
+    assert not result.ok and result.body == {}
+
+
+def test_an_oversized_reply_is_refused_and_not_stored():
+    client = make_client(lambda request: httpx.Response(200, content=b"x" * 5_000_001))
+    result = client.get_vehicles(["79"])
+    assert not result.ok and "too large" in result.error and result.raw is None

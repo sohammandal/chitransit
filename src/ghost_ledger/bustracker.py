@@ -24,6 +24,9 @@ CHICAGO = ZoneInfo("America/Chicago")
 
 ALERTS_URL = "https://www.transitchicago.com/api/1.0/alerts.aspx"
 
+# A full sweep's largest reply is ~40 KB; anything near this is not a Bus Tracker answer.
+MAX_BODY_BYTES = 5_000_000
+
 # Retries must fit inside one 30 s sweep of 13 calls.
 DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 MAX_ATTEMPTS = 3
@@ -147,8 +150,16 @@ class BusTrackerClient:
                 result.raw = self._redact(response.text).replace("\x00", "\\u0000")
                 if response.status_code >= 500 or response.status_code == 429:
                     result.error = f"HTTP {response.status_code}"
+                elif len(response.content) > MAX_BODY_BYTES:
+                    result.raw = None  # don't store it
+                    result.error = f"response too large ({len(response.content):,} bytes)"
+                    break
                 else:
-                    result.body = response.json().get("bustime-response", {})
+                    doc = response.json()
+                    body = doc.get("bustime-response") if isinstance(doc, dict) else None
+                    if not isinstance(body, dict):
+                        raise ValueError("not a bustime-response object")
+                    result.body = body
                     result.error = self._api_failure(result.body)
                     break  # an API-level refusal won't change on retry
             except (httpx.TransportError, ValueError) as exc:
@@ -180,8 +191,15 @@ class BusTrackerClient:
             result.raw = response.text.replace("\x00", "\\u0000")
             if response.status_code >= 400:
                 result.error = f"HTTP {response.status_code}"
+            elif len(response.content) > MAX_BODY_BYTES:
+                result.raw = None
+                result.error = f"response too large ({len(response.content):,} bytes)"
             else:
-                result.body = response.json().get("CTAAlerts", {})
+                doc = response.json()
+                body = doc.get("CTAAlerts") if isinstance(doc, dict) else None
+                if not isinstance(body, dict):
+                    raise ValueError("not a CTAAlerts object")
+                result.body = body
                 # 0 = alerts, 50 = none match the filter; anything else is a failure
                 if result.body.get("ErrorCode") not in ("0", "50"):
                     result.error = f"API error: {result.body.get('ErrorMessage')}"

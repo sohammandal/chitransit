@@ -49,6 +49,10 @@ ROUTES_REFRESH_EVERY = timedelta(hours=24)
 # a canceled trip is missing from ~27% of looks at its stops (Sep 26), so each trip needs
 # several looks before "never announced" is believable.
 PREDICTION_SAMPLE_EVERY = timedelta(minutes=5)
+# A report's own time must be near the fetch: one wild tmstmp would have no day partition,
+# and its failed insert would roll back the whole sweep. Outside the window: skip it.
+REPORT_MAX_AGE = timedelta(hours=6)
+REPORT_MAX_AHEAD = timedelta(minutes=10)
 # CTA Customer Alerts (reroutes): keyless, off-quota. Kept raw; dbt reads them as context.
 ALERTS_SAMPLE_EVERY = timedelta(minutes=10)
 
@@ -279,9 +283,16 @@ class Poller:
         for call in vehicle_calls:
             for v in call.result.body.get("vehicle", []):
                 try:
-                    positions.append((call, parse_vehicle(v, call.fetched_at)))
+                    p = parse_vehicle(v, call.fetched_at)
                 except (KeyError, ValueError) as exc:
                     log.warning("skipping unparseable vehicle %s: %s", v.get("vid"), exc)
+                    continue
+                skew = p["observed_at"] - call.fetched_at
+                if not -REPORT_MAX_AGE <= skew <= REPORT_MAX_AHEAD:
+                    log.warning("skipping vehicle %s: report time %s is %s from the fetch",
+                                p["vid"], p["observed_at"], skew)  # fmt: skip
+                    continue
+                positions.append((call, p))
 
         pattern_rows = self._fetch_patterns(positions, deadline)
         self._sample_predictions(deadline)

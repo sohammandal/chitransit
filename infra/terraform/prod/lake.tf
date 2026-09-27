@@ -70,9 +70,16 @@ data "aws_iam_policy_document" "box_lake" {
     resources = [aws_s3_bucket.lake.arn]
   }
   statement {
-    sid       = "LakeObjects"
-    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"]
+    sid       = "LakeRead"
+    actions   = ["s3:GetObject"]
     resources = ["${aws_s3_bucket.lake.arn}/*"]
+  }
+  # Writes only where Debezium's Iceberg tables live: not analytics/ (incl. the prune gate's
+  # evidence file) or gtfs/, which the nightly job owns.
+  statement {
+    sid       = "IngressWrite"
+    actions   = ["s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"]
+    resources = ["${aws_s3_bucket.lake.arn}/warehouse/*"]
   }
   statement {
     sid = "IngressCatalog"
