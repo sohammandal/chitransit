@@ -76,14 +76,17 @@ jobs:
 
       - name: Dashboard
         run: |
-          uv run --group transform python transform/dashboard.py --src "$LAKE/analytics" --out site/index.html
-          # The internal ops view (unlinked). Also the home page until the Astro site ships.
-          for key in ops/index.html index.html; do
-            aws s3 cp site/index.html "$SITE/$key" --content-type text/html --cache-control "max-age=300" --only-show-errors
-          done
+          uv run --group transform python transform/dashboard.py --src "$LAKE/analytics" --out ops-site/index.html
+          # The internal ops view (unlinked); the public pages are the Astro site (site.yml).
+          aws s3 cp ops-site/index.html "$SITE/ops/index.html" --content-type text/html --cache-control "max-age=300" --only-show-errors
+
+      - name: Site data (pattern shapes for the live map)
+        run: |
+          uv run --group transform python transform/site_data.py --db transform/target/ghost_ledger.duckdb --out site-data
+          aws s3 sync site-data "$SITE/data" --cache-control "public, max-age=3600" --only-show-errors
 
       - uses: actions/upload-artifact@v7
         with:
           name: dashboard
-          path: site/index.html
+          path: ops-site/index.html
           retention-days: 30

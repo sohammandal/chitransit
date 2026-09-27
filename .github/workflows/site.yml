@@ -1,0 +1,61 @@
+name: site
+
+# Build the Astro site (site/) and publish it to the site bucket behind chitransit.fyi.
+# Pages only: live/ is the poller's, data/ and ops/ are the nightly's, and the transform role
+# is denied live/* anyway. Hashed assets are immutable; HTML revalidates within a minute.
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/site.yml"]
+  pull_request:
+    paths: ["site/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: site
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  SITE: s3://ghost-ledger-site-354894954112
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Type check and build
+        run: npm run build
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        if: github.event_name != 'pull_request'
+        with:
+          role-to-assume: ${{ vars.AWS_TRANSFORM_ROLE_ARN }}
+          aws-region: us-east-2
+
+      - name: Publish
+        if: github.event_name != 'pull_request'
+        run: |
+          # Hashed bundles never change under the same name.
+          aws s3 sync dist/_astro "$SITE/_astro" --cache-control "public, max-age=31536000, immutable" --only-show-errors
+          # Pages and root files: revalidate quickly. Never touch the data the pipelines own.
+          aws s3 sync dist "$SITE" --delete --cache-control "public, max-age=60" \
+            --exclude "_astro/*" --exclude "live/*" --exclude "data/*" --exclude "ops/*" --only-show-errors
