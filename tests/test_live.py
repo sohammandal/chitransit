@@ -109,3 +109,39 @@ def test_buses_repeating_a_stale_report_are_left_off_the_map():
     now = T0 + timedelta(minutes=10)
     board.update([pos("A", 5000, now), pos("B", 3000, T0)], now)  # B's report is 10 min old
     assert set(by_vid(board.snapshot(now))) == {"A"}
+
+
+def drive(board, minutes, buses):
+    """buses: {vid: (start_minute, start_ft, last_minute or None)} at 1,000 ft/min; a bus is
+    reported from start to last minute, then its tracker goes dark (it drops out of the feed)."""
+    for m in range(minutes + 1):
+        t = T0 + timedelta(minutes=m)
+        reports = [
+            pos(vid, ft + 1000 * (m - start), t)
+            for vid, (start, ft, last) in buses.items()
+            if start <= m and (last is None or m <= last)
+        ]
+        board.update(reports, t)
+    return by_vid(board.snapshot(T0 + timedelta(minutes=minutes)))
+
+
+def test_a_bus_whose_tracker_died_after_passing_here_still_counts():
+    # A leads; Z follows 5 min later and goes dark at minute 12 (at 9,000 ft), still driving;
+    # B follows Z by 5 min and is at 8,000 ft at minute 16, a spot Z passed before going dark.
+    snap = drive(LiveBoard(), 16, {"A": (0, 2000, None), "Z": (5, 2000, 12), "B": (10, 2000, None)})
+    # B is at 8,000 ft; A passed it at minute 6, Z (dark now) at minute 11: the wait is 5 min.
+    assert snap["B"]["gap_s"] == 5 * 60
+    assert "Z" not in snap  # dark buses stay off the map
+
+
+def test_gap_is_unknown_when_a_dark_bus_may_have_passed_since():
+    # Z went dark at minute 8 at 5,000 ft, before reaching B's spot (8,000 ft), after A passed
+    # it (minute 6): Z may well have passed since, so no wait is claimed.
+    snap = drive(LiveBoard(), 16, {"A": (0, 2000, None), "Z": (5, 2000, 8), "B": (10, 2000, None)})
+    assert snap["B"]["gap_s"] is None
+
+
+def test_a_dark_bus_behind_this_one_changes_nothing():
+    # Z went dark behind B (B was already past Z's last spot), so B's gap is to A as usual.
+    snap = drive(LiveBoard(), 16, {"A": (0, 2000, None), "B": (4, 2000, None), "Z": (8, 2000, 10)})
+    assert snap["B"]["gap_s"] == 4 * 60 and snap["B"]["ahead"] == "A"

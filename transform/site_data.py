@@ -12,6 +12,11 @@ Writes, under --out:
                              (minutes) by Chicago hour, for today and tomorrow
   v1/summary.json           {"date": "2026-09-26", "routes": {"49": {"scheduled", "ran",
                              "announced", "silent_proven", "silent_possible", "not_judged"}}}
+  v1/report.json            the report card, every watched day so far (from the published
+                            trip_status history, --history): {"days": ["2026-09-26", ...],
+                            "routes": {"49": [[scheduled, ran, announced, proven, unclear], ...]}}
+                            one row per day, aligned with "days"; "city" holds the totals.
+                            ran = ran + likely_ran; unclear = everything else (couldn't tell).
 
 The nightly workflow syncs --out to the site bucket's data/ prefix; in dev, --out is the Astro
 public folder so the dev server serves the same paths.
@@ -30,6 +35,27 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 COUNTS = ["scheduled", "ran", "announced", "silent_proven", "silent_possible", "not_judged"]
+# A day counts toward the report card only if we were watching: at most this share of its
+# trips had no coverage at all (Sep 23-25 predate the poller and are ~100% unknown).
+MAX_UNWATCHED = 0.10
+# The report card file keeps this many recent watched days (the site shows the last 30).
+REPORT_DAYS = 90
+
+
+def check_report(report: dict) -> list[str]:
+    """What's wrong with report.json (empty when it's fine)."""
+    days = report.get("days", [])
+    bad = [] if days and days == sorted(set(days)) else ["report.json: no days, or not in order"]
+    for rt, rows in {"city": report.get("city", []), **report.get("routes", {})}.items():
+        if len(rows) != len(days):
+            bad.append(f"report.json: {rt} has {len(rows)} rows for {len(days)} days")
+            continue
+        for row in rows:
+            if len(row) != 5 or any(not isinstance(v, int) or v < 0 for v in row):
+                bad.append(f"report.json: bad row for {rt}")
+            elif sum(row[1:]) != row[0]:
+                bad.append(f"report.json: {rt} outcomes don't add up to scheduled")
+    return bad
 
 
 def check(routes: dict, headways: dict, summary: dict, today: date) -> list[str]:
@@ -65,6 +91,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--db", default="transform/target/ghost_ledger.duckdb")
     p.add_argument("--out", default="site/public/data")
+    p.add_argument("--history", required=True, help="published analytics, e.g. s3://…/analytics")
     args = p.parse_args()
     out = Path(args.out) / "v1"
 
@@ -95,8 +122,10 @@ def main() -> None:
     by_route = {r[0]: dict(zip(COUNTS, r[1:], strict=True)) for r in rows}
     summary = {"date": str(last), "routes": by_route}
 
+    report = report_card(duckdb.connect(), args.history)
+
     today = datetime.now(ZoneInfo("America/Chicago")).date()
-    bad = check(routes, headways, summary, today)
+    bad = check(routes, headways, summary, today) + check_report(report)
     if not patterns:
         bad.append("site_patterns: no patterns")
     if bad:
@@ -109,13 +138,47 @@ def main() -> None:
     (out / "routes.json").write_text(json.dumps(routes, **compact))
     (out / "headways.json").write_text(json.dumps(headways, **compact))
     (out / "summary.json").write_text(json.dumps(summary, **compact))
+    (out / "report.json").write_text(json.dumps(report, **compact))
     manifest = {
         "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "method_version": os.environ.get("GITHUB_SHA", "local")[:7],
         "patterns": len(patterns),
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1))
-    print(f"{len(patterns)} patterns, {len(routes)} routes, summary {last} -> {out}")
+    print(f"{len(patterns)} patterns, {len(routes)} routes, report {report['days']} -> {out}")
+
+
+def report_card(con, history: str) -> dict:
+    """Every watched day's outcomes per route, from the published trip_status history."""
+    if history.startswith("s3://"):
+        con.execute("INSTALL httpfs; LOAD httpfs; INSTALL aws; LOAD aws;")
+        con.execute("CREATE SECRET (TYPE s3, PROVIDER credential_chain, REGION 'us-east-2')")
+    src = f"read_parquet('{history}/trip_status/*/*.parquet', hive_partitioning = true)"
+    rows = con.execute(
+        f"""
+        WITH trips AS (SELECT service_date, rt, status, strict_evidence FROM {src}
+                       WHERE status != 'pending'),
+        watched AS (SELECT service_date FROM trips GROUP BY 1
+                    HAVING avg((status = 'unknown')::int) <= {MAX_UNWATCHED})
+        SELECT strftime(service_date, '%Y-%m-%d'), rt, count(*),
+               count(*) FILTER (WHERE status IN ('ran', 'likely_ran')),
+               count(*) FILTER (WHERE status = 'flagged'),
+               count(*) FILTER (WHERE status = 'silent' AND strict_evidence)
+        FROM trips WHERE service_date IN (SELECT service_date FROM watched)
+        GROUP BY ALL ORDER BY 1, 2
+        """
+    ).fetchall()
+    days = sorted({r[0] for r in rows})[-REPORT_DAYS:]
+    rows = [r for r in rows if r[0] in set(days)]
+    index = {d: i for i, d in enumerate(days)}
+    empty = lambda: [[0, 0, 0, 0, 0] for _ in days]  # noqa: E731 - a route can skip a day
+    routes: dict[str, list[list[int]]] = {}
+    city = empty()
+    for day, rt, scheduled, ran, announced, proven in rows:
+        row = [scheduled, ran, announced, proven, scheduled - ran - announced - proven]
+        routes.setdefault(rt, empty())[index[day]] = row
+        city[index[day]] = [a + b for a, b in zip(city[index[day]], row, strict=True)]
+    return {"days": days, "city": city, "routes": routes}
 
 
 if __name__ == "__main__":

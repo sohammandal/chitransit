@@ -7,10 +7,13 @@ each bus's recent trail in memory and writes one JSON snapshot (docs/SITE.md, "l
                                       pdist, gap_s, ahead, at_terminal}]}
   t      the position's own time (epoch seconds); the site shows its age
 
-  gap_s  how long ago the bus ahead (same pattern, further along) passed the spot where this
-         bus is now, interpolated from the leader's trail. It is a measured wait: a rider at
-         this bus's position has been waiting that long. None when the leader's trail doesn't
-         reach back that far (it joined recently, or the poller restarted).
+  gap_s  how long ago the last bus on this pattern passed the spot where this bus is now,
+         interpolated from the trails. It is a measured wait: a rider at this bus's position
+         has been waiting that long. The last bus may be one whose tracker has since died (it
+         left the feed but still passed here). None when no trail reaches back that far (a
+         bus joined recently, or the poller restarted), or when a bus went dark short of this
+         spot after the last recorded pass: it may have passed since, so no wait is claimed.
+  ahead  the nearest reporting bus ahead on the same pattern (None for the first).
 
 The snapshot is derived and disposable (DDIA ch. 12: a cache of the log, rebuilt from the next
 sweeps), so publishing is best-effort: a failed write is logged and never fails a sweep.
@@ -35,6 +38,9 @@ TRAIL = timedelta(minutes=75)  # longer than any realistic gap
 TERMINAL_FT = 1000
 # A bus still repeating a report older than this is left off the map (a frozen dot misleads).
 STALE = timedelta(minutes=3)
+# A bus with no fresh report for this long counts as dark when measuring gaps (it may be
+# driving with a dead tracker), even while it is still on the map.
+DARK = timedelta(minutes=2)
 # Short and never stale: the file changes every 30 s and readers time their fetch to it.
 CACHE_CONTROL = "public, max-age=5"
 
@@ -72,23 +78,58 @@ class LiveBoard:
             if not trail:
                 del self.trails[vid]
 
-    def passed_at(self, vid: str, pid: int, pdist: float) -> datetime | None:
-        """When bus `vid`, on pattern `pid`, was at `pdist` (linear between its reports)."""
-        before = after = None
+    def crossed_at(self, vid: str, pid: int, pdist: float) -> datetime | None:
+        """The latest time bus `vid` passed `pdist` on pattern `pid` (linear between two of its
+        reports), or None if its trail never crosses that spot."""
+        last = None
+        prev = None
         for t, p, d in self.trails.get(vid, ()):
-            if p != pid:
-                continue
-            if d <= pdist:
-                before = (t, d)
-            elif after is None and before is not None:
-                after = (t, d)
+            if prev is not None and p == pid == prev[1] and prev[2] <= pdist <= d and d > prev[2]:
+                t0, _, d0 = prev
+                last = t0 + (t - t0) * ((pdist - d0) / (d - d0))
+            prev = (t, p, d)
+        return last
+
+    def position_at(self, vid: str, pid: int, when: datetime) -> float | None:
+        """Where bus `vid` was on pattern `pid` at its last report at or before `when`."""
+        d = None
+        for t, p, dist in self.trails.get(vid, ()):
+            if t > when:
                 break
-        if before is None:
-            return None  # its trail doesn't reach back to that spot
-        if after is None or after[1] == before[1]:
-            return before[0]
-        frac = (pdist - before[1]) / (after[1] - before[1])
-        return before[0] + (after[0] - before[0]) * frac
+            d = dist if p == pid else None
+        return d
+
+    def gap(
+        self,
+        vid: str,
+        pid: int,
+        pdist: float,
+        live: dict[str, float],
+        seen: list[str],
+        now: datetime,
+    ) -> int | None:
+        """Seconds since the last bus passed this bus's spot (see the module docstring).
+        live: vid -> current pdist of the reporting buses on this pattern; seen: every bus with
+        trail on this pattern."""
+        last = None
+        for other in seen:
+            if other == vid or (other in live and live[other] < pdist):
+                continue  # itself, or a reporting bus that is behind it now
+            t = self.crossed_at(other, pid, pdist)
+            if t is not None and t <= now and (last is None or t > last):
+                last = t
+        for other in seen:
+            trail = self.trails[other]
+            if other == vid or other in live or trail[-1][1] != pid:
+                continue
+            t_dark, _, d_dark = trail[-1]
+            # Skip: never left the first stop, passed here while reporting, or went dark earlier.
+            if d_dark < TERMINAL_FT or d_dark >= pdist or (last is not None and t_dark <= last):
+                continue
+            mine = self.position_at(vid, pid, t_dark)
+            if mine is None or mine <= d_dark:
+                return None  # it went dark ahead of this bus, short of here: it may have passed
+        return None if last is None else max(0, round((now - last).total_seconds()))
 
     def at_terminal(self, p: dict[str, Any]) -> bool:
         length = self.lengths.get(int(p["pid"]))
@@ -97,22 +138,29 @@ class LiveBoard:
 
     def snapshot(self, now: datetime) -> dict[str, Any]:
         by_pid: dict[int, list[dict[str, Any]]] = {}
+        live: dict[int, dict[str, float]] = {}  # pid -> vid -> pdist, reporting buses only
         terminal = set()
         for p in self.latest.values():
             if p.get("pid") is None or p.get("pdist") is None:
                 continue
+            if now - p["observed_at"] <= DARK:
+                live.setdefault(int(p["pid"]), {})[p["vid"]] = float(p["pdist"])
             if self.at_terminal(p):
                 terminal.add(p["vid"])
             else:
                 by_pid.setdefault(int(p["pid"]), []).append(p)
+        seen: dict[int, list[str]] = {}  # pid -> buses with trail on it
+        for vid, trail in self.trails.items():
+            for p in {point[1] for point in trail}:
+                seen.setdefault(p, []).append(vid)
         gaps: dict[str, tuple[int | None, str | None]] = {}
         for pid, buses in by_pid.items():
             buses.sort(key=lambda p: p["pdist"], reverse=True)  # leader first
-            gaps[buses[0]["vid"]] = (None, None)
-            for leader, bus in zip(buses, buses[1:], strict=False):
-                t = self.passed_at(leader["vid"], pid, float(bus["pdist"]))
-                gap = None if t is None else max(0, round((now - t).total_seconds()))
-                gaps[bus["vid"]] = (gap, leader["vid"])
+            for i, bus in enumerate(buses):
+                gap = self.gap(
+                    bus["vid"], pid, float(bus["pdist"]), live.get(pid, {}), seen.get(pid, []), now
+                )
+                gaps[bus["vid"]] = (gap, buses[i - 1]["vid"] if i else None)
 
         rows = []
         for p in sorted(self.latest.values(), key=lambda p: (p["rt"], p["vid"])):

@@ -41,3 +41,18 @@ def test_each_break_is_caught():
     ]
     for routes, headways, s in cases:
         assert site_data.check(routes, headways, s, TODAY), (routes, headways, s)
+
+
+def test_report_card_contract():
+    row = [10, 7, 1, 1, 1]  # scheduled, ran, announced, proven, couldn't tell
+    good = {"days": ["2026-09-26"], "city": [row], "routes": {"66": [row]}}
+    assert site_data.check_report(good) == []
+    broken = [
+        {"days": [], "city": [], "routes": {}},  # no watched days
+        good | {"days": ["2026-09-27", "2026-09-26"]},  # out of order (and misaligned)
+        good | {"routes": {"66": [[10, 7, 1, 1, 0]]}},  # doesn't add up
+        good | {"routes": {"66": []}},  # missing a day
+        good | {"city": [[10, 7, 1, 1]]},  # short row
+    ]
+    for report in broken:
+        assert site_data.check_report(report), report

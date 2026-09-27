@@ -99,7 +99,8 @@ jobs:
       - name: Site data (route shapes, names, scheduled gaps, yesterday's summary)
         run: |
           # Checks the files against the site's contract first; on failure nothing is uploaded.
-          uv run --group transform python transform/site_data.py --db transform/target/ghost_ledger.duckdb --out site-data
+          uv run --group transform python transform/site_data.py --db transform/target/ghost_ledger.duckdb --out site-data \
+            --history "$LAKE/analytics"
           aws s3 sync site-data "$SITE/data" --cache-control "public, max-age=3600" --only-show-errors
 
       - uses: actions/upload-artifact@v7
