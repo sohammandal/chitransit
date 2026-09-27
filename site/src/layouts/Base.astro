@@ -1,5 +1,6 @@
 ---
 import "@fontsource-variable/overpass";
+import overpassLatin from "@fontsource-variable/overpass/files/overpass-latin-wght-normal.woff2?url";
 import "../styles/tokens.css";
 
 interface Props {
@@ -20,6 +21,10 @@ const { title, description } = Astro.props;
     <meta name="theme-color" content="#12181d" media="(prefers-color-scheme: dark)" />
     <meta name="apple-mobile-web-app-title" content="chitransit" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- Start the slow handshakes early: the one font face, the basemap host. -->
+    <link rel="preload" href={overpassLatin} as="font" type="font/woff2" crossorigin />
+    <link rel="preconnect" href="https://tiles.openfreemap.org" crossorigin />
     <title>{title}</title>
   </head>
   <body>

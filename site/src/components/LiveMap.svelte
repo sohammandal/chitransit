@@ -78,20 +78,21 @@
     const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
     // A dot with a pointed nose, rotated by heading and recolored as an SDF.
+    // Drawn at 3x (pixelRatio 3) so it stays sharp on phone screens.
     function busIcon() {
-      const s = 64, c = document.createElement("canvas");
+      const k = 1.5, s = 64 * k, c = document.createElement("canvas");
       c.width = c.height = s;
       const g = c.getContext("2d")!;
       g.fillStyle = "#000";
-      g.beginPath(); g.arc(s / 2, s / 2 + 4, 20, 0, Math.PI * 2); g.fill();
-      g.beginPath(); g.moveTo(s / 2, 4); g.lineTo(s / 2 + 13, s / 2 - 6); g.lineTo(s / 2 - 13, s / 2 - 6);
+      g.beginPath(); g.arc(s / 2, s / 2 + 4 * k, 20 * k, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.moveTo(s / 2, 4 * k); g.lineTo(s / 2 + 13 * k, s / 2 - 6 * k); g.lineTo(s / 2 - 13 * k, s / 2 - 6 * k);
       g.closePath(); g.fill();
       return g.getImageData(0, 0, s, s);
     }
 
     function addLayers() {
       const p = palette();
-      if (!map.hasImage("bus")) map.addImage("bus", busIcon(), { sdf: true, pixelRatio: 2 });
+      if (!map.hasImage("bus")) map.addImage("bus", busIcon(), { sdf: true, pixelRatio: 3 });
       map.addSource("sel-route", { type: "geojson", data: empty });
       map.addSource("sel-stops", { type: "geojson", data: empty });
       map.addSource("buses", { type: "geojson", data: empty });
@@ -239,8 +240,8 @@
 
   <header class="bar">
     <a class="brand" href="/" aria-label="chitransit.fyi home">
-      <!-- The mark: a route line, two buses bunched, one far ahead (a gap). -->
-      <svg viewBox="0 0 44 16" aria-hidden="true"><path d="M3 8H41" /><circle cx="8" cy="8" r="4.5" /><circle cx="16" cy="8" r="4.5" /><circle cx="36" cy="8" r="4.5" /></svg>
+      <!-- The mark: the Loop, with a bus on each side. -->
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="6" /><circle cx="9" cy="3" r="2.8" /><circle cx="15" cy="21" r="2.8" /></svg>
       <span><span class="chi">chi</span>transit<b>.fyi</b></span>
     </a>
     <p class="status" aria-live="polite">
@@ -340,9 +341,9 @@
   .brand { display: flex; align-items: center; gap: 8px; color: var(--asphalt); text-decoration: none; font-size: 19px; font-weight: 800; letter-spacing: -0.01em; }
   .brand b { font-weight: 400; color: var(--fog); }
   .brand .chi { color: var(--flag-blue); }
-  .brand svg { width: 52px; height: 19px; flex: none; }
-  .brand path { stroke: var(--fog); stroke-width: 2.5; stroke-linecap: round; }
-  .brand circle { fill: var(--flag-blue); stroke: var(--surface); stroke-width: 2; }
+  .brand svg { width: 26px; height: 26px; flex: none; overflow: visible; }
+  .brand rect { fill: none; stroke: var(--asphalt); stroke-width: 2.5; }
+  .brand circle { fill: var(--flag-blue); stroke: var(--surface); stroke-width: 1.5; }
   .status { margin: 0; font-size: 15px; display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: baseline; }
   .status .dot { align-self: center; margin: 0; }
   .updated { grid-column: 2; color: var(--fog); font-size: 13px; }
