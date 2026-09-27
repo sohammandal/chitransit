@@ -18,7 +18,7 @@ export type Vehicle = {
   at_terminal: boolean;
 };
 
-export type Feed = { generated_at: string; vehicles: Vehicle[] };
+export type Feed = { generated_at: string; build?: string; vehicles: Vehicle[] }; // build: the poller's commit
 
 export type Pattern = {
   rt: string;

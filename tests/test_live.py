@@ -145,3 +145,11 @@ def test_a_dark_bus_behind_this_one_changes_nothing():
     # Z went dark behind B (B was already past Z's last spot), so B's gap is to A as usual.
     snap = drive(LiveBoard(), 16, {"A": (0, 2000, None), "B": (4, 2000, None), "Z": (8, 2000, 10)})
     assert snap["B"]["gap_s"] == 4 * 60 and snap["B"]["ahead"] == "A"
+
+
+def test_snapshot_names_the_running_commit(monkeypatch):
+    # CI waits for this to equal the commit it built: the deploy check seen from outside.
+    monkeypatch.setenv("GIT_SHA", "abc123")
+    board = LiveBoard()
+    board.update([pos("A", 0, T0)], T0)
+    assert board.snapshot(T0)["build"] == "abc123"

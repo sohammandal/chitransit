@@ -97,6 +97,8 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      built: ${{ steps.changed.outputs.build }}
     permissions:
       contents: read
       packages: write
@@ -155,3 +157,27 @@ jobs:
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: cosign sign --yes "ghcr.io/${{ github.repository_owner }}/ghost-ledger@${DIGEST}"
+
+  # The deploy seen from outside. The box pulls signed images every 5 minutes and health-gates
+  # them; a refused, rolled-back or stuck deploy leaves the old poller running, silently. The
+  # live feed names the commit of the poller that wrote it: if it isn't this one within 30
+  # minutes, this job fails and GitHub emails. A newer image's check cancels this one.
+  box:
+    needs: image
+    if: needs.image.outputs.built == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions: {}
+    concurrency:
+      group: box-check
+      cancel-in-progress: true
+    steps:
+      - name: Wait for the box to run this commit
+        run: |
+          for i in $(seq 1 30); do
+            got=$(curl -fs --compressed https://www.chitransit.fyi/live/vehicles.json | jq -r '.build // "unknown"' || echo unreachable)
+            if [ "$got" = "$GITHUB_SHA" ]; then echo "the box runs $GITHUB_SHA (after ~$i min)"; exit 0; fi
+            sleep 60
+          done
+          echo "::error::after 30 min the live feed still says $got, not $GITHUB_SHA. The deploy was refused, rolled back or is stuck: run make prod-status"
+          exit 1

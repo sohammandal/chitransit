@@ -3,8 +3,9 @@
 After each committed sweep the poller hands this module the sweep's vehicle reports. It keeps
 each bus's recent trail in memory and writes one JSON snapshot (docs/SITE.md, "live feed"):
 
-  {"generated_at": ISO, "vehicles": [{vid, rt, pid, hdg, lat, lon, dly, des, dir, t,
-                                      pdist, gap_s, ahead, at_terminal}]}
+  {"generated_at": ISO, "build": commit, "vehicles": [{vid, rt, pid, hdg, lat, lon, dly,
+                                      des, dir, t, pdist, gap_s, ahead, at_terminal}]}
+  build  the commit the running poller was built from (CI waits for it after a deploy)
   t      the position's own time (epoch seconds); the site shows its age
 
   gap_s  how long ago the last bus on this pattern passed the spot where this bus is now,
@@ -24,6 +25,7 @@ joins this feed with the nightly schedule file; the poller only reports what it 
 import gzip
 import json
 import logging
+import os
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -177,7 +179,11 @@ class LiveBoard:
                 "pdist": None if p.get("pdist") is None else round(float(p["pdist"])),
                 "gap_s": gap, "ahead": ahead, "at_terminal": p["vid"] in terminal,
             })  # fmt: skip
-        return {"generated_at": now.isoformat(timespec="seconds"), "vehicles": rows}
+        return {
+            "generated_at": now.isoformat(timespec="seconds"),
+            "build": os.environ.get("GIT_SHA", "unknown"),
+            "vehicles": rows,
+        }
 
 
 class Sink(Protocol):
