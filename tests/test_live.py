@@ -19,7 +19,7 @@ def run(board, sweeps):
 
 
 def by_vid(snapshot):
-    return {b["vid"]: b for b in snapshot["buses"]}
+    return {b["vid"]: b for b in snapshot["vehicles"]}
 
 
 def test_gap_is_the_time_since_the_bus_ahead_passed_this_spot():
@@ -76,7 +76,8 @@ def test_publish_writes_the_snapshot_and_never_raises(tmp_path):
     board = LiveBoard()
     publish(board, FileSink(str(path)), [pos("A", 0, T0)], T0)
     snap = json.loads(path.read_text())
-    assert snap["version"] == 1 and snap["buses"][0]["vid"] == "A"
+    v = snap["vehicles"][0]
+    assert v["vid"] == "A" and v["t"] == int(T0.timestamp()) and set(v) >= {"hdg", "dir", "des"}
 
     class Broken:
         def write(self, snapshot):
@@ -101,3 +102,10 @@ def test_buses_laying_over_at_a_terminal_get_no_gap_and_lead_nobody():
     snap = by_vid(board.snapshot(now))
     assert all(snap[v]["at_terminal"] and snap[v]["gap_s"] is None for v in "ABC")
     assert snap["B"]["ahead"] is None
+
+
+def test_buses_repeating_a_stale_report_are_left_off_the_map():
+    board = LiveBoard()
+    now = T0 + timedelta(minutes=10)
+    board.update([pos("A", 5000, now), pos("B", 3000, T0)], now)  # B's report is 10 min old
+    assert set(by_vid(board.snapshot(now))) == {"A"}

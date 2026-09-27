@@ -3,6 +3,10 @@
 After each committed sweep the poller hands this module the sweep's vehicle reports. It keeps
 each bus's recent trail in memory and writes one JSON snapshot (docs/SITE.md, "live feed"):
 
+  {"generated_at": ISO, "vehicles": [{vid, rt, pid, hdg, lat, lon, dly, des, dir, t,
+                                      pdist, gap_s, ahead, at_terminal}]}
+  t      the position's own time (epoch seconds); the site shows its age
+
   gap_s  how long ago the bus ahead (same pattern, further along) passed the spot where this
          bus is now, interpolated from the leader's trail. It is a measured wait: a rider at
          this bus's position has been waiting that long. None when the leader's trail doesn't
@@ -29,6 +33,8 @@ TRAIL = timedelta(minutes=75)  # longer than any realistic gap
 # riders: it gets no gap and is nobody's leader (verified on #9, Sep 26: pairs at 0 ft and
 # at the far end showed "bunched" while parked).
 TERMINAL_FT = 1000
+# A bus still repeating a report older than this is left off the map (a frozen dot misleads).
+STALE = timedelta(minutes=3)
 CACHE_CONTROL = "public, max-age=10, stale-while-revalidate=20"
 
 
@@ -38,6 +44,7 @@ class LiveBoard:
         self.trails: dict[str, deque[tuple[datetime, int, float]]] = {}
         self.latest: dict[str, dict[str, Any]] = {}
         self.lengths: dict[int, float] = {}  # pid -> pattern length (ft), from the poller
+        self.dirs: dict[int, str] = {}  # pid -> rtdir ("Eastbound"), from the poller
 
     def seed(self, rows: list[tuple[str, datetime, int, float]]) -> None:
         """Rebuild trails from stored positions (vid, observed_at, pid, pdist), oldest first."""
@@ -108,17 +115,20 @@ class LiveBoard:
 
         rows = []
         for p in sorted(self.latest.values(), key=lambda p: (p["rt"], p["vid"])):
+            if now - p["observed_at"] > STALE:
+                continue
             gap, ahead = gaps.get(p["vid"], (None, None))
+            pid = None if p.get("pid") is None else int(p["pid"])
             rows.append({
-                "vid": p["vid"], "rt": p["rt"], "pid": p.get("pid"),
-                "pdist": None if p.get("pdist") is None else round(float(p["pdist"])),
+                "vid": p["vid"], "rt": p["rt"], "pid": pid, "hdg": p.get("hdg"),
                 "lat": None if p.get("lat") is None else round(float(p["lat"]), 5),
                 "lon": None if p.get("lon") is None else round(float(p["lon"]), 5),
-                "des": p.get("des"), "dly": bool(p.get("dly")),
-                "age_s": max(0, round((now - p["observed_at"]).total_seconds())),
+                "dly": bool(p.get("dly")), "des": p.get("des"), "dir": self.dirs.get(pid),
+                "t": int(p["observed_at"].timestamp()),
+                "pdist": None if p.get("pdist") is None else round(float(p["pdist"])),
                 "gap_s": gap, "ahead": ahead, "at_terminal": p["vid"] in terminal,
             })  # fmt: skip
-        return {"version": 1, "generated_at": now.isoformat(timespec="seconds"), "buses": rows}
+        return {"generated_at": now.isoformat(timespec="seconds"), "vehicles": rows}
 
 
 class Sink(Protocol):

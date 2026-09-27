@@ -215,7 +215,10 @@ class Poller:
             rows = conn.execute(sql.LOAD_TRAILS, {"since": self.now() - live.TRAIL}).fetchall()
             self.live = live.LiveBoard()
             self.live.seed(rows)
-            self.live.lengths = dict(conn.execute(sql.LOAD_PATTERN_LENGTHS).fetchall())
+            for pid, rtdir, length in conn.execute(sql.LOAD_PATTERN_SHAPES).fetchall():
+                self.live.dirs[pid] = rtdir
+                if length is not None:
+                    self.live.lengths[pid] = float(length)
 
     def _ensure_partitions(self, force: bool = False) -> None:
         if not force and self.now() < self._next_partition_check:
@@ -374,6 +377,7 @@ class Poller:
             if self.patterns.get(pid, (None, None))[1] == h:
                 continue
             self.patterns[pid] = (ptr["rtdir"], h)
+            self.live.dirs[pid] = ptr["rtdir"]
             if ptr.get("ln") is not None:
                 self.live.lengths[pid] = float(ptr["ln"])
             self.stops.update(dict.fromkeys(sample_stops(ptr), rt))
