@@ -5,6 +5,10 @@
   import { onMount } from "svelte";
   import * as maplibregl from "maplibre-gl";
   import "maplibre-gl/dist/maplibre-gl.css";
+  // MapLibre 6 parses tiles in a module worker; bundled, it can't find it on its own.
+  import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
+
+  maplibregl.setWorkerUrl(workerUrl);
 
   type Vehicle = {
     vid: string; rt: string; pid: number | null; hdg: number | null; lat: number | null;
@@ -228,8 +232,9 @@
 
   <header class="bar">
     <a class="brand" href="/" aria-label="chitransit.fyi home">
-      <svg viewBox="0 0 64 20" aria-hidden="true"><path d="M3 10H61" /><circle cx="9" cy="10" r="5" /><circle cx="19" cy="10" r="5" /><circle cx="53" cy="10" r="5" /></svg>
-      <span>chitransit<b>.fyi</b></span>
+      <!-- The mark: a route line, two buses bunched, one far ahead (a gap). -->
+      <svg viewBox="0 0 44 16" aria-hidden="true"><path d="M3 8H41" /><circle cx="8" cy="8" r="4.5" /><circle cx="16" cy="8" r="4.5" /><circle cx="36" cy="8" r="4.5" /></svg>
+      <span><span class="chi">chi</span>transit<b>.fyi</b></span>
     </a>
     <p class="status" aria-live="polite">
       {#if failed && count === null}
@@ -247,7 +252,7 @@
       <input
         bind:value={routeFilter}
         oninput={() => setFilter()}
-        placeholder="Route, e.g. 79"
+        placeholder="Route, e.g. 66"
         autocomplete="off"
         autocapitalize="characters"
         spellcheck="false"
@@ -300,9 +305,10 @@
   }
   .brand { display: flex; align-items: center; gap: 8px; color: var(--asphalt); text-decoration: none; font-size: 19px; font-weight: 800; letter-spacing: -0.01em; }
   .brand b { font-weight: 400; color: var(--fog); }
-  .brand svg { width: 38px; height: 12px; }
-  .brand path { stroke: var(--asphalt); stroke-width: 3; stroke-linecap: round; }
-  .brand circle { fill: var(--flag-blue); }
+  .brand .chi { color: var(--flag-blue); }
+  .brand svg { width: 52px; height: 19px; flex: none; }
+  .brand path { stroke: var(--fog); stroke-width: 2.5; stroke-linecap: round; }
+  .brand circle { fill: var(--flag-blue); stroke: var(--surface); stroke-width: 2; }
   .status { margin: 0; font-size: 15px; }
   .status strong { font-size: 17px; font-weight: 800; }
   .muted { color: var(--fog); font-size: 13px; }
