@@ -215,9 +215,10 @@
     map.on("style.load", addLayers);
     // Credits collapse to the (i) button (they are also in About); expanded, they span a
     // phone's whole bottom edge.
-    map.on("load", () =>
-      container.querySelector(".maplibregl-ctrl-attrib")?.classList.remove("maplibregl-compact-show"),
-    );
+    map.on("load", () => {
+      container.querySelector(".maplibregl-ctrl-attrib")?.classList.remove("maplibregl-compact-show");
+      container.classList.add("ready"); // CSS kept the credits folded until now: no layout jump
+    });
     for (const layer of ["bus-dot", "bus-sym"]) {
       map.on("click", layer, (e) => {
         const vid = e.features?.[0]?.properties?.vid as string | undefined;
@@ -351,6 +352,7 @@
 <style>
   .live { position: fixed; inset: 0; height: 100dvh; }
   .map { position: absolute; inset: 0; }
+  .map:not(:global(.ready)) :global(.maplibregl-ctrl-attrib-inner) { display: none; }
   .bar {
     position: absolute; z-index: 2;
     top: calc(12px + var(--safe-top)); left: calc(12px + var(--safe-left));
