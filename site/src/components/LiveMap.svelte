@@ -243,7 +243,6 @@
       <svg viewBox="0 0 44 16" aria-hidden="true"><path d="M3 8H41" /><circle cx="8" cy="8" r="4.5" /><circle cx="16" cy="8" r="4.5" /><circle cx="36" cy="8" r="4.5" /></svg>
       <span><span class="chi">chi</span>transit<b>.fyi</b></span>
     </a>
-    <span class="tag">Unofficial</span>
     <p class="status" aria-live="polite">
       {#if failed && count === null}
         Can't reach the live feed. Retrying.
@@ -306,7 +305,10 @@
   {#if about}
     <section class="sheet about" aria-label="About chitransit.fyi">
       <button class="close" onclick={() => (about = false)} aria-label="Close">×</button>
-      <h2>Every CTA bus, live</h2>
+      <div class="about-head">
+        <h2>Every CTA bus, live</h2>
+        <span class="tag">Unofficial</span>
+      </div>
       <dl>
         <dt>Updates</dt>
         <dd>Every 30 seconds. Buses glide between updates; a position can be up to a minute old.</dd>
@@ -341,7 +343,6 @@
   .brand svg { width: 52px; height: 19px; flex: none; }
   .brand path { stroke: var(--fog); stroke-width: 2.5; stroke-linecap: round; }
   .brand circle { fill: var(--flag-blue); stroke: var(--surface); stroke-width: 2; }
-  .tag { position: absolute; top: 14px; right: 14px; font-size: 12px; font-weight: 600; color: var(--fog); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 8px; }
   .status { margin: 0; font-size: 15px; display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: baseline; }
   .status .dot { align-self: center; margin: 0; }
   .updated { grid-column: 2; color: var(--fog); font-size: 13px; }
@@ -376,7 +377,8 @@
   .facts .late { color: var(--signal-amber); font-weight: 700; }
 
   .about { left: calc(12px + var(--safe-left)); right: auto; bottom: calc(62px + var(--safe-bottom)); width: min(400px, calc(100vw - 24px)); }
-  .about h2 { padding-right: 36px; }
+  .about-head { display: flex; align-items: center; gap: 10px; padding-right: 40px; }
+  .tag { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border: 1px solid var(--rule); border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1; color: var(--fog); }
   .about dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 10px 16px; font-size: 15px; }
   .about dt { font-weight: 700; }
   .about dd { margin: 0; color: var(--asphalt); }
