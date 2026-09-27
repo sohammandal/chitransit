@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from datetime import UTC, date, datetime, timedelta
 
@@ -346,3 +347,22 @@ def test_restart_rebuilds_state_from_the_database(db):
     assert s.assigned == 0 and s.patterns_written == 0
     assert fake.calls.count("getpatterns") == 2  # only the daily refresh of the two routes
     second.conn.close()
+
+
+@pytest.mark.db
+def test_sweeps_commit_with_the_live_feed_on(db, tmp_path):
+    """Regression (Sep 26 00:40 UTC): seeding the live feed's trails outside the startup
+    transaction left one open, so every sweep logged success but none committed."""
+    settings, conn = db
+    feed = tmp_path / "live" / "vehicles.json"
+    settings = dataclasses.replace(settings, live_target=str(feed))
+    fake = FakeCta()
+    fake.vehicles = [bus(64890, "20260925 19:21:44")]
+    client = BusTrackerClient("k", transport=httpx.MockTransport(fake.handler))
+    poller = Poller(settings, client, now=Clock(T0))
+    poller.start()
+    s = poller.sweep()
+    # seen from another connection: committed, not just logged
+    assert one(conn, "SELECT COUNT(*) FROM ops.sweeps WHERE sweep_id = %s", s.sweep_id) == (1,)
+    assert json.loads(feed.read_text())["vehicles"][0]["vid"] == VID
+    poller.conn.close()

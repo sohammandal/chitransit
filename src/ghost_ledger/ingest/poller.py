@@ -210,15 +210,20 @@ class Poller:
                 vid: (rt, fetched_at)
                 for vid, rt, fetched_at in conn.execute(sql.LOAD_LAST_SEEN, {"since": since})
             }
+            if self.live_sink is not None:
+                board = live.LiveBoard()
+                board.seed(conn.execute(sql.LOAD_TRAILS, {"since": self.now() - live.TRAIL}))
+                for pid, rtdir, length in conn.execute(sql.LOAD_PATTERN_SHAPES):
+                    board.dirs[pid] = rtdir
+                    if length is not None:
+                        board.lengths[pid] = float(length)
+                self.live = board
         self.presence = PresenceTracker(self.presence.grace, trips, last_seen)
-        if self.live_sink is not None:
-            rows = conn.execute(sql.LOAD_TRAILS, {"since": self.now() - live.TRAIL}).fetchall()
-            self.live = live.LiveBoard()
-            self.live.seed(rows)
-            for pid, rtdir, length in conn.execute(sql.LOAD_PATTERN_SHAPES).fetchall():
-                self.live.dirs[pid] = rtdir
-                if length is not None:
-                    self.live.lengths[pid] = float(length)
+        # Every read above must sit inside the transaction block: a statement outside it opens
+        # an implicit transaction that never commits, and every later sweep then becomes a
+        # savepoint inside it (Sep 26 00:40 UTC: 9 sweeps logged, none committed).
+        if conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+            raise RuntimeError("startup left a transaction open; sweeps would never commit")
 
     def _ensure_partitions(self, force: bool = False) -> None:
         if not force and self.now() < self._next_partition_check:
