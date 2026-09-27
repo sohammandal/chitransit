@@ -267,7 +267,9 @@ test("search suggestions float over the map: the top bar keeps its height", asyn
   await page.goto("/");
   const bar = page.locator("header.bar");
   const before = (await bar.boundingBox())!.height;
-  await page.getByLabel("Go to a route").pressSequentially("6");
+  // "western" fits several routes, so nothing auto-opens and the list stays up (a lone "6"
+  // opens #6 after the pause and closes the list, which raced on slower CI machines).
+  await page.getByLabel("Go to a route").pressSequentially("western");
   await expect(page.locator("#route-list")).toBeVisible();
   expect((await bar.boundingBox())!.height).toBe(before);
 });

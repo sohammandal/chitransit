@@ -12,6 +12,8 @@
 
 > A replayable record of scheduled CTA service - which bus trips **ran**, which CTA **flagged as canceled**, and which **silently never showed up** - judged against the schedule that was in force each day.
 
+Public site: **[chitransit.fyi](https://chitransit.fyi)** - how CTA buses are really running, right now and on the record.
+
 A learning project built around *Designing Data-Intensive Applications* (2nd ed.): change data capture, event time vs processing time, slowly changing dimensions, idempotent reprocessing and a lakehouse on object storage, applied to a real Chicago problem. 'L' trains follow once the Train Tracker key arrives.
 
 *Not affiliated with the Chicago Transit Authority. Data provided by CTA.*
@@ -34,7 +36,7 @@ Others have built parts of this (see [Prior art](#prior-art)). The new piece is 
 
 ## Architecture
 
-The poller writes to exactly one place. Everything downstream is derived from Postgres's change log (DDIA ch. 12-13: one system of record, no dual writes).
+The poller writes its data to exactly one place. Everything downstream is derived from Postgres's change log (DDIA ch. 12-13: one system of record, no dual writes). The site never queries a database: it reads two kinds of static files, one live and one nightly.
 
 ```mermaid
 flowchart LR
@@ -47,7 +49,11 @@ flowchart LR
     GTFS[GTFS versions<br/>Parquet on S3] --> INT
     ING --> INT[Intermediate<br/>dbt-duckdb, nightly]
     INT --> AN[Analytics<br/>trip status, delivery, gaps, bunching]
-    AN --> OUT[Parquet on S3 + dashboard]
+    AN --> OUT[Parquet on S3 + ops dashboard]
+    P -->|after each committed sweep| LIVE[live/vehicles.json<br/>positions + measured gaps]
+    AN -->|site_data.py, checked| DATA[data/v1/*.json<br/>routes, shapes, schedule gaps,<br/>report card]
+    LIVE --> SITE[chitransit.fyi<br/>Astro + Svelte + MapLibre<br/>S3 + CloudFront]
+    DATA --> SITE
 ```
 
 | Layer | What lives there |
@@ -56,6 +62,8 @@ flowchart LR
 | **Ingress** | The complete change log as Iceberg tables on S3 (Glue catalog): one row per change with its operation and log position. After two days it is the only copy, so it is protected and never rebuilt. |
 | **Intermediate** | Schedule and route-pattern versions (SCD2), scheduled trips, interpolated stop passes, flagged cancellations |
 | **Analytics** | `trip_status` (every scheduled trip: ran / flagged / silent / unknown), `route_hour_delivery`, `stop_hour_service` (headways, gaps, bunching), published as Parquet partitioned by service date |
+| **Site: live** | `live/vehicles.json`, rewritten by the poller after each committed sweep (a disposable view of the same sweep, never a second write path): every bus, and the measured time since the last bus passed its spot |
+| **Site: nightly** | `data/v1/*.json` from the Analytics tables and their published history: route names and shapes, scheduled gaps for today and tomorrow, and the report card. Checked against the site's contract before upload |
 
 Each scheduled trip lands in one of three buckets: **ran**, **flagged canceled** (CTA's `dyn=1`), or **silent ghost** (never flagged, never seen), counted only when the feed was healthy. Trips on detour patterns are counted as unknown, never as ghosts.
 
@@ -72,10 +80,11 @@ Each scheduled trip lands in one of three buckets: **ran**, **flagged canceled**
 | Hosting | AWS Lightsail 2 GB, Docker Compose, pull-based deploys with a health gate | Live |
 | Infrastructure | Terraform; GitHub Actions (tests, image, plan/apply via OIDC) | Live |
 | Monitoring | CloudWatch metrics and alarms, email via SNS | Live |
-| Cancellation flags | `getpredictions` sampled at ~730 stops every 10 min | Live |
+| Cancellation flags | `getpredictions` sampled at ~730 stops every 5 min | Live |
 | Transformation | dbt + DuckDB, reading Iceberg through Glue; unit and data tests | Live (nightly) |
 | Orchestration | GitHub Actions nightly workflow (OIDC, replayable by date range) | Live |
-| Dashboard | Static HTML rebuilt nightly | Live |
+| Dashboard | Static HTML rebuilt nightly (internal ops view) | Live |
+| Public site | Astro + Svelte + MapLibre on S3 + CloudFront; Playwright tests at desktop and phone size gate every deploy, which smoke-tests prod and rolls back on failure | Live |
 | Dev tools | `uv`, `ruff`, `sqlfluff`, `pre-commit`, `pytest` | Ready |
 
 Cost: about $14-17/month (a $12 Lightsail box plus S3). Managed Postgres free tiers and Estuary were ruled out for 24/7 running at bus volume (~2.6M sightings/day).
@@ -95,10 +104,12 @@ Cost: about $14-17/month (a $12 Lightsail box plus S3). Managed Postgres free ti
 
 ## Roadmap
 
-- [x] **Week 1 - Ingest** - every route every 30 s into Postgres in one transaction per sweep; every API response kept; trips match GTFS on (route, pattern, service date, start); prod box, Terraform, CI/CD, alarms. *24-hour score pending.*
-- [ ] **Week 2 - CDC to lakehouse** - Debezium → Iceberg on S3 live, reconciled with Postgres, freshness alarm on; still to do: one-hour outage drill, prune gate, Iceberg snapshot expiry and compaction
+- [x] **Week 1 - Ingest** - every route every 30 s into Postgres in one transaction per sweep; every API response kept; trips match GTFS on (route, pattern, service date, start); prod box, Terraform, CI/CD, alarms. 24-hour score: 99.5% of sweeps, 99.0% of trips matched.
+- [ ] **Week 2 - CDC to lakehouse** - Debezium → Iceberg on S3 live, reconciled with Postgres, freshness alarm on, one-hour outage drill passed; still to do: prune gate, Iceberg snapshot expiry and compaction
 - [x] **Week 3 - Schedules, flags, stop passes** - cancellation sampler, GTFS versions, trip matching incl. detours, stop-pass interpolation
 - [x] **Week 4 - Metrics and dashboard** - trip status, delivery, gaps, bunching; tested; nightly publish; dashboard
+- [x] **Site** - chitransit.fyi: live map, "right now" long waits and buses arriving together, route pages with a report card
+- [ ] **Next** - validate the rules against street observations; "typical wait at this stop" as history builds up
 - [ ] **Later - 'L' trains** - second poller once the Train Tracker key arrives
 
 ---
@@ -111,13 +122,15 @@ cta-ghost-ledger/
 │   ├── bustracker.py           # Bus Tracker v3 client: retries, DST-safe timestamps
 │   ├── config.py               # dev/prod settings (GHOST_LEDGER_ENV), quota guard
 │   ├── ingest/                 # Poller: sweeps into Postgres, one transaction each
+│   ├── live.py                 # The site's live feed: positions and measured gaps after each sweep
 │   ├── monitor.py              # Timeliness metrics for CloudWatch alarms
 │   └── cli.py                  # ghost-ledger env | routes | vehicles | poll | monitor | check-db
 ├── db/migrations/              # Postgres schema as dbmate migrations (make migrate)
 ├── cdc/debezium/               # Debezium Server config (dev: local Iceberg; prod: S3 + Glue)
 ├── infra/                      # Terraform (bootstrap, prod), box setup + deploy.sh; runbook in infra/README.md
 ├── .github/workflows/          # CI: lint, tests with Postgres, image to GHCR; Terraform plan/apply
-├── transform/                  # dbt project (staging, intermediate, analytics), GTFS loader, publish, dashboard
+├── transform/                  # dbt project (staging, intermediate, analytics), GTFS loader, publish, dashboard, site data
+├── site/                       # chitransit.fyi: Astro + Svelte (src/components, src/lib), Playwright tests (e2e/)
 ├── scripts/                    # Checks (check_run.py, check_ingress.py) and spikes; not imported
 ├── tests/                      # pytest
 ├── data/                       # Local data (gitignored)
