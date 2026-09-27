@@ -123,7 +123,7 @@ footer { color: var(--muted); font-size: 12px; }
       <tr><td>Silent ghost = no bus, not announced, and its own stops were sampled ≥ 2 times in the 30 min before it was due, at stops known to show cancellations; else missing</td>
         <td>A canceled trip appears as canceled in most looks at its stops</td>
         <td>A canceled trip showed in 73% of looks; 2 of 53 canceled trips with ≥ 4 looks were missed on every look</td>
-        <td>A few percent of announced cancellations may be counted as silent: the lenient count is an upper bound</td></tr>
+        <td>A bus with a dead tracker for a whole trip looks exactly like a ghost, and CTA's own predictions can't tell them apart (they come from the same trackers: tested on Sep 26). Only the strict count is proven; lenient is an upper bound</td></tr>
       <tr><td>Strict = the block's bus was seen doing something else during the trip, or reappeared where it started</td>
         <td>The bus that ran the block's trip before (or after) would have run this one</td>
         <td>Physical: positions, not the absence of them</td>
