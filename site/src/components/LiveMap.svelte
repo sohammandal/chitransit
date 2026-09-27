@@ -20,7 +20,8 @@
 
   const FEED = "/live/vehicles.json";
   const PATTERNS = "/data/v1/patterns/";
-  const POLL_MS = 15_000; // the feed changes every 30 s; poll twice as often, with jitter
+  const SWEEP_MS = 30_000; // the poller rewrites the feed after every 30 s sweep
+  const RETRY_MS = 10_000;
   const TWEEN_MS = 2_000;
   const STYLES = {
     light: "https://tiles.openfreemap.org/styles/positron",
@@ -166,7 +167,12 @@
       } catch {
         failed = true;
       }
-      timer = window.setTimeout(poll, POLL_MS + Math.random() * 3_000);
+      // Fetch again just after the next sweep lands (feed time + 30 s, plus a little for the
+      // write and the 5 s edge cache), not on a blind timer; jitter spreads readers out.
+      const due = generatedAt ? generatedAt.getTime() + SWEEP_MS + 2_000 - Date.now() : RETRY_MS;
+      // Overdue (poller slow or down) or failed: a calm retry, never a tight loop.
+      const wait = failed || due < 2_000 ? RETRY_MS : Math.min(SWEEP_MS + 5_000, due);
+      timer = window.setTimeout(poll, wait + Math.random() * 1_500);
     }
 
     async function showRoute(v: Vehicle) {

@@ -35,7 +35,8 @@ TRAIL = timedelta(minutes=75)  # longer than any realistic gap
 TERMINAL_FT = 1000
 # A bus still repeating a report older than this is left off the map (a frozen dot misleads).
 STALE = timedelta(minutes=3)
-CACHE_CONTROL = "public, max-age=10, stale-while-revalidate=20"
+# Short and never stale: the file changes every 30 s and readers time their fetch to it.
+CACHE_CONTROL = "public, max-age=5"
 
 
 class LiveBoard:
