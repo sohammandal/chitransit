@@ -153,3 +153,21 @@ def test_snapshot_names_the_running_commit(monkeypatch):
     board = LiveBoard()
     board.update([pos("A", 0, T0)], T0)
     assert board.snapshot(T0)["build"] == "abc123"
+
+
+def test_each_bus_names_its_nearest_stop():
+    from ghost_ledger.live import pattern_stops
+
+    ptr = {"pt": [
+        {"typ": "S", "pdist": 0, "stpnm": "Clark & Harrison"},
+        {"typ": "W", "pdist": 500},  # a waypoint, not a stop
+        {"typ": "S", "pdist": 2600, "stpnm": "Clark & Belmont"},
+        {"typ": "S", "pdist": 5200, "stpnm": "Clark & Diversey"},
+    ]}  # fmt: skip
+    board = LiveBoard()
+    board.stops = {1599: pattern_stops(ptr["pt"])}
+    board.update([pos("A", 3000, T0), pos("B", 4800, T0), pos("C", 100, T0, pid=77)], T0)
+    snap = by_vid(board.snapshot(T0))
+    assert snap["A"]["near"] == "Clark & Belmont"  # 400 ft past it, 2,200 ft short of Diversey
+    assert snap["B"]["near"] == "Clark & Diversey"
+    assert snap["C"]["near"] is None  # pattern without stops loaded

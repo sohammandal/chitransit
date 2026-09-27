@@ -6,7 +6,8 @@ Usage: uv run --group transform python transform/site_data.py
 Writes, under --out:
   v1/manifest.json          when and from which commit the data was built
   v1/patterns/{pid}.json    {"rt", "dir", "c": [[lon, lat], ...],
-                             "s": [[lon, lat, name, pdist], ...]}
+                             "s": [[lon, lat, name, pdist, routes], ...]}; routes = how many
+                             routes serve that intersection (major cross streets)
   v1/routes.json            {"49": "Western", ...}
   v1/headways.json          {"2026-09-27": {"49|North": {"14": 10.0, ...}}}: scheduled gap
                              (minutes) by Chicago hour, for today and tomorrow
@@ -101,7 +102,7 @@ def main() -> None:
             "rt": rt,
             "dir": f"{direction}bound",
             "c": coords,
-            "s": [[s["lon"], s["lat"], s["name"], s["pdist"]] for s in stops or []],
+            "s": [[s["lon"], s["lat"], s["name"], s["pdist"], s["routes"]] for s in stops or []],
         }
         for pid, rt, direction, coords, stops in con.execute(
             "SELECT pid, rt, direction, coords, stops FROM site_patterns"

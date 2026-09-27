@@ -15,6 +15,7 @@ each bus's recent trail in memory and writes one JSON snapshot (docs/SITE.md, "l
          bus joined recently, or the poller restarted), or when a bus went dark short of this
          spot after the last recorded pass: it may have passed since, so no wait is claimed.
   ahead  the nearest reporting bus ahead on the same pattern (None for the first).
+  near   the name of the stop nearest the bus ("Clark & Belmont"), so the site can say where.
 
 The snapshot is derived and disposable (DDIA ch. 12: a cache of the log, rebuilt from the next
 sweeps), so publishing is best-effort: a failed write is logged and never fails a sweep.
@@ -26,6 +27,7 @@ import gzip
 import json
 import logging
 import os
+from bisect import bisect_left
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -54,6 +56,7 @@ class LiveBoard:
         self.latest: dict[str, dict[str, Any]] = {}
         self.lengths: dict[int, float] = {}  # pid -> pattern length (ft), from the poller
         self.dirs: dict[int, str] = {}  # pid -> rtdir ("Eastbound"), from the poller
+        self.stops: dict[int, list[tuple[float, str]]] = {}  # pid -> [(feet, name)], sorted
 
     def seed(self, rows: list[tuple[str, datetime, int, float]]) -> None:
         """Rebuild trails from stored positions (vid, observed_at, pid, pdist), oldest first."""
@@ -133,6 +136,15 @@ class LiveBoard:
                 return None  # it went dark ahead of this bus, short of here: it may have passed
         return None if last is None else max(0, round((now - last).total_seconds()))
 
+    def near(self, pid: int | None, pdist: float | None) -> str | None:
+        """The name of the stop on pattern `pid` nearest to `pdist` feet along it."""
+        stops = self.stops.get(pid) if pid is not None else None
+        if not stops or pdist is None:
+            return None
+        i = bisect_left(stops, (pdist, ""))
+        candidates = stops[max(0, i - 1) : i + 1]
+        return min(candidates, key=lambda s: abs(s[0] - pdist))[1]
+
     def at_terminal(self, p: dict[str, Any]) -> bool:
         length = self.lengths.get(int(p["pid"]))
         d = float(p["pdist"])
@@ -178,12 +190,22 @@ class LiveBoard:
                 "t": int(p["observed_at"].timestamp()),
                 "pdist": None if p.get("pdist") is None else round(float(p["pdist"])),
                 "gap_s": gap, "ahead": ahead, "at_terminal": p["vid"] in terminal,
+                "near": self.near(pid, p.get("pdist")),
             })  # fmt: skip
         return {
             "generated_at": now.isoformat(timespec="seconds"),
             "build": os.environ.get("GIT_SHA", "unknown"),
             "vehicles": rows,
         }
+
+
+def pattern_stops(points: list[dict[str, Any]]) -> list[tuple[float, str]]:
+    """[(feet along, stop name)] for a Bus Tracker pattern's points (stops only), sorted."""
+    return sorted(
+        (float(p["pdist"]), p["stpnm"])
+        for p in points or []
+        if p.get("typ") == "S" and p.get("pdist") is not None and p.get("stpnm")
+    )
 
 
 class Sink(Protocol):
