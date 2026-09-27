@@ -183,6 +183,10 @@
     const w = window as unknown as { map?: maplibregl.Map; __e2e?: boolean };
     if (import.meta.env.DEV || w.__e2e) w.map = map;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+    map.addControl(
+      new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: false }, trackUserLocation: false }),
+      "bottom-right",
+    );
     map.on("style.load", () => { ready = false; addLayers(); });
     map.on("load", () => {
       // Credits fold to the (i) button (they're also in About): expanded, they span a phone.
@@ -212,4 +216,9 @@
 <style>
   .map { position: absolute; inset: 0; }
   .map:not(:global(.ready)) :global(.maplibregl-ctrl-attrib-inner) { display: none; }
+  /* Phones: controls ride above the bottom sheet (App sets --sheet); pinch replaces +/-. */
+  @media (max-width: 640px) {
+    .map :global(.maplibregl-ctrl-bottom-right) { bottom: var(--sheet, 38dvh); transition: bottom 0.25s ease; }
+    .map :global(.maplibregl-ctrl-group:has(.maplibregl-ctrl-zoom-in)) { display: none; }
+  }
 </style>

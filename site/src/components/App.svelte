@@ -60,6 +60,12 @@
     }
   });
 
+  // Phones: the map's buttons sit just above the sheet (MapView reads --sheet).
+  $effect(() => {
+    const sheet = document.querySelector(".sheet") as HTMLElement | null;
+    document.documentElement.style.setProperty("--sheet", feed || about ? (size === "peek" ? "38dvh" : size === "half" ? "56dvh" : `${sheet?.offsetHeight ?? 0}px`) : "0px");
+  });
+
   // A bus that stops reporting falls back to its route.
   $effect(() => { if (selected && feed && !bus) selected = null; });
 

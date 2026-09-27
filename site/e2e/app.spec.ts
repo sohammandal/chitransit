@@ -138,3 +138,14 @@ test("search: typing a route fits the map to its buses", async ({ page }) => {
   });
   expect(outside).toBe(0);
 });
+
+test("my location button is on screen and not covered by the panel", async ({ page }) => {
+  await setUp(page);
+  await page.goto("/route/66/");
+  await busesDrawn(page);
+  const button = page.getByRole("button", { name: "Find my location" });
+  await expect(button).toBeVisible();
+  const box = (await button.boundingBox())!;
+  const hit = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest("button")?.getAttribute("aria-label"), [box.x + box.width / 2, box.y + box.height / 2]);
+  expect(hit).toBe("Find my location");
+});
