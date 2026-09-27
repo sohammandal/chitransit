@@ -154,9 +154,15 @@ class S3Sink:
 
     def __init__(self, url: str) -> None:
         import boto3  # only needed in prod
+        from botocore.config import Config
 
         self.bucket, self.key = url.removeprefix("s3://").split("/", 1)
-        self.client = boto3.client("s3")
+        # Tight timeouts: a slow S3 must never hold up the next sweep (the feed is best-effort;
+        # the next sweep rewrites the whole snapshot anyway).
+        self.client = boto3.client(
+            "s3",
+            config=Config(connect_timeout=2, read_timeout=3, retries={"max_attempts": 1}),
+        )
 
     def write(self, snapshot: dict[str, Any]) -> None:
         body = gzip.compress(json.dumps(snapshot, separators=(",", ":")).encode(), mtime=0)

@@ -136,10 +136,18 @@
       }
       (map.getSource("buses") as maplibregl.GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features });
     }
+    // Gliding re-uploads every bus to the map's worker per frame. Only worth it zoomed in,
+    // where a bus visibly moves; cap it at ~20 fps to spare phone batteries.
+    const GLIDE_MIN_ZOOM = 12;
+    const FRAME_MS = 50;
+    let lastDraw = 0;
     const progress = () => Math.min(1, (performance.now() - tweenStart) / TWEEN_MS);
-    function tick() {
+    function tick(t: number) {
       const k = progress();
-      draw(k);
+      if (k >= 1 || t - lastDraw >= FRAME_MS) {
+        draw(k);
+        lastDraw = t;
+      }
       frame = k < 1 ? requestAnimationFrame(tick) : 0;
     }
 
@@ -163,8 +171,13 @@
         generatedAt = new Date(feed.generated_at);
         failed = false;
         if (selected) selected = buses.get(selected.vid)?.v ?? null;
-        tweenStart = performance.now();
-        if (!frame) frame = requestAnimationFrame(tick);
+        if (map.getZoom() >= GLIDE_MIN_ZOOM) {
+          tweenStart = performance.now();
+          if (!frame) frame = requestAnimationFrame(tick);
+        } else {
+          tweenStart = 0; // jump straight to the new positions
+          draw(1);
+        }
       } catch {
         failed = true;
       }
@@ -198,6 +211,11 @@
     setFilter = applyFilter;
 
     map.on("style.load", addLayers);
+    // Credits collapse to the (i) button (they are also in About); expanded, they span a
+    // phone's whole bottom edge.
+    map.on("load", () =>
+      container.querySelector(".maplibregl-ctrl-attrib")?.classList.remove("maplibregl-compact-show"),
+    );
     for (const layer of ["bus-dot", "bus-sym"]) {
       map.on("click", layer, (e) => {
         const vid = e.features?.[0]?.properties?.vid as string | undefined;
