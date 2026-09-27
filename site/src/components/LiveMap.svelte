@@ -46,6 +46,8 @@
   }
 
   onMount(() => {
+    // The page's static shell (index.astro) only covers the wait for this script.
+    document.querySelector(".shell")?.remove();
     const dark = window.matchMedia("(prefers-color-scheme: dark)");
     const palette = () => {
       const css = getComputedStyle(document.documentElement);
