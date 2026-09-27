@@ -17,6 +17,7 @@ GHCR_USER="${GHCR_USER:-sohammandal}"
 GHCR_TOKEN_FILE="${GHCR_TOKEN_FILE:-$HOME/.config/ghost-ledger/ghcr.token}"
 BOX_USER_IAM="${BOX_USER_IAM:-ghost-ledger-box-prod}"
 REGION="${AWS_REGION:-us-east-2}"
+ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 ssh_box() { ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new "ubuntu@$BOX_IP" "$@"; }
 
 [ -n "${CTA_BUS_TRACKER_API_KEY:-}" ] || { echo "CTA_BUS_TRACKER_API_KEY not set"; exit 1; }
@@ -69,6 +70,7 @@ printf '%s\n' \
   "AWS_SECRET_ACCESS_KEY=$secret" \
   "AWS_REGION=$REGION" \
   "AWS_DEFAULT_REGION=$REGION" \
+  "LIVE_TARGET=s3://ghost-ledger-site-$ACCOUNT_ID/live/vehicles.json" \
   | ssh_box "sudo install -m 0600 -o root -g root /dev/stdin /etc/ghost-ledger/prod.env"
 
 printf '%s\n' "GHCR_USER=$GHCR_USER" "GHCR_TOKEN=$(cat "$GHCR_TOKEN_FILE")" \
