@@ -245,7 +245,7 @@ data "aws_iam_policy_document" "apply_writes" {
       "s3:PutBucketPublicAccessBlock", "s3:PutLifecycleConfiguration", "s3:PutBucketTagging",
       "s3:PutBucketPolicy", "s3:DeleteBucketPolicy",
     ]
-    resources = ["arn:aws:s3:::ghost-ledger-lake-*"]
+    resources = ["arn:aws:s3:::ghost-ledger-lake-*", "arn:aws:s3:::ghost-ledger-site-*"]
   }
   # Public dashboard: CloudFront (OAC + headers policy + distribution) in front of the lake's
   # analytics/site/ prefix; ACM + Route 53 records for the custom domain.
@@ -258,6 +258,8 @@ data "aws_iam_policy_document" "apply_writes" {
       "cloudfront:DeleteOriginAccessControl",
       "cloudfront:CreateResponseHeadersPolicy", "cloudfront:UpdateResponseHeadersPolicy",
       "cloudfront:DeleteResponseHeadersPolicy",
+      "cloudfront:CreateFunction", "cloudfront:UpdateFunction", "cloudfront:PublishFunction",
+      "cloudfront:DeleteFunction",
     ]
     resources = ["arn:aws:cloudfront::${data.aws_caller_identity.me.account_id}:*"]
   }
@@ -295,8 +297,9 @@ resource "aws_iam_role_policy" "ci_apply_writes" {
 }
 
 # ---------- transform role: the nightly dbt job ----------
-# Reads Ingress (Glue + S3) and writes only the lake's gtfs/ and analytics/ prefixes. Only
-# workflows on main (schedule, manual dispatch) can assume it.
+# Reads Ingress (Glue + S3), writes only the lake's gtfs/ and analytics/ prefixes, and
+# publishes the public site (site bucket, except live/, which only the poller writes). Only
+# workflows on main (schedule, manual dispatch, pushes) can assume it.
 
 data "aws_iam_policy_document" "trust_transform" {
   statement {
@@ -326,6 +329,7 @@ resource "aws_iam_role" "transform" {
 
 locals {
   lake_arn = "arn:aws:s3:::ghost-ledger-lake-${data.aws_caller_identity.me.account_id}"
+  site_arn = "arn:aws:s3:::ghost-ledger-site-${data.aws_caller_identity.me.account_id}"
   glue_arn = "arn:aws:glue:${var.region}:${data.aws_caller_identity.me.account_id}"
 }
 
@@ -344,6 +348,22 @@ data "aws_iam_policy_document" "transform" {
     sid       = "LakeWriteDerived"
     actions   = ["s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"]
     resources = ["${local.lake_arn}/gtfs/*", "${local.lake_arn}/analytics/*"]
+  }
+  statement {
+    sid       = "SiteList"
+    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
+    resources = [local.site_arn]
+  }
+  statement {
+    sid       = "SitePublish"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"]
+    resources = ["${local.site_arn}/*"]
+  }
+  statement {
+    sid       = "LiveFeedIsThePollers"
+    effect    = "Deny"
+    actions   = ["s3:PutObject", "s3:DeleteObject"]
+    resources = ["${local.site_arn}/live/*"]
   }
   statement {
     sid = "IngressCatalogRead"

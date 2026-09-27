@@ -1,7 +1,8 @@
-# Public dashboard: CloudFront in front of the lake's analytics/site/ prefix, which the
-# nightly workflow writes. Origin access control (OAC): only this distribution can read, and
-# only that prefix; the bucket stays private (public access block stays on). Served at
-# chitransit.fyi (and www) with an ACM certificate in us-east-1.
+# The public site, chitransit.fyi: a private site bucket behind CloudFront (origin access
+# control: only this distribution can read it). Who writes what:
+#   live/*        the poller on the box, after each sweep (the box user can write nothing else)
+#   everything    the nightly / site workflows (transform role; IAM denies it live/*)
+# The lake is not an origin: nothing in it is public. docs/SITE.md has the layout.
 
 locals {
   domain = "chitransit.fyi"
@@ -62,6 +63,46 @@ resource "aws_route53_record" "site" {
   }
 }
 
+resource "aws_s3_bucket" "site" {
+  bucket = "ghost-ledger-site-${data.aws_caller_identity.me.account_id}"
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "site" {
+  bucket = aws_s3_bucket.site.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "site" {
+  bucket                  = aws_s3_bucket.site.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# S3 has no directory index for OAC origins: /route/79/ -> /route/79/index.html.
+resource "aws_cloudfront_function" "index" {
+  name    = "ghost-ledger-site-index"
+  runtime = "cloudfront-js-2.0"
+  publish = true
+  code    = <<-JS
+    function handler(event) {
+      var request = event.request;
+      var uri = request.uri;
+      if (uri.endsWith("/")) {
+        request.uri = uri + "index.html";
+      } else if (uri.split("/").pop().indexOf(".") === -1) {
+        request.uri = uri + "/index.html";
+      }
+      return request;
+    }
+  JS
+}
+
 resource "aws_cloudfront_origin_access_control" "site" {
   name                              = "ghost-ledger-site"
   origin_access_control_origin_type = "s3"
@@ -100,7 +141,7 @@ data "aws_cloudfront_cache_policy" "optimized" {
 
 resource "aws_cloudfront_distribution" "site" {
   enabled             = true
-  comment             = "ghost-ledger public dashboard"
+  comment             = "chitransit.fyi"
   default_root_object = "index.html"
   price_class         = "PriceClass_100"
   http_version        = "http2and3"
@@ -108,20 +149,31 @@ resource "aws_cloudfront_distribution" "site" {
   aliases             = [local.domain, "www.${local.domain}"]
 
   origin {
-    origin_id                = "lake-site"
-    domain_name              = aws_s3_bucket.lake.bucket_regional_domain_name
-    origin_path              = "/analytics/site"
+    origin_id                = "site"
+    domain_name              = aws_s3_bucket.site.bucket_regional_domain_name
     origin_access_control_id = aws_cloudfront_origin_access_control.site.id
   }
 
   default_cache_behavior {
-    target_origin_id           = "lake-site"
+    target_origin_id           = "site"
     viewer_protocol_policy     = "redirect-to-https"
     allowed_methods            = ["GET", "HEAD"]
     cached_methods             = ["GET", "HEAD"]
     compress                   = true
     cache_policy_id            = data.aws_cloudfront_cache_policy.optimized.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.site.id
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.index.arn
+    }
+  }
+
+  # A missing object is a 403 through OAC (no ListBucket): show the site's 404 page.
+  custom_error_response {
+    error_code            = 403
+    response_code         = 404
+    response_page_path    = "/404.html"
+    error_caching_min_ttl = 60
   }
 
   restrictions {
@@ -137,11 +189,11 @@ resource "aws_cloudfront_distribution" "site" {
   }
 }
 
-data "aws_iam_policy_document" "lake_site_read" {
+data "aws_iam_policy_document" "site_read" {
   statement {
-    sid       = "CloudFrontReadsSiteOnly"
+    sid       = "CloudFrontReads"
     actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.lake.arn}/analytics/site/*"]
+    resources = ["${aws_s3_bucket.site.arn}/*"]
     principals {
       type        = "Service"
       identifiers = ["cloudfront.amazonaws.com"]
@@ -154,9 +206,28 @@ data "aws_iam_policy_document" "lake_site_read" {
   }
 }
 
-resource "aws_s3_bucket_policy" "lake" {
-  bucket = aws_s3_bucket.lake.id
-  policy = data.aws_iam_policy_document.lake_site_read.json
+resource "aws_s3_bucket_policy" "site" {
+  bucket = aws_s3_bucket.site.id
+  policy = data.aws_iam_policy_document.site_read.json
+}
+
+# The poller writes the live feed and nothing else in the site bucket.
+data "aws_iam_policy_document" "box_live" {
+  statement {
+    sid       = "LiveFeed"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.site.arn}/live/*"]
+  }
+}
+
+resource "aws_iam_user_policy" "box_live" {
+  name   = "ghost-ledger-box-live"
+  user   = aws_iam_user.box.name
+  policy = data.aws_iam_policy_document.box_live.json
+}
+
+output "site_bucket" {
+  value = aws_s3_bucket.site.bucket
 }
 
 output "site_url" {
