@@ -152,6 +152,16 @@ ORDER BY vid, fetched_at DESC
 
 LOAD_PATTERNS = "SELECT pid, rtdir, content_hash FROM ops.patterns"
 
+LOAD_PATTERN_LENGTHS = "SELECT pid, length_ft FROM ops.patterns WHERE length_ft IS NOT NULL"
+
+# Recent trails for the live feed's gaps, so a restart doesn't blank them (ghost_ledger.live).
+LOAD_TRAILS = """
+SELECT vid, observed_at, pid, pdist
+FROM ops.bus_positions
+WHERE observed_at > %(since)s AND pid IS NOT NULL AND pdist IS NOT NULL
+ORDER BY vid, observed_at
+"""
+
 # First and middle stop of every pattern (see poller.sample_stops, which must agree).
 LOAD_SAMPLE_STOPS = """
 SELECT DISTINCT rt, stpid

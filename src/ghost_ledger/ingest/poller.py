@@ -23,6 +23,7 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Jsonb
 
+from ghost_ledger import live
 from ghost_ledger.bustracker import (
     MAX_STOPS_PER_CALL,
     ApiResult,
@@ -171,6 +172,8 @@ class Poller:
         self._next_routes_refresh = self.now()
         self._next_alerts = self.now()
         self._pending_calls: list[Call] = []
+        self.live = live.LiveBoard()
+        self.live_sink = live.make_sink(settings.live_target)
 
     # ---------- startup and state ----------
 
@@ -208,6 +211,11 @@ class Poller:
                 for vid, rt, fetched_at in conn.execute(sql.LOAD_LAST_SEEN, {"since": since})
             }
         self.presence = PresenceTracker(self.presence.grace, trips, last_seen)
+        if self.live_sink is not None:
+            rows = conn.execute(sql.LOAD_TRAILS, {"since": self.now() - live.TRAIL}).fetchall()
+            self.live = live.LiveBoard()
+            self.live.seed(rows)
+            self.live.lengths = dict(conn.execute(sql.LOAD_PATTERN_LENGTHS).fetchall())
 
     def _ensure_partitions(self, force: bool = False) -> None:
         if not force and self.now() < self._next_partition_check:
@@ -297,6 +305,8 @@ class Poller:
             except psycopg.Error:
                 log.exception("database still unreachable")
             raise
+        # Only a committed sweep reaches the public feed.
+        live.publish(self.live, self.live_sink, [p for _, p in positions], self.now())
         return summary
 
     def _fetch_patterns(self, positions, deadline: float) -> list[dict[str, Any]]:
@@ -364,6 +374,8 @@ class Poller:
             if self.patterns.get(pid, (None, None))[1] == h:
                 continue
             self.patterns[pid] = (ptr["rtdir"], h)
+            if ptr.get("ln") is not None:
+                self.live.lengths[pid] = float(ptr["ln"])
             self.stops.update(dict.fromkeys(sample_stops(ptr), rt))
             rows.append({
                 "pid": pid, "rt": rt, "rtdir": ptr["rtdir"], "length_ft": _float(ptr.get("ln")),

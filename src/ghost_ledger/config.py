@@ -48,6 +48,9 @@ class Settings:
     metrics_sink: Literal["log", "cloudwatch"] = "log"
     # Glue "database.table" whose last Iceberg commit the monitor watches (prod only)
     ingress_freshness_table: str | None = None
+    # Where the poller writes the public live feed after each sweep: s3://bucket/key in prod,
+    # a file path in dev (the site's dev server reads it), unset = no feed
+    live_target: str | None = None
 
     @property
     def is_prod(self) -> bool:
@@ -112,6 +115,7 @@ def get_settings(environ: Mapping[str, str] | None = None, root: Path = REPO_ROO
         assignment_grace_minutes=grace,
         metrics_sink=sink,  # type: ignore[arg-type]
         ingress_freshness_table=v.get("INGRESS_FRESHNESS_TABLE", "").strip() or None,
+        live_target=v.get("LIVE_TARGET", "").strip() or None,
     )
     calls = settings.vehicle_calls_per_day()
     if calls > MAX_VEHICLE_CALLS_PER_DAY:
