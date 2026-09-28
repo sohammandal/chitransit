@@ -152,7 +152,12 @@ def maintain_table(catalog, name: str, now: datetime, keep_days: int, apply: boo
                         ms.create_tag(snapshot_id=sid, tag_name=tag)
                 table = catalog.load_table((DATABASE, name))
             if expire:
-                table.maintenance.expire_snapshots().by_ids(expire).commit()
+                es = table.maintenance.expire_snapshots()
+                # pyiceberg 0.10 declares the id set on the class, so it's shared by every
+                # ExpireSnapshots: ids from the previous table leak in ("snapshot does not
+                # exist", 2026-09-28). A fresh set per table.
+                es._snapshot_ids_to_expire = set()
+                es.by_ids(expire).commit()
             return summary
         except CommitFailedException:
             if attempt == 2:
@@ -188,7 +193,8 @@ def main() -> None:
             print(f"[{mode}] {maintain_table(catalog, name, now, args.keep_days, args.apply)}")
         except Exception as e:  # one table's clash shouldn't stop the others
             failed = True
-            print(f"[{mode}] {name}: FAILED {type(e).__name__}: {e}", file=sys.stderr)
+            # pyiceberg errors can embed the whole snapshot list (megabytes): keep the gist
+            print(f"[{mode}] {name}: FAILED {type(e).__name__}: {str(e)[:300]}", file=sys.stderr)
     if failed:
         sys.exit(1)
 
