@@ -73,7 +73,7 @@
   .near b { font-weight: 700; }
   .rt { display: inline-grid; place-items: center; min-width: 48px; height: 40px; padding: 5px 10px 0; /* Overpass numerals sit high: nudge */ border-radius: 10px; background: var(--asphalt); color: var(--surface); font-size: 20px; font-weight: 900; flex: none; }
   .gaps { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
-  .gap { display: grid; gap: 2px; padding: 12px 14px; border-radius: 12px; background: var(--flag-blue-soft); }
+  .gap { display: grid; gap: 2px; align-content: center; padding: 12px 14px; border-radius: 12px; background: var(--flag-blue-soft); }
   .gap.behind { background: var(--concrete); }
   .gap strong { font-size: 26px; font-weight: 800; line-height: 1.1; letter-spacing: -0.01em; }
   .gap span { font-size: 14px; }

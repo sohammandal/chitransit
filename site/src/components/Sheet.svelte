@@ -22,7 +22,7 @@
     background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
     display: flex; flex-direction: column; min-height: 0; overflow: hidden;
   }
-  .body { overflow-y: auto; padding: 14px 16px 18px; display: grid; gap: 14px; align-content: start; }
+  .body { overflow-y: auto; padding: 20px 16px 18px; display: grid; gap: 14px; align-content: start; }
   .grab { display: none; }
 
   /* Phones: a bottom sheet with three heights, clear of the home indicator. */

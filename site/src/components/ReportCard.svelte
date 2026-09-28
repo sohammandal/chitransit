@@ -30,7 +30,7 @@
   </div>
 
   <dl class="figs">
-    <div><dt>Ran</dt><dd>{pct(ran, scheduled)}</dd></div>
+    <div class="good"><dt>Ran</dt><dd>{pct(ran, scheduled)}</dd></div>
     <div class="bad"><dt>Didn't come</dt><dd>{pct(missed, scheduled)}</dd></div>
     <div class="muted"><dt>Couldn't tell</dt><dd>{pct(unclear, scheduled)}</dd></div>
   </dl>
@@ -75,6 +75,7 @@
   .figs div { display: flex; flex-direction: column-reverse; justify-content: flex-end; gap: 2px; }
   .figs dt { font-size: 12px; color: var(--fog); }
   .figs dd { margin: 0; font-size: 24px; font-weight: 800; line-height: 1.1; letter-spacing: -0.01em; }
+  .figs .good dd { color: var(--flag-blue); } /* each figure wears its bar segment's colour */
   .figs .bad dd { color: var(--star-red); }
   .figs .muted dd { color: var(--fog); }
   .bar { display: flex; gap: 2px; height: 10px; border-radius: 5px; overflow: hidden; }
