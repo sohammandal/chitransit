@@ -79,7 +79,6 @@ Each scheduled trip lands in one of three buckets: **ran**, **flagged canceled**
 | Hosting | AWS Lightsail 2 GB, Docker Compose, pull-based deploys with a health gate | Live |
 | Infrastructure | Terraform; GitHub Actions (tests, image, plan/apply via OIDC) | Live |
 | Monitoring | CloudWatch metrics and alarms, email via SNS | Live |
-| Cancellation flags | `getpredictions` sampled at ~730 stops every 5 min | Live |
 | Transformation | dbt + DuckDB, reading Iceberg through Glue; unit and data tests | Live (nightly) |
 | Orchestration | GitHub Actions nightly workflow (OIDC, replayable by date range) | Live |
 | Dashboard | Static HTML rebuilt nightly (internal ops view) | Live |
@@ -98,18 +97,6 @@ Cost: about $14-17/month (a $12 Lightsail box plus S3). Managed Postgres free ti
 | [CTA static GTFS](https://www.transitchicago.com/developers/gtfs/) | The current schedule |
 | [Transitland archive](https://www.transit.land/feeds/f-dp3-cta) | ~100 historical schedule versions since 2021 |
 | [Ghost Buses / CTA StopWatch](https://github.com/mansueto-institute/cta-stop-watch) | 5-minute bus history (2022 to today) for backfill and cross-checks |
-
----
-
-## Roadmap
-
-- [x] **Week 1 - Ingest** - every route every 30 s into Postgres in one transaction per sweep; every API response kept; trips match GTFS on (route, pattern, service date, start); prod box, Terraform, CI/CD, alarms. 24-hour score: 99.5% of sweeps, 99.0% of trips matched.
-- [ ] **Week 2 - CDC to lakehouse** - Debezium → Iceberg on S3 live, reconciled with Postgres, freshness alarm on, one-hour outage drill passed; still to do: prune gate, Iceberg snapshot expiry and compaction
-- [x] **Week 3 - Schedules, flags, stop passes** - cancellation sampler, GTFS versions, trip matching incl. detours, stop-pass interpolation
-- [x] **Week 4 - Metrics and dashboard** - trip status, delivery, gaps, bunching; tested; nightly publish; dashboard
-- [x] **Site** - chitransit.fyi: live map, "right now" long waits and buses arriving together, route pages with a report card
-- [ ] **Next** - validate the rules against street observations; "typical wait at this stop" as history builds up
-- [ ] **Later - 'L' trains** - second poller once the Train Tracker key arrives
 
 ---
 
