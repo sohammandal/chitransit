@@ -366,6 +366,16 @@ data "aws_iam_policy_document" "transform" {
     resources = ["${local.site_arn}/live/*"]
   }
   statement {
+    sid    = "NoIngressDeletes"
+    effect = "Deny"
+    actions = [
+      "s3:DeleteObjectVersion", "s3:BypassGovernanceRetention",
+      "glue:DeleteTable", "glue:BatchDeleteTable", "glue:DeleteDatabase",
+      "glue:DeleteTableVersion", "glue:BatchDeleteTableVersion",
+    ]
+    resources = ["*"]
+  }
+  statement {
     sid = "IngressCatalogRead"
     actions = [
       "glue:GetCatalog", "glue:GetCatalogs", "glue:GetDatabase", "glue:GetDatabases",
@@ -401,4 +411,69 @@ output "ci_apply_role_arn" {
 
 output "transform_role_arn" {
   value = aws_iam_role.transform.arn
+}
+
+# ---------- lake maintenance role: the nightly's Ingress upkeep ----------
+# Separate from the transform role so dbt never gains write access to Ingress. It may lock
+# data files (10-year governance retention), write new Iceberg metadata (daily tags, trimmed
+# snapshot history) and update the Glue table pointers, and nothing else: every delete is
+# denied explicitly. Same trust as the transform role: workflows on main only.
+resource "aws_iam_role" "lake_maintenance" {
+  name                 = "ghost-ledger-lake-maintenance"
+  assume_role_policy   = data.aws_iam_policy_document.trust_transform.json
+  max_session_duration = 3600
+}
+
+data "aws_iam_policy_document" "lake_maintenance" {
+  statement {
+    sid       = "LakeList"
+    actions   = ["s3:ListBucket", "s3:ListBucketVersions", "s3:GetBucketLocation"]
+    resources = [local.lake_arn]
+  }
+  statement {
+    sid       = "IngressRead"
+    actions   = ["s3:GetObject", "s3:GetObjectVersion", "s3:GetObjectRetention"]
+    resources = ["${local.lake_arn}/warehouse/*"]
+  }
+  statement {
+    sid       = "LockIngressData"
+    actions   = ["s3:PutObjectRetention"]
+    resources = ["${local.lake_arn}/warehouse/*/data/*"]
+  }
+  statement {
+    sid       = "WriteIngressMetadata"
+    actions   = ["s3:PutObject"]
+    resources = ["${local.lake_arn}/warehouse/*/metadata/*"]
+  }
+  statement {
+    sid = "IngressCatalog"
+    actions = [
+      "glue:GetDatabase", "glue:GetDatabases", "glue:GetTable", "glue:GetTables", "glue:UpdateTable",
+    ]
+    resources = [
+      "${local.glue_arn}:catalog",
+      "${local.glue_arn}:database/ghost_ledger_ingress",
+      "${local.glue_arn}:table/ghost_ledger_ingress/*",
+    ]
+  }
+  statement {
+    sid    = "NeverDelete"
+    effect = "Deny"
+    actions = [
+      "s3:DeleteObject", "s3:DeleteObjectVersion", "s3:BypassGovernanceRetention",
+      "glue:DeleteTable", "glue:BatchDeleteTable", "glue:DeleteDatabase",
+      "glue:DeleteTableVersion", "glue:BatchDeleteTableVersion",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "lake_maintenance" {
+  name   = "ghost-ledger-lake-maintenance"
+  role   = aws_iam_role.lake_maintenance.id
+  policy = data.aws_iam_policy_document.lake_maintenance.json
+}
+
+output "lake_maintenance_role_arn" {
+  value = aws_iam_role.lake_maintenance.arn
 }

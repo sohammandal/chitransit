@@ -103,6 +103,17 @@ jobs:
             --history "$LAKE/analytics"
           aws s3 sync site-data "$SITE/data" --cache-control "public, max-age=3600" --only-show-errors
 
+      # Last, under its own role (the transform role can't write Ingress): lock the day's data
+      # files for 10 years, tag each finished day's snapshot, trim untagged history (metadata
+      # only; that role can't delete anything). transform/lake_maintenance.py.
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_LAKE_MAINTENANCE_ROLE_ARN }}
+          aws-region: us-east-2
+
+      - name: Ingress upkeep (lock, tag, trim)
+        run: uv run --group transform python transform/lake_maintenance.py --apply
+
       - uses: actions/upload-artifact@v7
         with:
           name: dashboard
