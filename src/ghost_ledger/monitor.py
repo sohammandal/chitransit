@@ -14,10 +14,11 @@ import shutil
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import httpx
 import psycopg
 
 from ghost_ledger.config import Settings
@@ -131,6 +132,25 @@ def ingress_freshness(glue: Any, table: str, now: datetime) -> Metric:
     return Metric("IngressFreshnessMinutes", round(minutes, 2), "None")
 
 
+# The public site's report card must include yesterday by 10:00 CT (the nightly runs at
+# 06:23 CT, with a backup start): checked from here, so it doesn't depend on GitHub.
+REPORT_URL = "https://www.chitransit.fyi/data/v1/report.json"
+REPORT_CHECK_EVERY = timedelta(minutes=10)
+REPORT_DUE_HOUR = 10
+
+
+def report_stale(days: list[str], now: datetime) -> Metric:
+    """1 when it's past 10:00 CT and the public report still lacks yesterday (Chicago)."""
+    local = now.astimezone(CHICAGO)
+    yesterday = (local.date() - timedelta(days=1)).isoformat()
+    stale = local.hour >= REPORT_DUE_HOUR and max(days, default="") < yesterday
+    return Metric("SiteReportStale", 1.0 if stale else 0.0, "None")
+
+
+def fetch_report_days() -> list[str]:
+    return httpx.get(REPORT_URL, timeout=10).raise_for_status().json()["days"]
+
+
 class CloudWatchSink:
     def __init__(self, env: str) -> None:
         import boto3  # only needed in prod
@@ -168,6 +188,8 @@ def run(
         import boto3  # only needed in prod
 
         glue = boto3.client("glue")
+    report_days: list[str] | None = None  # the public report's days, refreshed every 10 min
+    report_checked: datetime | None = None
     log.info("monitor started: env=%s sink=%s", settings.env, type(sink).__name__)
     conn: psycopg.Connection | None = None
     metrics: list[Metric] = []
@@ -185,6 +207,16 @@ def run(
                 except Exception:
                     # Publish nothing for it: the alarm treats missing data as breaching.
                     log.exception("could not read Ingress freshness from Glue")
+            if settings.env == "prod":
+                if report_checked is None or at - report_checked >= REPORT_CHECK_EVERY:
+                    report_checked = at
+                    try:
+                        report_days = fetch_report_days()
+                    except Exception:
+                        report_days = None  # publish nothing: a site outage isn't this alarm
+                        log.exception("could not read the public report")
+                if report_days is not None:  # re-judged every minute: 10:00 CT can pass between
+                    metrics.append(report_stale(report_days, at))
             sink.send(metrics, at)
         except psycopg.Error:
             # Publish nothing: missing data is what trips the poller-alive alarm.

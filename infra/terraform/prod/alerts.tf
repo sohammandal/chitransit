@@ -65,6 +65,11 @@ locals {
       periods = 3, missing = "breaching",
       text    = "No Iceberg commit to Ingress for 15+ minutes (Debezium up but not landing?)"
     }
+    report-stale = {
+      metric  = "SiteReportStale", op = "GreaterThanOrEqualToThreshold", threshold = 1,
+      periods = 15, missing = "notBreaching",
+      text    = "After 10:00 CT the public report still lacks yesterday: the nightly didn't run or failed"
+    }
     cdc-slot-inactive = {
       metric  = "ReplicationSlotsInactive", op = "GreaterThanOrEqualToThreshold", threshold = 1,
       periods = 10, missing = "notBreaching",

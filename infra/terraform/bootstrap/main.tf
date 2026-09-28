@@ -445,6 +445,14 @@ data "aws_iam_policy_document" "lake_maintenance" {
     actions   = ["s3:PutObject"]
     resources = ["${local.lake_arn}/warehouse/*/metadata/*"]
   }
+  # Iceberg hides metadata.json files older than the last 50 after each of its commits
+  # (write.metadata.delete-after-commit.enabled). Only those: a hide, kept 30 days by
+  # versioning. Every other delete stays denied below.
+  statement {
+    sid       = "TidyOldIcebergMetadata"
+    actions   = ["s3:DeleteObject"]
+    resources = ["${local.lake_arn}/warehouse/*/metadata/*.metadata.json"]
+  }
   statement {
     sid = "IngressCatalog"
     actions = [
@@ -460,11 +468,17 @@ data "aws_iam_policy_document" "lake_maintenance" {
     sid    = "NeverDelete"
     effect = "Deny"
     actions = [
-      "s3:DeleteObject", "s3:DeleteObjectVersion", "s3:BypassGovernanceRetention",
+      "s3:DeleteObjectVersion", "s3:BypassGovernanceRetention",
       "glue:DeleteTable", "glue:BatchDeleteTable", "glue:DeleteDatabase",
       "glue:DeleteTableVersion", "glue:BatchDeleteTableVersion",
     ]
     resources = ["*"]
+  }
+  statement {
+    sid           = "NoDeletesButOldMetadata"
+    effect        = "Deny"
+    actions       = ["s3:DeleteObject"]
+    not_resources = ["${local.lake_arn}/warehouse/*/metadata/*.metadata.json"]
   }
 }
 

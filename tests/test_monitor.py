@@ -109,3 +109,16 @@ def test_ingress_freshness_is_minutes_since_the_last_commit():
     assert glue.asked == [("ghost_ledger_ingress", "ghost_ops_sweeps")]
     # a clock slightly behind Glue's never yields a negative age
     assert ingress_freshness(FakeGlue(NOON + timedelta(seconds=5)), "d.t", NOON).value == 0
+
+
+def test_site_report_is_stale_only_after_10_ct_without_yesterday():
+    from ghost_ledger.monitor import report_stale
+
+    at = lambda h, m=0: datetime(2026, 9, 28, h + 5, m, tzinfo=UTC)  # noqa: E731 - CDT = UTC-5
+    has_yesterday = ["2026-09-26", "2026-09-27"]
+    missing_it = ["2026-09-26"]
+    assert report_stale(missing_it, at(9, 59)).value == 0  # not due yet
+    assert report_stale(missing_it, at(10, 0)).value == 1  # due, and missing
+    assert report_stale(has_yesterday, at(15)).value == 0
+    assert report_stale([], at(11)).value == 1  # an empty report is stale too
+    assert report_stale(missing_it, at(10)).name == "SiteReportStale"

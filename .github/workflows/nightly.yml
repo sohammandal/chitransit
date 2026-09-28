@@ -6,15 +6,21 @@ name: nightly
 # of the same window rewrites the same partitions. Run it by hand with a date range to
 # rebuild history after a logic change (replay from the log).
 
+# When it runs: AWS EventBridge starts it at 06:23 CDT / 05:23 CST through the dispatch API
+# (infra/terraform/prod/nightly_trigger.tf), because GitHub's own schedule is best effort
+# (Sep 27: 4.5 h late; Sep 28: never started). GitHub's schedule stays as two backups.
+# Automatic starts skip themselves once yesterday is published (the `check` job); runs
+# started by hand always run. Runs queue, never overlap. The report-stale alarm (box
+# monitor) emails if yesterday still isn't on the site by 10:00 CT.
 on:
   schedule:
-    # GitHub starts scheduled runs on a best-effort basis: busy on the hour, often hours late,
-    # sometimes dropped (Sep 28: never started). So two starts, off the hour; the run is
-    # idempotent (rebuilds the last 3 service days) and runs queue, never overlap.
-    - cron: "23 11 * * *"  # 06:23 CDT / 05:23 CST: yesterday's service day is over by then
-    - cron: "53 13 * * *"  # backup start, 08:53 CDT
+    - cron: "7 12 * * *"  # backup, 07:07 CDT
+    - cron: "53 13 * * *"  # backup, 08:53 CDT
   workflow_dispatch:
     inputs:
+      trigger:
+        description: "Who started it: aws (EventBridge) skips when yesterday is published"
+        default: "manual"
       start_date:
         description: "First service date to rebuild (YYYY-MM-DD). Empty = the last 3 days."
         default: ""
@@ -37,7 +43,28 @@ env:
   SITE: s3://ghost-ledger-site-354894954112
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      skip: ${{ steps.done.outputs.skip }}
+    steps:
+      - id: done
+        name: Already published yesterday? (automatic starts only)
+        env:
+          AUTO: ${{ github.event_name == 'schedule' || inputs.trigger == 'aws' }}
+        run: |
+          yesterday=$(TZ=America/Chicago date -d yesterday +%F)
+          if [ "$AUTO" = true ] && curl -fsS https://www.chitransit.fyi/data/v1/report.json \
+              | jq -e --arg d "$yesterday" '.days | index($d) != null' >/dev/null; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "$yesterday is already published: nothing to do"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: check
+    if: needs.check.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -105,6 +132,11 @@ jobs:
           uv run --group transform python transform/site_data.py --db transform/target/ghost_ledger.duckdb --out site-data \
             --history "$LAKE/analytics"
           aws s3 sync site-data "$SITE/data" --cache-control "public, max-age=3600" --only-show-errors
+          # The daily files are small and change each morning: 5 minutes at the edge, not an hour.
+          for f in report summary headways routes; do
+            aws s3 cp "site-data/v1/$f.json" "$SITE/data/v1/$f.json" \
+              --cache-control "public, max-age=300" --content-type application/json --only-show-errors
+          done
 
       # Last, under its own role (the transform role can't write Ingress): lock the day's data
       # files for 10 years, tag each finished day's snapshot, trim untagged history (metadata

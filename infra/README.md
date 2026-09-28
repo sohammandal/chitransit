@@ -111,3 +111,25 @@ infra/
   change. A Debezium that starts before its bucket/catalog exist creates a slot, crash-loops and
   holds WAL.
 - **`docker logs` spans container restarts**: filter with `--since` when checking a restart.
+
+## Nightly trigger token
+
+AWS EventBridge starts the nightly at 06:23 CDT / 05:23 CST by calling GitHub's
+workflow_dispatch API (`infra/terraform/prod/nightly_trigger.tf`); GitHub's own schedule is only
+a backup (it's best effort: Sep 27 ran 4.5 h late, Sep 28 never started). The GitHub token lives
+only in the EventBridge connection `ghost-ledger-github`, never in Terraform or its state.
+
+To set or rotate it (yearly, when the token expires):
+1. GitHub → Settings → Developer settings → Fine-grained tokens → Generate: repository
+   `cta-ghost-ledger` only, Repository permissions → **Actions: Read and write**, nothing else.
+2. From your own terminal (the token is read without echo and never printed):
+   ```bash
+   read -rs T && aws events update-connection --profile ghost-ledger --region us-east-2 \
+     --name ghost-ledger-github --authorization-type API_KEY \
+     --auth-parameters "{\"ApiKeyAuthParameters\":{\"ApiKeyName\":\"Authorization\",\"ApiKeyValue\":\"Bearer $T\"}}" \
+     --query ConnectionState --output text; unset T
+   ```
+   It prints `AUTHORIZED`.
+
+If the token expires or every start fails, the `report-stale` alarm emails after 10:00 CT
+(the box monitor checks that the public report includes yesterday).
