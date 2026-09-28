@@ -7,6 +7,7 @@
   import { minutes } from "../lib/format";
   import { crossStreet, fitEnds, ownStreet, place } from "../lib/labels";
   import { isLongWait, isTogether } from "../lib/problems";
+  import { swarm } from "../lib/swarm";
   import type { Pattern, Vehicle } from "../lib/types";
 
   let { pattern, buses, scheduled, selected = null, onSelect }: {
@@ -61,23 +62,19 @@
     PAD, W - PAD, STREET_CHAR,
   ));
 
-  // Buses too close to tell apart on the line (a couple of blocks, at this scale) stack
-  // vertically at that spot, so two buses always read as two dots.
+  // Buses too close to tell apart on the line leave it just enough not to touch (lib/swarm):
+  // buses at one spot stack, a string of close buses zigzags along its real stretch, so two
+  // buses always read as two dots and a stack always means buses at the same spot.
   const GAP = 14; // px between dot centres
-  const stacked = $derived.by(() => {
-    const dy = new Map<string, number>();
-    let group: Vehicle[] = [];
-    const flush = () => group.forEach((b, i) => dy.set(b.vid, group.length > 1 ? (i - (group.length - 1) / 2) * GAP : NaN));
-    for (const b of ordered) {
-      if (group.length && x(group.at(-1)!.pdist) - x(b.pdist) >= GAP) { flush(); group = []; }
-      group.push(b);
-    }
-    flush();
-    return dy;
+  const offsets = $derived.by(() => {
+    const dy = swarm(ordered.map((b) => x(b.pdist)), GAP);
+    return new Map(ordered.map((b, i) => [b.vid, dy[i]]));
   });
-  const spread = $derived(Math.max(0, ...[...stacked.values()].filter((d) => !isNaN(d)))); // tallest stack's half-height
-  const inStack = (b: Vehicle) => !isNaN(stacked.get(b.vid) ?? NaN);
-  const cy = (b: Vehicle) => Y + (inStack(b) ? stacked.get(b.vid)! : 0);
+  const spread = $derived(Math.max(0, ...[...offsets.values()].map(Math.abs))); // furthest dot from the line
+  const cy = (b: Vehicle) => Y + (offsets.get(b.vid) ?? 0);
+  // Crowded dots get a tap target no bigger than the dot spacing, so a tap picks the right bus.
+  const crowded = $derived(new Set(ordered.filter((b) =>
+    ordered.some((o) => o !== b && Math.hypot(x(o.pdist) - x(b.pdist), cy(o) - cy(b)) < 30)).map((b) => b.vid)));
 
   // Tap the line: the nearest stop is marked and named, to find your stop against the gaps.
   let picked = $state<{ x: number; name: string } | null>(null);
@@ -134,7 +131,7 @@
   {#each ordered as b (b.vid)}
     <g class="bus" role="button" tabindex="0" aria-label="Bus {b.vid}"
       onclick={() => onSelect(b.vid)} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && onSelect(b.vid)}>
-      <circle cx={x(b.pdist)} cy={cy(b)} r={inStack(b) ? GAP / 2 : 15} class="hit" />
+      <circle cx={x(b.pdist)} cy={cy(b)} r={crowded.has(b.vid) ? GAP / 2 : 15} class="hit" />
       {#if b.vid === selected}<circle cx={x(b.pdist)} cy={cy(b)} r="10.5" class="ring" />{/if}
       <circle cx={x(b.pdist)} cy={cy(b)} r="6.5" class="dot" class:together={together.has(b.vid)} />
     </g>

@@ -168,7 +168,17 @@ test("phone: dragging the handle resizes the sheet, and it settles on a size", a
   expect((await sheet.boundingBox())!.y).toBeGreaterThanOrEqual(bar.y + bar.height);
   await drag(400);
   await expect(sheet).toHaveClass(/peek/);
-  await drag(-60); // a short flick still moves one size
+  // A short flick still moves one size. Sent from inside the page so its speed doesn't depend
+  // on how busy the test machine is (a slow 60 px drag rightly snaps back).
+  await grab.evaluate(async (g) => {
+    const r = g.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2;
+    const send = (type: string, dy: number) =>
+      (type === "pointerdown" ? g : window).dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, clientY: y - dy, pointerId: 9, isPrimary: true }));
+    send("pointerdown", 0);
+    for (let i = 1; i <= 6; i++) { await new Promise((r) => setTimeout(r, 8)); send("pointermove", i * 10); }
+    send("pointerup", 60);
+  });
+  await page.waitForTimeout(350);
   await expect(sheet).toHaveClass(/half/);
   await grab.click(); // a tap still steps
   await expect(sheet).toHaveClass(/full/);
@@ -445,6 +455,36 @@ test("line view: no two bus dots overlap (close buses stack)", async ({ page }) 
       return dots.flatMap((a, i) => dots.slice(i + 1).filter((b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 13).map(() => 1));
     }));
   expect(overlaps.length).toBe(0);
+});
+
+test("line view: a string of close buses isn't drawn as one tower (#66, Sep 28 16:35)", async ({ page }) => {
+  // #66 westbound at rush hour, replayed from Ingress: 8 buses over 1.5 miles of crawling
+  // traffic downtown (2,610 → 10,289 ft), each < 0.42 mi from the next. They chained into one
+  // 8-high stack with a real 7.6-min wait bar (8181 → 8178) drawn inside it.
+  const wb: [string, number, number | null, string | null][] = [
+    ["8653", 42752, 757, null], ["8117", 41316, 132, "8653"], ["8684", 32449, 571, "8117"],
+    ["8169", 31933, 70, "8684"], ["8601", 31932, 42, "8169"], ["1243", 30555, 112, "8601"],
+    ["1354", 28756, 186, "1243"], ["8186", 21743, 634, "1354"], ["8610", 12253, 1218, "8186"],
+    ["1250", 10289, 256, "8610"], ["8178", 10183, 205, "1250"], ["8181", 8375, 520, "8178"],
+    ["8818", 8091, 81, "8181"], ["8118", 6658, 338, "8818"], ["8776", 6498, 80, "8118"],
+    ["8184", 4364, 267, "8776"], ["8101", 2610, 263, "8184"],
+  ];
+  const base = feed.vehicles.find((v: { pid: number }) => v.pid === 6665);
+  const rush = { ...feed, vehicles: [
+    ...feed.vehicles.filter((v: { rt: string; pid: number }) => !(v.rt === "66" && v.pid === 6665)),
+    ...wb.map(([vid, pdist, gap_s, ahead]) => ({ ...base, vid, pdist, gap_s, ahead, at_terminal: false })),
+  ] };
+  await setUp(page);
+  await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: rush }));
+  await page.goto("/route/66/");
+  await expect(page.locator(".sheet svg")).toHaveCount(2);
+  const svg = page.locator(".sheet svg").filter({ has: page.locator(`[aria-label="Bus 8181"]`) });
+  const dots = await svg.locator("circle.dot").evaluateAll((cs) => cs.map((c) => [Number(c.getAttribute("cx")), Number(c.getAttribute("cy"))]));
+  expect(dots.length).toBe(wb.length);
+  const ys = dots.map((d) => d[1]);
+  expect(Math.max(...ys) - Math.min(...ys)).toBeLessThanOrEqual(42); // at most 3 rows; was 112, an 8-high tower
+  for (const [i, a] of dots.entries()) for (const b of dots.slice(i + 1)) expect(Math.hypot(a[0] - b[0], a[1] - b[1])).toBeGreaterThanOrEqual(13);
+  await expect(svg.locator("line.wait")).not.toHaveCount(0); // the real long waits still show
 });
 
 for (const rt of ["66", "J14"]) test(`line view: no two pieces of text overlap on #${rt}, at any size`, async ({ page }) => {
