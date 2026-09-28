@@ -20,7 +20,7 @@
   {#if problems.length}
     <p class="tally"><b>{waits}</b> long waits <span aria-hidden="true">|</span> <b>{together}</b> places with buses arriving together</p>
   {:else}
-    <p class="tally">No long waits or buses arriving together at the moment.</p>
+    <p class="tally">No long waits or buses arriving together at the moment</p>
   {/if}
 </header>
 

@@ -107,7 +107,7 @@ test("report card: shares add up to 100%, split matches, definitions shown", asy
   expect(figs).toEqual([92.8, 2.1, 5.1]);
   const tops = await page.locator(".figs dd").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
   expect(new Set(tops).size).toBe(1); // the three numbers sit on one line
-  await expect(page.getByText("At least 8 trips didn't come: 6 canceled with notice, 2 never came with no notice.")).toBeVisible();
+  await expect(page.getByText("At least 8 trips didn't come: 6 canceled with notice, 2 never came with no notice")).toBeVisible();
   await page.getByRole("tab", { name: "Now" }).click();
   await expect(page.locator(".sheet svg")).toHaveCount(2);
   expect(errors).toEqual([]);
@@ -441,4 +441,63 @@ test("the top bar doesn't move or change size from first paint to live", async (
     expect(Math.abs(box.width - shell.width)).toBeLessThan(0.5);
     expect(Math.abs(box.height - shell.height)).toBeLessThan(0.5);
   }
+});
+
+test("report card: sums up to 30 days, but the per-day table shows only the latest 3", async ({ page }) => {
+  const days = Array.from({ length: 10 }, (_, i) => `2026-09-${String(17 + i).padStart(2, "0")}`); // Sep 17-26
+  const row = [100, 90, 4, 1, 5];
+  await setUp(page);
+  await page.route("**/data/v1/report.json", (r) =>
+    r.fulfill({ json: { days, city: days.map(() => row), routes: { "66": days.map(() => row) } } }));
+  await page.goto("/route/66/");
+  await page.getByRole("tab", { name: "Report Card" }).click();
+  await expect(page.getByText("Last 10 days")).toBeVisible();
+  await expect(page.getByText("1,000 trips scheduled")).toBeVisible();
+  const rows = page.locator(".sheet table tbody tr");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.first()).toContainText("Sep 26"); // newest first
+});
+
+test("no on-screen text piece ends with a period (only inner periods between sentences)", async ({ page }) => {
+  await setUp(page);
+  const ends = async () => page.evaluate(() => {
+    const out: string[] = [];
+    for (const el of document.querySelectorAll("header.bar *, .sheet *")) {
+      const own = [...el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent ?? "").join("").trim();
+      if (own && (el as HTMLElement).offsetParent !== null && /[^.]\.$/.test(own)) out.push(own);
+    }
+    return out;
+  });
+  const found: string[] = [];
+  await page.goto("/");
+  found.push(...(await ends()));
+  await page.getByRole("button", { name: "About" }).click();
+  found.push(...(await ends()));
+  await page.goto("/route/66/");
+  found.push(...(await ends()));
+  await page.getByRole("tab", { name: "Report Card" }).click();
+  found.push(...(await ends()));
+  await page.getByRole("tab", { name: "Now" }).click();
+  await page.locator(".sheet .bus").first().click();
+  found.push(...(await ends()));
+  expect(found).toEqual([]);
+});
+
+test("bus view: the map shows only the open bus's direction; the route view shows both", async ({ page }) => {
+  await setUp(page);
+  await page.goto("/route/66/");
+  await busesDrawn(page);
+  const dirsOnMap = () => page.evaluate(() => {
+    const m = window.map as unknown as { queryRenderedFeatures(o: object): { properties: { rt: string; dir: string } }[] };
+    return [...new Set(m.queryRenderedFeatures({ layers: ["bus-dot", "bus-sym"] }).map((f) => f.properties.dir))].sort();
+  });
+  await page.waitForTimeout(1200);
+  expect((await dirsOnMap()).length).toBe(2); // Eastbound and Westbound
+  await page.locator(".sheet .bus").first().click();
+  const dir = (await page.locator(".sheet h2").first().innerText()).trim(); // "Eastbound"
+  await page.waitForTimeout(1200);
+  expect(await dirsOnMap()).toEqual([dir]);
+  await page.getByRole("button", { name: "‹ 66 Chicago" }).click();
+  await page.waitForTimeout(1200);
+  expect((await dirsOnMap()).length).toBe(2);
 });

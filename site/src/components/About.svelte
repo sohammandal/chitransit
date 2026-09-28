@@ -7,18 +7,18 @@
   <span class="tag">Unofficial</span>
   <button class="x" onclick={onClose} aria-label="Close">×</button>
 </header>
-<p class="what">How Chicago's buses are really running, live and over time.</p>
+<p class="what">How Chicago's buses are really running, live and over time</p>
 <dl>
   <dt>Tap a route or bus</dt>
-  <dd>See the route live or its Report Card, and when the last bus passed.</dd>
+  <dd>See the route live or its Report Card, and when the last bus passed</dd>
   <dt>Right now</dt>
-  <dd>Long waits and buses arriving together, judged against each route's schedule for this hour.</dd>
+  <dd>Long waits and buses arriving together, judged against each route's schedule for this hour</dd>
   <dt>Updates</dt>
-  <dd>Every 30 seconds. A position can be up to a minute old.</dd>
+  <dd>Every 30 seconds. A position can be up to a minute old</dd>
 </dl>
 <div class="fine">
-  <p>Data provided by Chicago Transit Authority.</p>
-  <p>chitransit.fyi is an independent project. It is not affiliated with, made by, or endorsed by the CTA. Figures are our own estimates, and data may be delayed or incomplete.</p>
+  <p>Data provided by Chicago Transit Authority</p>
+  <p>chitransit.fyi is an independent project. It is not affiliated with, made by, or endorsed by the CTA. Figures are our own estimates, and data may be delayed or incomplete</p>
   <p>Official info: <a href="https://www.transitchicago.com">transitchicago.com</a></p>
 </div>
 

@@ -19,10 +19,12 @@
   const WINDOW = 30;
   const all = $derived((rows ?? []).map((r, i) => ({ day: days[i], r })).filter((d) => d.r[0] > 0));
   const watched = $derived(all.slice(-WINDOW).reverse()); // newest first
+  // The card sums up to 30 days; the per-day table shows only the latest few (not a wall).
+  const TABLE_DAYS = 3;
 </script>
 
 {#if !scheduled}
-  <p class="note">No report for this route yet: it had no scheduled trips on the days we've watched.</p>
+  <p class="note">No report for this route yet: it had no scheduled trips on the days we've watched</p>
 {:else}
   <div class="head">
     <p class="since">Last {watched.length} {watched.length === 1 ? "day" : "days"}</p>
@@ -42,14 +44,14 @@
   </div>
 
   <p class="split">
-    At least {missed} {missed === 1 ? "trip" : "trips"} didn't come: {announced} canceled with notice, {proven} never came with no notice.
+    At least {missed} {missed === 1 ? "trip" : "trips"} didn't come: {announced} canceled with notice, {proven} never came with no notice
   </p>
 
   {#if watched.length > 1}
     <table>
       <thead><tr><th>Day</th><th>Ran</th><th>Didn't come</th><th>Couldn't tell</th></tr></thead>
       <tbody>
-        {#each watched as d (d.day)}
+        {#each watched.slice(0, TABLE_DAYS) as d (d.day)}
           <tr><td>{dayLabel(d.day, now)}</td><td>{pct(d.r[1], d.r[0])}</td><td>{d.r[2] + d.r[3]}</td><td>{d.r[4]}</td></tr>
         {/each}
       </tbody>
@@ -57,13 +59,13 @@
   {/if}
 
   {#if watched.length < 7}
-    <p class="note">Early days: this card adds a day every morning.</p>
+    <p class="note">Early days: this card adds a day every morning</p>
   {/if}
 
   <dl class="fine">
-    <dt>Ran</dt><dd>The bus ran it, or was seen just before and after.</dd>
-    <dt>Didn't come</dt><dd>Canceled with notice, or its bus was seen but never on this trip.</dd>
-    <dt>Couldn't tell</dt><dd>Not enough data to say. Some of these may not have run.</dd>
+    <dt>Ran</dt><dd>The bus ran it, or was seen just before and after</dd>
+    <dt>Didn't come</dt><dd>Canceled with notice, or its bus was seen but never on this trip</dd>
+    <dt>Couldn't tell</dt><dd>Not enough data to say. Some of these may not have run</dd>
   </dl>
 {/if}
 

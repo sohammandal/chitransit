@@ -10,9 +10,10 @@
 
   maplibregl.setWorkerUrl(workerUrl);
 
-  let { vehicles, route, selected, shapes, padding, fit, fitNonce, focusNonce, onSelect }: {
+  let { vehicles, route, direction, selected, shapes, padding, fit, fitNonce, focusNonce, onSelect }: {
     vehicles: Vehicle[];
     route: string | null;
+    direction: string | null; // a bus is open: show only its direction ("Eastbound")
     selected: string | null;
     shapes: Pattern[]; // the open route's patterns
     padding: { top: number; bottom: number; left: number; right: number };
@@ -91,7 +92,7 @@
     for (const [, b] of positions) {
       const lon = b.from[0] + (b.to[0] - b.from[0]) * k, lat = b.from[1] + (b.to[1] - b.from[1]) * k;
       features.push({ type: "Feature", geometry: { type: "Point", coordinates: [lon, lat] },
-        properties: { vid: b.v.vid, rt: b.v.rt, hdg: b.v.hdg ?? 0, d: (b.v.dir ?? "").slice(0, 1) } });
+        properties: { vid: b.v.vid, rt: b.v.rt, hdg: b.v.hdg ?? 0, dir: b.v.dir ?? "", d: (b.v.dir ?? "").slice(0, 1) } });
     }
     source("buses")?.setData({ type: "FeatureCollection", features });
   }
@@ -126,7 +127,12 @@
   // Route open: show only its buses; closed: everyone.
   $effect(() => {
     if (!ready || !map) return;
-    const only: maplibregl.FilterSpecification | null = route ? ["==", ["get", "rt"], route] : null;
+    const onRoute: maplibregl.FilterSpecification = ["==", ["get", "rt"], route ?? ""];
+    const only: maplibregl.FilterSpecification | null = !route
+      ? null
+      : direction
+        ? ["all", onRoute, ["==", ["get", "dir"], direction]]
+        : onRoute;
     map.setFilter("bus-dot", only);
     map.setFilter("bus-sym", only);
     // One route's buses sit on its line: draw them larger so they stand out from it.

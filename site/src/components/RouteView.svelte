@@ -59,10 +59,10 @@
     {#if d.pid != null}
       <LineView pattern={patterns.get(d.pid)!} buses={d.onLine} scheduled={d.scheduled} {selected} {onSelect} />
     {/if}
-    {#if d.pid != null && d.partial}<p class="note">{d.partial} more {d.partial === 1 ? "bus is" : "buses are"} running only part of the route (not shown on the line).</p>{/if}
+    {#if d.pid != null && d.partial}<p class="note">{d.partial} more {d.partial === 1 ? "bus is" : "buses are"} running only part of the route (not shown on the line)</p>{/if}
   </div>
 {:else}
-  <p class="note">No buses on this route right now.</p>
+  <p class="note">No buses on this route right now</p>
 {/each}
 
 {#if buses.length}

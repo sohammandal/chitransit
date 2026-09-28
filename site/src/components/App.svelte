@@ -42,7 +42,9 @@
 
   const routeBuses = $derived(route ? vehicles.filter((v) => v.rt === route) : []);
   const bus = $derived(selected ? vehicles.find((v) => v.vid === selected) : undefined);
-  const shapes = $derived(route ? [...patterns.values()].filter((p) => p.rt === route) : []);
+  // With a bus open, the map shows only its direction: the card is all about that direction.
+  const direction = $derived(bus?.dir ?? null);
+  const shapes = $derived(route ? [...patterns.values()].filter((p) => p.rt === route && (!direction || p.dir === direction)) : []);
   const level = $derived(about ? "about" : bus ? "bus" : route ? "route" : "city");
 
   // Map padding keeps the route clear of the panel: beside it on wide screens, above it on phones.
@@ -149,7 +151,7 @@
   });
 </script>
 
-<MapView {vehicles} {route} {selected} {shapes} {padding} {fit} {fitNonce} {focusNonce} onSelect={(vid) => select(vid, "map")} />
+<MapView {vehicles} {route} {direction} {selected} {shapes} {padding} {fit} {fitNonce} {focusNonce} onSelect={(vid) => select(vid, "map")} />
 
 <div class="side panel-column" style:--top-h="{topH}px">
   <div bind:clientHeight={topH}>

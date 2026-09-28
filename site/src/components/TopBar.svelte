@@ -96,7 +96,7 @@
         {/each}
       </ul>
     {:else if focused && query.trim() && !matches.length}
-      <p class="miss">No route matches “{query.trim()}”.</p>
+      <p class="miss">No route matches “{query.trim()}”</p>
     {/if}
   </form>
 </header>

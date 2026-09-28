@@ -48,9 +48,14 @@ export default defineConfig({
   integrations: [svelte()],
   devToolbar: { enabled: false }, // dev should look like prod
   build: { format: "directory" },
-  // Dev: the nightly files come from public/data (transform/site_data.py --out site/public/data).
+  // Dev: the nightly files come from prod too, so localhost shows what the site shows.
+  // DATA=local serves public/data instead (transform/site_data.py --out site/public/data),
+  // to try a change to those files before the nightly publishes it.
   vite: {
     worker: { format: "es" }, // MapLibre starts its worker with type: "module"
     plugins: [liveFeedInDev()],
+    server: {
+      proxy: process.env.DATA === "local" ? {} : { "/data": { target: PROD, changeOrigin: true } },
+    },
   },
 });
