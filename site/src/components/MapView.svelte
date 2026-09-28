@@ -254,9 +254,10 @@
   .map :global(.maplibregl-compact:not(.maplibregl-compact-show) .maplibregl-ctrl-attrib-button) {
     width: 29px; height: 29px; border-radius: 4px; background-color: transparent; background-position: center;
   }
-  /* Phones: controls ride above the bottom sheet (App sets --sheet); pinch replaces +/-. */
+  /* Phones: controls ride above the bottom sheet (Sheet sets --sheet); pinch replaces +/-. */
   @media (max-width: 640px) {
-    .map :global(.maplibregl-ctrl-bottom-right) { bottom: var(--sheet, 38dvh); transition: bottom 0.25s ease; }
+    .map :global(.maplibregl-ctrl-bottom-right) { bottom: var(--sheet, 38dvh); transition: bottom 0.32s cubic-bezier(0.2, 0.8, 0.2, 1); }
+    :global(html[data-sheet-drag]) .map :global(.maplibregl-ctrl-bottom-right) { transition: none; }
     .map :global(.maplibregl-ctrl-group:has(.maplibregl-ctrl-zoom-in)) { display: none; }
   }
 </style>

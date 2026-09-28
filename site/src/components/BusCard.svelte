@@ -20,6 +20,7 @@
   const starting = $derived((bus.pdist ?? 0) < 1000);
 </script>
 
+<div class="sheet-head">
 <button class="back" onclick={onBack}>‹ {bus.rt} {routeName ?? ""}</button>
 <header>
   <span class="rt">{bus.rt}</span>
@@ -28,6 +29,7 @@
     <p class="sub">to {bus.des}</p>
   </div>
 </header>
+</div>
 {#if bus.near}
   <!-- Where the bus is: the "here" both gap boxes below refer to. -->
   <p class="near">

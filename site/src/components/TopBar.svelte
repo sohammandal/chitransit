@@ -74,6 +74,7 @@
     <input
       id="route-q"
       type="search"
+      role="combobox"
       name="route-search"
       bind:value={query}
       oninput={typed}

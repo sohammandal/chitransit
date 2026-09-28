@@ -15,6 +15,7 @@
   const at = (p: Problem) => (p.buses[0].near ? ` at ${placeName(p.buses[0].near, names[p.rt])}` : "");
 </script>
 
+<div class="sheet-head">
 <header>
   <h2>Right now</h2>
   {#if problems.length}
@@ -23,6 +24,7 @@
     <p class="tally">No long waits or buses arriving together at the moment</p>
   {/if}
 </header>
+</div>
 
 <ul>
   {#each problems as p (p.kind + p.pid + p.buses[0].vid)}

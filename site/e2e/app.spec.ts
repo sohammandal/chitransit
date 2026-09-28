@@ -169,6 +169,47 @@ test("phone: dragging the handle resizes the sheet, and it settles on a size", a
   await expect(sheet).toHaveClass(/peek/);
 });
 
+test("phone: the title and tabs stay put and drag the sheet; only the rest scrolls", async ({ page, isMobile }) => {
+  test.skip(!isMobile, "phone layout only");
+  await setUp(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "About" }).click(); // long: scrolls at half
+  const sheet = page.locator(".sheet");
+  await expect(sheet).toHaveClass(/half/);
+  await page.waitForTimeout(400); // the sheet animates to its size
+  const head = page.locator(".sheet-head");
+  const before = (await head.boundingBox())!.y;
+  await page.locator(".sheet .body").evaluate((b) => (b.scrollTop = 200));
+  await page.waitForTimeout(100);
+  expect(Math.abs((await head.boundingBox())!.y - before)).toBeLessThan(1);
+  // Drag from the title: the sheet grows.
+  const title = (await head.locator("h2").boundingBox())!;
+  const x = title.x + 20, y = title.y + title.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y - 250, { steps: 8 });
+  await page.mouse.up();
+  await expect(sheet).toHaveClass(/full/);
+});
+
+test("phone: a drag that starts on a tab resizes the sheet, a tap switches tabs", async ({ page, isMobile }) => {
+  test.skip(!isMobile, "phone layout only");
+  await setUp(page);
+  await page.goto("/route/66/");
+  const sheet = page.locator(".sheet");
+  await expect(sheet).toHaveClass(/half/);
+  const tab = page.getByRole("tab", { name: "Report Card" });
+  const b = (await tab.boundingBox())!;
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width / 2, b.y + 200, { steps: 8 });
+  await page.mouse.up();
+  await expect(sheet).toHaveClass(/peek/);
+  await expect(tab).toHaveAttribute("aria-selected", "false");
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+});
+
 test("phone: a tap skips the full size when the content already fits", async ({ page, isMobile }) => {
   test.skip(!isMobile, "phone layout only");
   await setUp(page);

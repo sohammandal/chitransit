@@ -2,11 +2,13 @@
   let { onClose }: { onClose: () => void } = $props();
 </script>
 
+<div class="sheet-head">
 <header>
   <h2>Every CTA bus, live</h2>
   <span class="tag">Unofficial</span>
   <button class="x" onclick={onClose} aria-label="Close">×</button>
 </header>
+</div>
 <p class="what">How Chicago's buses are really running, live and over time</p>
 <dl>
   <dt>Tap a route or bus</dt>

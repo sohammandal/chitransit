@@ -36,6 +36,7 @@
   let tab = $state<"now" | "report">("now");
 </script>
 
+<div class="sheet-head">
 <header>
   <span class="rt">{rt}</span>
   <div>
@@ -48,6 +49,7 @@
 <div class="tabs" role="tablist">
   <button role="tab" aria-selected={tab === "now"} onclick={() => (tab = "now")}>Now</button>
   <button role="tab" aria-selected={tab === "report"} onclick={() => (tab = "report")}>Report Card</button>
+</div>
 </div>
 
 {#if tab === "report"}
