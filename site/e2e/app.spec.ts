@@ -26,6 +26,13 @@ async function setUp(page: Page, missing: string[] = []) {
   return errors;
 }
 
+/** The live search box: once the app has replaced the static first-paint shell (whose copy
+ *  is inert: people can't type in it, but a test's fill() could, and lose the text). */
+async function searchBox(page: Page) {
+  await expect(page.locator(".shell")).toHaveCount(0);
+  return page.getByLabel("Go to a route");
+}
+
 async function busesDrawn(page: Page) {
   await page.waitForFunction(() => {
     const m = window.map;
@@ -224,7 +231,7 @@ test("phone: a tap skips the full size when the content already fits", async ({ 
 test("search: a plain search field (no contact autofill on iOS)", async ({ page }) => {
   await setUp(page);
   await page.goto("/");
-  const input = page.getByLabel("Go to a route");
+  const input = (await searchBox(page));
   await expect(input).toHaveAttribute("type", "search");
   await expect(input).toHaveAttribute("autocomplete", "off");
   // Safari offers contacts when a field's name or id mentions "name"
@@ -235,8 +242,8 @@ test("search: typing a route fits the map to its buses", async ({ page }) => {
   await setUp(page);
   await page.goto("/");
   await busesDrawn(page);
-  await page.getByLabel("Go to a route").fill("79");
-  await page.getByLabel("Go to a route").press("Enter");
+  await (await searchBox(page)).fill("79");
+  await (await searchBox(page)).press("Enter");
   await expect(page).toHaveURL(/\/route\/79\/$/);
   await page.waitForTimeout(1500); // the map eases to the route
   const outside = await page.evaluate(() => {
@@ -272,10 +279,10 @@ test("map buttons: credits and my-location are the same size, on one edge", asyn
 test("search: typing 66 at normal speed opens #66 (never #6), and Back returns to the city", async ({ page }) => {
   await setUp(page);
   await page.goto("/");
-  await page.getByLabel("Go to a route").pressSequentially("66", { delay: 80 });
+  await (await searchBox(page)).pressSequentially("66", { delay: 80 });
   await expect(page).toHaveURL(/\/route\/66\/$/);
   await expect(page.getByRole("heading", { name: "Chicago", exact: true })).toBeVisible();
-  await page.getByLabel("Go to a route").blur();
+  await (await searchBox(page)).blur();
   await page.goBack();
   await expect(page).toHaveURL(/\/$/);
 });
@@ -283,7 +290,7 @@ test("search: typing 66 at normal speed opens #66 (never #6), and Back returns t
 test("search: a pause after 6 shows #6, then 66 replaces it in history", async ({ page }) => {
   await setUp(page);
   await page.goto("/");
-  const box = page.getByLabel("Go to a route");
+  const box = (await searchBox(page));
   await box.pressSequentially("6");
   await expect(page).toHaveURL(/\/route\/6\/$/);
   await box.pressSequentially("6");
@@ -296,7 +303,7 @@ test("search: a pause after 6 shows #6, then 66 replaces it in history", async (
 test("search: names suggest routes; tapping one opens it", async ({ page }) => {
   await setUp(page);
   await page.goto("/");
-  await page.getByLabel("Go to a route").fill("western");
+  await (await searchBox(page)).fill("western");
   await page.getByRole("button", { name: /49B North Western/ }).click();
   await expect(page).toHaveURL(/\/route\/49B\/$/);
 });
@@ -326,7 +333,7 @@ test("map fits every route opened in a row: search, close, search again, then a 
   await setUp(page);
   await page.goto("/");
   await busesDrawn(page);
-  const box = page.getByLabel("Go to a route");
+  const box = (await searchBox(page));
 
   await box.fill("66");
   await box.press("Enter");
@@ -351,7 +358,7 @@ test("map fits on route-to-route search, browser Back, and Forward", async ({ pa
   await setUp(page);
   await page.goto("/");
   await busesDrawn(page);
-  const box = page.getByLabel("Go to a route");
+  const box = (await searchBox(page));
   await box.fill("66");
   await box.press("Enter");
   await box.fill("151"); // straight from #66, no close
@@ -374,7 +381,7 @@ test("search suggestions float over the map: the top bar keeps its height", asyn
   const before = (await bar.boundingBox())!.height;
   // "western" fits several routes, so nothing auto-opens and the list stays up (a lone "6"
   // opens #6 after the pause and closes the list, which raced on slower CI machines).
-  await page.getByLabel("Go to a route").pressSequentially("western");
+  await (await searchBox(page)).pressSequentially("western");
   await expect(page.locator("#route-list")).toBeVisible();
   expect((await bar.boundingBox())!.height).toBe(before);
 });
@@ -584,13 +591,11 @@ test("bus view: the map shows only the open bus's direction; the route view show
     const m = window.map as unknown as { queryRenderedFeatures(o: object): { properties: { rt: string; dir: string } }[] };
     return [...new Set(m.queryRenderedFeatures({ layers: ["bus-dot", "bus-sym"] }).map((f) => f.properties.dir))].sort();
   });
-  await page.waitForTimeout(1200);
-  expect((await dirsOnMap()).length).toBe(2); // Eastbound and Westbound
+  // Polled: the map redraws a moment after each change (slower on CI runners).
+  await expect.poll(async () => (await dirsOnMap()).length, { timeout: 10_000 }).toBe(2); // Eastbound and Westbound
   await page.locator(".sheet .bus").first().click();
   const dir = (await page.locator(".sheet h2").first().innerText()).trim(); // "Eastbound"
-  await page.waitForTimeout(1200);
-  expect(await dirsOnMap()).toEqual([dir]);
+  await expect.poll(dirsOnMap, { timeout: 10_000 }).toEqual([dir]);
   await page.getByRole("button", { name: "‹ 66 Chicago" }).click();
-  await page.waitForTimeout(1200);
-  expect((await dirsOnMap()).length).toBe(2);
+  await expect.poll(async () => (await dirsOnMap()).length, { timeout: 10_000 }).toBe(2);
 });
