@@ -48,6 +48,18 @@ body {
   font-variant-numeric: tabular-nums;
 }
 a { color: var(--flag-blue); }
+
+/* The panel column (top bar + panel): shared by the app and the static shell that paints
+   before it, so the swap between them can't move anything. */
+.panel-column {
+  position: fixed; z-index: 2; top: calc(12px + var(--safe-top)); left: calc(12px + var(--safe-left));
+  bottom: calc(12px + var(--safe-bottom)); width: 368px;
+  display: flex; flex-direction: column; gap: 10px; pointer-events: none;
+}
+.panel-column > * { pointer-events: auto; }
+@media (max-width: 640px) {
+  .panel-column { top: calc(8px + var(--safe-top)); left: calc(8px + var(--safe-left)); right: calc(8px + var(--safe-right)); bottom: auto; width: auto; }
+}
 :focus-visible { outline: 2px solid var(--flag-blue); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

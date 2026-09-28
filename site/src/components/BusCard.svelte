@@ -28,6 +28,13 @@
     <p class="sub">to {bus.des}</p>
   </div>
 </header>
+{#if bus.near}
+  <!-- Where the bus is: the "here" both gap boxes below refer to. -->
+  <p class="near">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a4.5 4.5 0 0 0-4.5 4.5c0 3.4 4.5 8.5 4.5 8.5s4.5-5.1 4.5-8.5A4.5 4.5 0 0 0 8 1.5Zm0 6.2a1.7 1.7 0 1 1 0-3.4 1.7 1.7 0 0 1 0 3.4Z" /></svg>
+    Near <b>{bus.near}</b>
+  </p>
+{/if}
 
 <div class="gaps">
   <div class="gap">
@@ -36,7 +43,7 @@
     {:else if bus.gap_s != null}
       <strong>{minutes(bus.gap_s)}</strong><span>since the last bus passed here</span>
     {:else}
-      <strong>–</strong><span>no recent bus we can time here</span>
+      <strong>–</strong><span>can't tell when the last bus passed here</span>
     {/if}
   </div>
   {#if behind?.gap_s != null && !bus.at_terminal}
@@ -61,7 +68,10 @@
   header { display: flex; align-items: center; gap: 12px; }
   h2 { margin: 0; font-size: 20px; line-height: 1.15; }
   .sub { margin: 0; font-size: 14px; color: var(--fog); }
-  .rt { display: inline-grid; place-items: center; min-width: 48px; height: 40px; padding: 0 10px; border-radius: 10px; background: var(--asphalt); color: var(--surface); font-size: 20px; font-weight: 900; flex: none; }
+  .near { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 15px; }
+  .near svg { width: 16px; height: 16px; flex: none; fill: var(--flag-blue); position: relative; top: -2px; } /* Overpass sits high: meet its letters */
+  .near b { font-weight: 700; }
+  .rt { display: inline-grid; place-items: center; min-width: 48px; height: 40px; padding: 5px 10px 0; /* Overpass numerals sit high: nudge */ border-radius: 10px; background: var(--asphalt); color: var(--surface); font-size: 20px; font-weight: 900; flex: none; }
   .gaps { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
   .gap { display: grid; gap: 2px; padding: 12px 14px; border-radius: 12px; background: var(--flag-blue-soft); }
   .gap.behind { background: var(--concrete); }

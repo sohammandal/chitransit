@@ -19,18 +19,14 @@
   const WINDOW = 30;
   const all = $derived((rows ?? []).map((r, i) => ({ day: days[i], r })).filter((d) => d.r[0] > 0));
   const watched = $derived(all.slice(-WINDOW).reverse()); // newest first
-  const since = $derived(watched.length ? dayLabel(watched.at(-1)!.day, now).replace("Yesterday, ", "") : "");
 </script>
 
 {#if !scheduled}
   <p class="note">No report for this route yet: it had no scheduled trips on the days we've watched.</p>
 {:else}
   <div class="head">
-    <p class="since">{all.length > WINDOW ? `Last ${WINDOW} days` : `Since ${since}`}</p>
-    <p class="meta">
-      <span>{watched.length} {watched.length === 1 ? "day" : "days"} watched</span>
-      <span>{scheduled.toLocaleString()} trips scheduled</span>
-    </p>
+    <p class="since">Last {watched.length} {watched.length === 1 ? "day" : "days"}</p>
+    <p class="meta">{scheduled.toLocaleString()} trips scheduled</p>
   </div>
 
   <dl class="figs">
@@ -74,8 +70,7 @@
 <style>
   .head { display: grid; gap: 1px; }
   .since { margin: 0; font-size: 15px; font-weight: 800; }
-  .meta { margin: 0; display: flex; flex-wrap: wrap; font-size: 13px; color: var(--fog); }
-  .meta span + span::before { content: "·"; margin-inline: 8px; }
+  .meta { margin: 0; font-size: 13px; color: var(--fog); }
   .figs { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .figs div { display: flex; flex-direction: column-reverse; justify-content: flex-end; gap: 2px; }
   .figs dt { font-size: 12px; color: var(--fog); }

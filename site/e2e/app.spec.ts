@@ -69,7 +69,7 @@ test("bus: tap a bus on the line, see its gaps, go back", async ({ page }) => {
   await page.goto("/route/66/");
   await page.locator(".sheet .bus").first().click();
   await expect(page.getByRole("button", { name: "‹ 66 Chicago" })).toBeVisible();
-  await expect(page.getByText(/since the last bus passed here|its trip, at the|no recent bus/)).toBeVisible();
+  await expect(page.getByText(/since the last bus passed|its trip, at the|can't tell when the last bus/)).toBeVisible();
   await page.getByRole("button", { name: "‹ 66 Chicago" }).click();
   await expect(page.getByText("Arriving together")).toBeVisible();
   expect(errors).toEqual([]);
@@ -98,9 +98,9 @@ test("about: opens and closes", async ({ page }) => {
 test("report card: shares add up to 100%, split matches, definitions shown", async ({ page }) => {
   const errors = await setUp(page);
   await page.goto("/route/66/");
-  await page.getByRole("tab", { name: "Report card" }).click();
-  await expect(page.getByText("Since Sat, Sep 26")).toBeVisible();
-  await expect(page.getByText("1 day watched")).toBeVisible();
+  await page.getByRole("tab", { name: "Report Card" }).click();
+  await expect(page.getByText("Last 1 day")).toBeVisible();
+  await expect(page.getByText("373 trips scheduled")).toBeVisible();
   const figs = (await page.locator(".figs dd").allInnerTexts()).map((t) => Number(t.replace(/[^\d.]/g, "")));
   expect(figs.reduce((a, b) => a + b, 0)).toBeCloseTo(100, 0);
   // #66 on Sep 26: 373 scheduled, 346 ran, 6 canceled with notice, 2 proven, 19 couldn't tell
@@ -117,7 +117,7 @@ test("nightly files missing: the live parts still work", async ({ page }) => {
   const errors = await setUp(page, ["routes.json", "headways.json", "report.json"]);
   await page.goto("/route/66/");
   await expect(page.locator(".sheet svg")).toHaveCount(2);
-  await page.getByRole("tab", { name: "Report card" }).click();
+  await page.getByRole("tab", { name: "Report Card" }).click();
   await expect(page.getByText(/No report for this route yet/)).toBeVisible();
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
@@ -208,6 +208,17 @@ test("search: names suggest routes; tapping one opens it", async ({ page }) => {
   await expect(page).toHaveURL(/\/route\/49B\/$/);
 });
 
+/** Tap the line's track at a spot no bus covers (a bus tap would open the bus instead). */
+async function tapLineFree(page: Page, line: ReturnType<Page["locator"]>) {
+  const track = (await line.locator(".track").boundingBox())!;
+  for (const f of [0.5, 0.35, 0.65, 0.2, 0.8, 0.1, 0.9]) {
+    const x = track.x + track.width * f, y = track.y + track.height / 2;
+    const cls = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.getAttribute("class") ?? "", [x, y]);
+    if (/pickable|track|tick|express/.test(cls)) return void (await page.mouse.click(x, y));
+  }
+  throw new Error("no bus-free spot on the line");
+}
+
 /** How many of a route's buses are outside the map's current view. */
 async function offScreen(page: Page, rt: string) {
   await page.waitForTimeout(1200); // let the map finish easing
@@ -266,6 +277,7 @@ test("search suggestions float over the map: the top bar keeps its height", asyn
   await setUp(page);
   await page.goto("/");
   const bar = page.locator("header.bar");
+  await expect(bar.getByText(/buses on the road/)).toBeVisible(); // the app, not the static shell
   const before = (await bar.boundingBox())!.height;
   // "western" fits several routes, so nothing auto-opens and the list stays up (a lone "6"
   // opens #6 after the pause and closes the list, which raced on slower CI machines).
@@ -333,4 +345,100 @@ test("line view: no two bus dots overlap (close buses stack)", async ({ page }) 
       return dots.flatMap((a, i) => dots.slice(i + 1).filter((b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 13).map(() => 1));
     }));
   expect(overlaps.length).toBe(0);
+});
+
+for (const rt of ["66", "J14"]) test(`line view: no two pieces of text overlap on #${rt}, at any size`, async ({ page }) => {
+  await setUp(page);
+  await page.goto(`/route/${rt}/`);
+  await expect(page.locator(".sheet svg")).toHaveCount(2);
+  await tapLineFree(page, page.locator(".sheet svg").first()); // a picked stop adds a text row
+  const overlaps = await page.locator(".sheet svg").evaluateAll((svgs) =>
+    svgs.flatMap((svg) => {
+      const boxes = [...svg.querySelectorAll("text")].map((t) => ({ text: t.textContent, b: (t as SVGTextElement).getBBox() }));
+      const hits: string[] = [];
+      boxes.forEach((a, i) => boxes.slice(i + 1).forEach((c) => {
+        if (a.b.x < c.b.x + c.b.width && c.b.x < a.b.x + a.b.width && a.b.y < c.b.y + c.b.height && c.b.y < a.b.y + a.b.height) {
+          hits.push(`${a.text} / ${c.text}`);
+        }
+      }));
+      return hits;
+    }));
+  expect(overlaps).toEqual([]);
+  expect(await page.locator(".sheet .street").count()).toBeGreaterThan(0); // major cross streets shown
+});
+
+test("line view: tapping the line names the nearest stop; tapping again clears it", async ({ page }) => {
+  await setUp(page);
+  await page.goto("/route/66/");
+  const line = page.locator(".sheet svg").first();
+  await line.locator(".pickable").click({ position: { x: 150, y: 12 } });
+  const name = await line.locator(".picked-name").textContent();
+  const stops = JSON.parse(fixture("patterns/6662.json")!.toString()).s.map((s: unknown[]) => s[2]);
+  const other = JSON.parse(fixture("patterns/6665.json")!.toString()).s.map((s: unknown[]) => s[2]);
+  expect([...stops, ...other]).toContain(name);
+  await line.locator(".pickable").click({ position: { x: 150, y: 12 } });
+  await expect(line.locator(".picked-name")).toHaveCount(0);
+});
+
+test("where: the list and the bus card name the nearest stop", async ({ page }) => {
+  await setUp(page);
+  await page.goto("/route/66/");
+  await page.locator(".sheet .bus").first().click();
+  await expect(page.locator(".near")).toContainText(/^\s*Near \S/); // the card names where the bus is
+  // the home list: every bus given a stop name
+  await page.route("**/live/vehicles.json", (r) =>
+    r.fulfill({ json: { ...feed, vehicles: feed.vehicles.map((v: object) => ({ ...v, near: "Test & Corner" })) } }));
+  await page.goto("/");
+  await expect(page.locator(".sheet li").first()).toContainText(/at (Test & Corner|Test|Corner)/);
+});
+
+test("J14's express stretch is marked, and tapping it says there are no stops", async ({ page }) => {
+  await setUp(page);
+  await page.goto("/route/J14/");
+  const line = page.locator(".sheet svg").first();
+  await expect(line.locator(".express")).toHaveCount(1);
+  await expect(line.locator(".express-label")).toHaveText(/no stops for 7 mi/);
+  const run = (await line.locator(".express").boundingBox())!;
+  const svgBox = (await line.boundingBox())!;
+  // tap the middle of the express run, on the track row, where no bus is
+  const hit = async (fx: number) => {
+    const x = run.x + run.width * fx, y = run.y + run.height / 2;
+    const cls = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.getAttribute("class") ?? "", [x, y]);
+    return cls.includes("pickable") || cls.includes("express") || cls.includes("track") ? { x, y } : null;
+  };
+  let spot = null;
+  for (const f of [0.5, 0.4, 0.6, 0.3, 0.7]) if ((spot = await hit(f))) break;
+  expect(spot, `a bus-free spot on the express run (svg at ${svgBox.x})`).not.toBeNull();
+  await page.mouse.click(spot!.x, spot!.y);
+  await expect(line.locator(".picked-name")).toHaveText(/Express: no stops for 7\.\d mi/);
+});
+
+test("the top bar doesn't move or change size from first paint to live", async ({ page, browser, viewport, isMobile }) => {
+  // 1. First paint: the static shell, before any JavaScript (JS off shows exactly that).
+  const noJs = await browser.newContext({ javaScriptEnabled: false, viewport: viewport!, isMobile });
+  const shellPage = await noJs.newPage();
+  await shellPage.goto("/route/66/");
+  await expect(shellPage.getByText("Connecting to the live feed…")).toBeVisible();
+  const shell = (await shellPage.locator("header.bar").boundingBox())!;
+  await noJs.close();
+
+  // 2. The app, still connecting (the feed held back), then 3. live.
+  let release: () => void = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  await setUp(page);
+  await page.route("**/live/vehicles.json", async (r) => { await held; await r.fulfill({ json: feed }); });
+  await page.goto("/route/66/");
+  await expect(page.locator(".shell")).toHaveCount(0); // the app replaced it
+  await expect(page.getByText("Connecting to the live feed…")).toBeVisible();
+  const connecting = (await page.locator("header.bar").boundingBox())!;
+  release();
+  await expect(page.locator("header.bar").getByText(/buses on the road/)).toBeVisible();
+  const live = (await page.locator("header.bar").boundingBox())!;
+
+  for (const box of [connecting, live]) {
+    expect(Math.abs(box.x - shell.x)).toBeLessThan(0.5);
+    expect(Math.abs(box.y - shell.y)).toBeLessThan(0.5);
+    expect(Math.abs(box.width - shell.width)).toBeLessThan(0.5);
+    expect(Math.abs(box.height - shell.height)).toBeLessThan(0.5);
+  }
 });

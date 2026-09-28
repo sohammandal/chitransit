@@ -1,0 +1,10 @@
+---
+// What paints before any JavaScript: the real top bar in its connecting state, rendered to
+// static HTML in the same column as the app's (.panel-column). The app removes it on mount and
+// its own identical bar takes the same place, so the swap can't be seen. Inert: nothing in it
+// works until the app is running.
+import TopBar from "./TopBar.svelte";
+---
+<div class="shell panel-column" inert aria-hidden="true">
+  <TopBar count={null} age={null} failed={false} names={{}} onOpen={() => {}} onAbout={() => {}} />
+</div>

@@ -47,7 +47,7 @@
 
 <div class="tabs" role="tablist">
   <button role="tab" aria-selected={tab === "now"} onclick={() => (tab = "now")}>Now</button>
-  <button role="tab" aria-selected={tab === "report"} onclick={() => (tab = "report")}>Report card</button>
+  <button role="tab" aria-selected={tab === "report"} onclick={() => (tab = "report")}>Report Card</button>
 </div>
 
 {#if tab === "report"}
@@ -75,7 +75,7 @@
   h2 { margin: 0; font-size: 20px; line-height: 1.15; text-wrap: balance; }
   h2.long { font-size: 17px; }
   .sub { margin: 0; font-size: 13px; color: var(--fog); }
-  .rt { display: inline-grid; place-items: center; min-width: 48px; height: 40px; padding: 0 10px; border-radius: 10px; background: var(--asphalt); color: var(--surface); font-size: 20px; font-weight: 900; flex: none; }
+  .rt { display: inline-grid; place-items: center; min-width: 48px; height: 40px; padding: 5px 10px 0; /* Overpass numerals sit high: nudge */ border-radius: 10px; background: var(--asphalt); color: var(--surface); font-size: 20px; font-weight: 900; flex: none; }
   .x { margin-left: auto; width: 44px; height: 44px; flex: none; border: 0; border-radius: 50%; background: var(--concrete); color: var(--fog); font-size: 24px; line-height: 1; cursor: pointer; }
   .dir { display: grid; gap: 4px; }
   .lab { margin: 0; display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--fog); }

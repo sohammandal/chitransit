@@ -16,6 +16,7 @@ export type Vehicle = {
   gap_s: number | null; // time since the bus ahead passed this spot
   ahead: string | null; // vid of that bus
   at_terminal: boolean;
+  near?: string | null; // the stop nearest the bus ("Clark & Belmont")
 };
 
 export type Feed = { generated_at: string; build?: string; vehicles: Vehicle[] }; // build: the poller's commit
@@ -24,7 +25,7 @@ export type Pattern = {
   rt: string;
   dir: string;
   c: [number, number][]; // [lon, lat] along the route
-  s: [number, number, string, number][]; // stops: [lon, lat, name, feet along]
+  s: [number, number, string, number, number?][]; // stops: [lon, lat, name, feet along, routes at that crossing]
 };
 
 /** date -> "rt|North" -> Chicago hour -> scheduled minutes between buses */

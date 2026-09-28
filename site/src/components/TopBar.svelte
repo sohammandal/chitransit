@@ -5,12 +5,14 @@
   import { matchRoutes, toOpen } from "../lib/search";
   import Mark from "./Mark.svelte";
 
-  let { count, age, failed, names, onOpen }: {
+  let { count, age, failed, names, onOpen, aboutOpen = false, onAbout }: {
     count: number | null;
     age: number | null; // seconds since the feed was written
     failed: boolean;
     names: Record<string, string>;
     onOpen: (rt: string, replace: boolean) => void; // replace: swap the history entry
+    aboutOpen?: boolean;
+    onAbout: () => void;
   } = $props();
 
   const PAUSE_MS = 400;
@@ -54,9 +56,13 @@
     <Mark />
     <span><span class="chi">chi</span>transit<b>.fyi</b></span>
   </a>
+  <button class="about-btn" onclick={onAbout} aria-expanded={aboutOpen}>About</button>
+  <!-- Two lines in every state, so nothing moves when the first feed arrives. -->
   <p class="status" aria-live="polite">
     {#if count === null}
-      {failed ? "Can't reach the live feed. Retrying." : "Connecting…"}
+      <span class="dot waiting" class:stale={failed}></span>
+      <span>{failed ? "Can't reach the live feed" : "Connecting to the live feed…"}</span>
+      <span class="updated">{failed ? "Retrying…" : "\u00a0"}</span>
     {:else}
       <span class="dot" class:stale={failed}></span>
       <span><strong>{count}</strong> buses on the road</span>
@@ -97,17 +103,27 @@
 
 <style>
   .bar {
-    background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+    position: relative; background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
     padding: 12px 14px; display: grid; gap: 8px;
   }
+  .about-btn {
+    position: absolute; top: 10px; right: 10px; height: 32px; padding: 4px 12px 0; /* Overpass sits high: nudge */
+    display: inline-flex; align-items: center; line-height: 1;
+    border: 1px solid var(--rule); border-radius: 999px; background: var(--surface);
+    font: inherit; font-size: 13px; font-weight: 700; color: var(--fog); cursor: pointer;
+  }
+  .about-btn[aria-expanded="true"] { color: var(--asphalt); border-color: var(--asphalt); }
   .brand { display: flex; align-items: center; gap: 8px; color: var(--asphalt); text-decoration: none; font-size: 19px; font-weight: 800; letter-spacing: -0.01em; }
   .brand b { font-weight: 400; color: var(--fog); }
   .chi { color: var(--flag-blue); }
-  .status { margin: 0; font-size: 15px; display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: baseline; }
+  .status { margin: 0; font-size: 15px; display: grid; grid-template-columns: auto 1fr; grid-template-rows: 25px auto; column-gap: 8px; align-items: baseline; }
   .status strong { font-size: 17px; font-weight: 800; }
   .updated { grid-column: 2; color: var(--fog); font-size: 13px; }
-  .dot { align-self: center; width: 8px; height: 8px; border-radius: 50%; background: var(--flag-blue); animation: pulse 2s infinite; }
+  /* Sits on the text's baseline, raised to the middle of its letters: capital-height digits
+     when live, mostly lowercase words while connecting (measured at 4x). */
+  .dot { align-self: baseline; position: relative; top: -1.5px; width: 8px; height: 8px; border-radius: 50%; background: var(--flag-blue); animation: pulse 2s infinite; }
   .dot.stale { background: var(--signal-amber); }
+  .dot.waiting { top: -1px; }
   @keyframes pulse { 50% { opacity: 0.3; } }
   input {
     width: 100%; font: inherit; font-size: 16px; /* 16px: iOS won't zoom on focus */
@@ -126,7 +142,7 @@
     border: 0; border-radius: 10px; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer;
   }
   .list button:hover, .list button:focus-visible { background: var(--concrete); }
-  .rt { display: inline-grid; place-items: center; min-width: 44px; height: 28px; padding: 0 8px; border-radius: 8px; background: var(--asphalt); color: var(--surface); font-weight: 900; font-size: 14px; flex: none; }
+  .rt { display: inline-grid; place-items: center; min-width: 44px; height: 28px; padding: 4px 8px 0; /* Overpass numerals sit high: nudge */ border-radius: 8px; background: var(--asphalt); color: var(--surface); font-weight: 900; font-size: 14px; flex: none; }
   .name { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .miss { margin: 0; padding: 12px 14px; font-size: 13px; color: var(--fog); }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }

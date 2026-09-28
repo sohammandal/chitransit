@@ -151,10 +151,9 @@
 
 <MapView {vehicles} {route} {selected} {shapes} {padding} {fit} {fitNonce} {focusNonce} onSelect={(vid) => select(vid, "map")} />
 
-<div class="side" style:--top-h="{topH}px">
-  <div class="top" bind:clientHeight={topH}>
-    <TopBar count={feed ? vehicles.length : null} {age} {failed} {names} onOpen={(rt, replace) => go(rt, replace ? "replace" : "push")} />
-    <button class="about-btn" onclick={() => { about = !about; if (about && size === "peek") size = "half"; }} aria-expanded={about}>About</button>
+<div class="side panel-column" style:--top-h="{topH}px">
+  <div bind:clientHeight={topH}>
+    <TopBar count={feed ? vehicles.length : null} {age} {failed} {names} onOpen={(rt, replace) => go(rt, replace ? "replace" : "push")} aboutOpen={about} onAbout={() => { about = !about; if (about && size === "peek") size = "half"; }} />
   </div>
   {#if feed || about}
     <Sheet {size} onToggle={grow}>
@@ -195,25 +194,6 @@
 </div>
 
 <style>
-  /* Wide screens: one column on the left, top bar above the panel. */
-  .side {
-    position: fixed; z-index: 2; top: calc(12px + var(--safe-top)); left: calc(12px + var(--safe-left));
-    bottom: calc(12px + var(--safe-bottom)); width: 368px;
-    display: flex; flex-direction: column; gap: 10px; pointer-events: none;
-  }
-  .side > :global(*) { pointer-events: auto; }
+  /* Position: .panel-column (tokens.css). Phones: the panel is a bottom sheet (Sheet.svelte). */
   .side :global(.sheet) { flex: 0 1 auto; }
-  .top { position: relative; }
-  .about-btn {
-    position: absolute; top: 10px; right: 10px; height: 32px; padding: 4px 12px 0; /* Overpass sits high: nudge */
-    display: inline-flex; align-items: center; line-height: 1;
-    border: 1px solid var(--rule); border-radius: 999px; background: var(--surface);
-    font: inherit; font-size: 13px; font-weight: 700; color: var(--fog); cursor: pointer;
-  }
-  .about-btn[aria-expanded="true"] { color: var(--asphalt); border-color: var(--asphalt); }
-
-  /* Phones: the top bar spans the top; the panel is a bottom sheet (Sheet.svelte). */
-  @media (max-width: 640px) {
-    .side { top: calc(8px + var(--safe-top)); left: calc(8px + var(--safe-left)); right: calc(8px + var(--safe-right)); bottom: auto; width: auto; }
-  }
 </style>

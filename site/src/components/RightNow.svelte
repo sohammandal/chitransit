@@ -1,6 +1,7 @@
 <script lang="ts">
   // City level: where service is falling apart right now, worst first.
   import { minutes } from "../lib/format";
+  import { placeName } from "../lib/labels";
   import type { Problem } from "../lib/problems";
 
   let { problems, names, onOpen }: {
@@ -11,7 +12,7 @@
 
   const together = $derived(problems.filter((p) => p.kind === "together").length);
   const waits = $derived(problems.length - together);
-  const every = (p: Problem) => (p.scheduled_s ? `, scheduled every ${Math.round(p.scheduled_s / 60)} min` : "");
+  const at = (p: Problem) => (p.buses[0].near ? ` at ${placeName(p.buses[0].near, names[p.rt])}` : "");
 </script>
 
 <header>
@@ -29,10 +30,10 @@
       <button class="row" onclick={() => onOpen(p.rt)}>
         <span class="rt">{p.rt}</span>
         <span class="what">
-          <b>{p.kind === "together" ? `${p.buses.length} buses together` : "Long wait"}</b>
-          <span>{names[p.rt] ?? `Route ${p.rt}`} {p.dir.toLowerCase()}{every(p)}</span>
+          <b>{p.kind === "together" ? `${p.buses.length} buses together` : "Long wait"}{at(p)}</b>
+          <span>{names[p.rt] ?? `Route ${p.rt}`} {p.dir.toLowerCase()}</span>
         </span>
-        <span class="wait">{p.wait_s != null ? minutes(p.wait_s) : "?"}<small>{p.kind === "together" ? "wait after them" : "since the last bus"}</small></span>
+        <span class="wait">{p.wait_s != null ? minutes(p.wait_s) : "?"}<small>{p.kind === "together" ? "wait after them" : "since the last bus"}</small>{#if p.scheduled_s}<small class="vs">vs every {Math.round(p.scheduled_s / 60)} min</small>{/if}</span>
       </button>
     </li>
   {/each}
@@ -51,10 +52,11 @@
     padding: 9px 10px; min-height: 56px; cursor: pointer;
   }
   .row:hover { background: var(--surface2); }
-  .rt { display: inline-grid; place-items: center; min-width: 48px; height: 30px; padding: 0 8px; border-radius: 8px; background: var(--asphalt); color: var(--surface); font-weight: 900; font-size: 15px; }
+  .rt { display: inline-grid; place-items: center; min-width: 48px; height: 30px; padding: 4px 8px 0; /* Overpass numerals sit high: nudge */ border-radius: 8px; background: var(--asphalt); color: var(--surface); font-weight: 900; font-size: 15px; }
   .what { display: grid; gap: 1px; min-width: 0; }
   .what b { font-size: 15px; }
   .what span { font-size: 13px; line-height: 1.3; color: var(--fog); }
   .wait { font-weight: 900; font-size: 17px; color: var(--star-red); text-align: right; line-height: 1.1; }
   .wait small { display: block; font-size: 11px; font-weight: 600; color: var(--fog); }
+  .wait .vs { font-weight: 400; }
 </style>

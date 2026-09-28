@@ -7,15 +7,14 @@
   <span class="tag">Unofficial</span>
   <button class="x" onclick={onClose} aria-label="Close">×</button>
 </header>
+<p class="what">How Chicago's buses are really running, live and over time.</p>
 <dl>
-  <dt>Updates</dt>
-  <dd>Every 30 seconds. A position can be up to a minute old.</dd>
+  <dt>Tap a route or bus</dt>
+  <dd>See the route live or its Report Card, and when the last bus passed.</dd>
   <dt>Right now</dt>
   <dd>Long waits and buses arriving together, judged against each route's schedule for this hour.</dd>
-  <dt>Colors</dt>
-  <dd>On a route's line, <b class="amber">amber</b> buses are arriving together, bunched up, and <b class="red">red</b> marks a long wait: over twice the scheduled gap.</dd>
-  <dt>Tap a route or bus</dt>
-  <dd>See the route live or its report card, and when the last bus passed.</dd>
+  <dt>Updates</dt>
+  <dd>Every 30 seconds. A position can be up to a minute old.</dd>
 </dl>
 <div class="fine">
   <p>Data provided by Chicago Transit Authority.</p>
@@ -31,8 +30,7 @@
   dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 10px 16px; font-size: 15px; }
   dt { font-weight: 700; }
   dd { margin: 0; }
-  .amber { color: var(--signal-amber); }
-  .red { color: var(--star-red); }
+  .what { margin: -4px 0 0; font-size: 16px; line-height: 1.4; }
   .fine { border-top: 1px solid var(--rule); padding-top: 12px; display: grid; gap: 6px; font-size: 13px; color: var(--fog); line-height: 1.45; }
   .fine p { margin: 0; }
 </style>
