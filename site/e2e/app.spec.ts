@@ -138,6 +138,58 @@ test("phone: the sheet never covers the top bar", async ({ page, isMobile }) => 
   }
 });
 
+test("phone: dragging the handle resizes the sheet, and it settles on a size", async ({ page, isMobile }) => {
+  test.skip(!isMobile, "phone layout only");
+  await setUp(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "About" }).click(); // long enough to need "full"
+  const grab = page.getByRole("button", { name: /Show more|Show less/ });
+  const sheet = page.locator(".sheet");
+  await expect(sheet).toHaveClass(/half/);
+  const drag = async (dy: number) => {
+    const b = (await grab.boundingBox())!;
+    const x = b.x + b.width / 2, y = b.y + b.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(x, y + (dy * i) / 8);
+    await page.mouse.up();
+    await page.waitForTimeout(350); // the sheet animates to its size
+  };
+  await drag(-150);
+  await expect(sheet).toHaveClass(/full/);
+  const bar = (await page.locator("header.bar").boundingBox())!;
+  expect((await sheet.boundingBox())!.y).toBeGreaterThanOrEqual(bar.y + bar.height);
+  await drag(400);
+  await expect(sheet).toHaveClass(/peek/);
+  await drag(-60); // a short flick still moves one size
+  await expect(sheet).toHaveClass(/half/);
+  await grab.click(); // a tap still steps
+  await expect(sheet).toHaveClass(/full/);
+  await grab.click();
+  await expect(sheet).toHaveClass(/peek/);
+});
+
+test("phone: a tap skips the full size when the content already fits", async ({ page, isMobile }) => {
+  test.skip(!isMobile, "phone layout only");
+  await setUp(page);
+  await page.goto("/route/66/"); // short in the fixtures: fits in half
+  const grab = page.getByRole("button", { name: /Show more|Show less/ });
+  const sheet = page.locator(".sheet");
+  await expect(sheet).toHaveClass(/half/);
+  await grab.click();
+  await expect(sheet).toHaveClass(/peek/);
+});
+
+test("search: a plain search field (no contact autofill on iOS)", async ({ page }) => {
+  await setUp(page);
+  await page.goto("/");
+  const input = page.getByLabel("Go to a route");
+  await expect(input).toHaveAttribute("type", "search");
+  await expect(input).toHaveAttribute("autocomplete", "off");
+  // Safari offers contacts when a field's name or id mentions "name"
+  for (const a of ["name", "id"]) expect((await input.getAttribute(a)) ?? "").not.toMatch(/name/i);
+});
+
 test("search: typing a route fits the map to its buses", async ({ page }) => {
   await setUp(page);
   await page.goto("/");

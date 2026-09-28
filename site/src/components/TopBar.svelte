@@ -73,12 +73,15 @@
     <label class="sr" for="route-q">Go to a route</label>
     <input
       id="route-q"
+      type="search"
+      name="route-search"
       bind:value={query}
       oninput={typed}
       onfocus={() => (focused = true)}
       onblur={() => setTimeout(() => { focused = false; opened = null; }, 150)}
       placeholder="Route number or name, e.g. 66"
       autocomplete="off"
+      autocorrect="off"
       autocapitalize="characters"
       spellcheck="false"
       enterkeyhint="go"
@@ -125,11 +128,15 @@
   .dot.stale { background: var(--signal-amber); }
   .dot.waiting { top: -1px; }
   @keyframes pulse { 50% { opacity: 0.3; } }
+  /* A search field (not text) so iOS is less inclined to offer contact autofill; the search
+     type's own look is reset. */
   input {
+    appearance: none; -webkit-appearance: none;
     width: 100%; font: inherit; font-size: 16px; /* 16px: iOS won't zoom on focus */
     padding: 10px 12px; min-height: 44px; border-radius: 10px;
     border: 1.5px solid var(--rule); background: var(--concrete); color: var(--asphalt);
   }
+  input::-webkit-search-decoration, input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
   /* Suggestions float over the map: the bar keeps its height, so the map's fit doesn't shift. */
   form { position: relative; }
   .list, .miss {

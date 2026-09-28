@@ -121,7 +121,6 @@
     else if (selected) toRoute();
     else if (route) close();
   }
-  const grow = () => (size = size === "peek" ? "half" : size === "half" ? "full" : "peek");
 
   onMount(() => {
     document.querySelector(".shell")?.remove(); // index.astro's static shell, for the first paint
@@ -158,7 +157,7 @@
     <TopBar count={feed ? vehicles.length : null} {age} {failed} {names} onOpen={(rt, replace) => go(rt, replace ? "replace" : "push")} aboutOpen={about} onAbout={() => { about = !about; if (about && size === "peek") size = "half"; }} />
   </div>
   {#if feed || about}
-    <Sheet {size} onToggle={grow}>
+    <Sheet {size} onSize={(s) => (size = s)}>
       {#if level === "about"}
         <About onClose={() => (about = false)} />
       {:else if level === "bus" && bus}
