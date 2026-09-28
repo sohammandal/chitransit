@@ -6,10 +6,15 @@ ghost_ledger:
     dev:
       type: duckdb
       path: "{{ env_var('DBT_DUCKDB_PATH', 'target/ghost_ledger.duckdb') }}"
-      threads: 4
+      # Two at a time, capped below the GitHub runner's ~7 GB and allowed to spill to disk:
+      # 4 threads ran out of memory on 2026-09-28.
+      threads: 2
       extensions: [httpfs, aws, iceberg]
       settings:
         TimeZone: America/Chicago
+        memory_limit: "{{ env_var('DBT_DUCKDB_MEMORY', '5GB') }}"
+        temp_directory: "{{ env_var('DBT_DUCKDB_TMP', 'target/duckdb_tmp') }}"
+        preserve_insertion_order: false
       secrets:
         - type: s3
           provider: credential_chain

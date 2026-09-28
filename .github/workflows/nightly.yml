@@ -8,7 +8,11 @@ name: nightly
 
 on:
   schedule:
-    - cron: "0 11 * * *"  # 06:00 CDT / 05:00 CST: yesterday's service day is over by then
+    # GitHub starts scheduled runs on a best-effort basis: busy on the hour, often hours late,
+    # sometimes dropped (Sep 28: never started). So two starts, off the hour; the run is
+    # idempotent (rebuilds the last 3 service days) and runs queue, never overlap.
+    - cron: "23 11 * * *"  # 06:23 CDT / 05:23 CST: yesterday's service day is over by then
+    - cron: "53 13 * * *"  # backup start, 08:53 CDT
   workflow_dispatch:
     inputs:
       start_date:

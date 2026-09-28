@@ -1,5 +1,7 @@
 -- One row per prediction in a sampled getpredictions response (raw_responses: the exact
 -- bytes CTA sent). dyn = 1 marks the trip as canceled at that stop, 4 as expressed.
+-- A table, built once: two models read it, and it parses JSON out of raw responses.
+{{ config(materialized='table') }}
 with polls as (
     select poll_id, fetched_at
     from {{ source('ingress', 'ghost_ops_raw_polls') }}
@@ -16,6 +18,9 @@ responses as (
     where
         fetched_at >= {{ service_ts(window_start() ~ " - 1", 0) }}
         and fetched_at < {{ service_ts(window_end() ~ " + 2", 0) }}
+        -- only prediction responses, before deduplicating: the vehicle responses (~286 KB
+        -- each, 13 a sweep) filled the runner's memory on 2026-09-28
+        and poll_id in (select polls.poll_id from polls)
     qualify row_number() over (partition by poll_id order by __lsn) = 1
 ),
 
