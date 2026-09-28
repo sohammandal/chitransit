@@ -46,3 +46,17 @@ export function place(candidates: Candidate[], left: number, right: number, char
   }
   return placed.sort((a, b) => a.x - b.x);
 }
+
+/** The route's two end names on one row `avail` wide, `gap` apart: both in full when they
+ *  fit, else the longer one shortened (with …) first, then both. measure: text → width. */
+export function fitEnds(a: string, b: string, avail: number, gap: number, measure: (t: string) => number): [string, string] {
+  const cut = (t: string, n: number) => (n >= t.length ? t : `${t.slice(0, n).trimEnd()}…`);
+  let na = a.length, nb = b.length;
+  const width = () => measure(cut(a, na)) + measure(cut(b, nb)) + gap;
+  while (width() > avail && (na > 4 || nb > 4)) {
+    if (measure(cut(a, na)) >= measure(cut(b, nb)) && na > 4) na--;
+    else if (nb > 4) nb--;
+    else na--;
+  }
+  return [cut(a, na), cut(b, nb)];
+}

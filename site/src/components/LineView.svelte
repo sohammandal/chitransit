@@ -5,7 +5,7 @@
   // major cross streets, the two ends, and the stop you tapped. Within a row, labels are
   // placed only where they fit (lib/labels.ts).
   import { minutes } from "../lib/format";
-  import { crossStreet, ownStreet, place } from "../lib/labels";
+  import { crossStreet, fitEnds, ownStreet, place } from "../lib/labels";
   import { isLongWait, isTogether } from "../lib/problems";
   import type { Pattern, Vehicle } from "../lib/types";
 
@@ -18,6 +18,7 @@
   } = $props();
 
   const W = 340, PAD = 14;
+  const ENDS_GAP = 16; // at least this between the two end names
   const STREET_CHAR = 5.6, WAIT_CHAR = 7.2; // upper bounds on character width at 10 / 12 px
   const length = $derived(Math.max(1, ...pattern.s.map((s) => s[3])));
   const x = (feet: number | null) => PAD + Math.max(0, Math.min(1, (feet ?? 0) / length)) * (W - 2 * PAD);
@@ -80,9 +81,9 @@
 
   // Tap the line: the nearest stop is marked and named, to find your stop against the gaps.
   let picked = $state<{ x: number; name: string } | null>(null);
-  let svg: SVGSVGElement;
+  let svg = $state<SVGSVGElement>();
   function pick(e: MouseEvent) {
-    const m = svg.getScreenCTM();
+    const m = svg?.getScreenCTM();
     if (!m) return;
     const px = Math.max(PAD, Math.min(W - PAD, new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse()).x));
     const feet = ((px - PAD) / (W - 2 * PAD)) * length;
@@ -101,7 +102,21 @@
   const endsY = $derived(streetsY + (streets.length ? 16 : 0));
   const pickedY = $derived(endsY + 17);
   const height = $derived((picked ? pickedY : endsY) + 6);
-  const cut = (t: string) => (t.length > 24 ? `${t.slice(0, 23)}…` : t);
+  // The two ends share a row: measured in the real font (once it has loaded), shortened only
+  // when they don't both fit with a clear gap (ENDS_GAP, plus room for the arrow).
+  let fontsReady = $state(false);
+  $effect(() => { document.fonts?.ready.then(() => (fontsReady = true)); });
+  const ends = $derived.by(() => {
+    const a = pattern.s[0]?.[2] ?? "", b = pattern.s.at(-1)?.[2] ?? "";
+    void fontsReady;
+    const ctx = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
+    let measure = (t: string) => t.length * 6.4; // an upper bound, until the font is known
+    if (ctx && svg) {
+      ctx.font = `600 11px ${getComputedStyle(svg).fontFamily}`;
+      measure = (t) => ctx.measureText(t).width;
+    }
+    return fitEnds(a, b, W - 2 * PAD, ENDS_GAP + measure(" →"), measure);
+  });
   const clampX = (cx: number, text: string) => Math.max(PAD + (text.length * 6.4) / 2, Math.min(W - PAD - (text.length * 6.4) / 2, cx));
 </script>
 
@@ -125,8 +140,8 @@
     </g>
   {/each}
   {#each streets as s}<text x={s.x} y={streetsY} class="street" class:express-label={isExpress(s.text)}>{s.text}</text>{/each}
-  <text x={PAD} y={endsY} class="end">{cut(pattern.s[0]?.[2] ?? "")}</text>
-  <text x={W - PAD} y={endsY} class="end" text-anchor="end">{cut(pattern.s.at(-1)?.[2] ?? "")} →</text>
+  <text x={PAD} y={endsY} class="end">{ends[0]}</text>
+  <text x={W - PAD} y={endsY} class="end" text-anchor="end">{ends[1]} →</text>
   {#if picked}
     <text x={clampX(picked.x, picked.name)} y={pickedY} class="picked-name">{picked.name}</text>
   {/if}

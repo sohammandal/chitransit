@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { crossStreet, ownStreet, place, placeName } from "./labels";
+import { crossStreet, fitEnds, ownStreet, place, placeName } from "./labels";
 
 describe("street labels", () => {
   const clark = ["Clark & Harrison", "Clark & Belmont", "Belmont & Clark", "Clark & Diversey", "Dearborn & Adams"];
@@ -36,5 +36,23 @@ describe("street labels", () => {
   it("caps the number of labels", () => {
     const many = Array.from({ length: 10 }, (_, i) => ({ x: 20 + i * 30, text: "Ab", weight: 1 }));
     expect(place(many, 0, 340, 6, 8, 4)).toHaveLength(4);
+  });
+});
+
+describe("fitEnds", () => {
+  const w = (t: string) => t.length * 6; // 6 px a character
+  it("keeps both names in full when they fit", () => {
+    expect(fitEnds("Chicago & Austin Terminal", "Harrison & Canal", 312, 30, w)).toEqual(["Chicago & Austin Terminal", "Harrison & Canal"]);
+  });
+  it("shortens the longer name first", () => {
+    const [a, b] = fitEnds("Ashland & 95th Street Terminal", "Ravenswood Metra Station", 330, 30, w);
+    expect(b).toBe("Ravenswood Metra Station");
+    expect(a.endsWith("…")).toBe(true);
+    expect(w(a) + w(b) + 30).toBeLessThanOrEqual(330);
+  });
+  it("shortens both when one alone isn't enough", () => {
+    const [a, b] = fitEnds("A".repeat(40), "B".repeat(40), 300, 30, w);
+    expect(a.endsWith("…") && b.endsWith("…")).toBe(true);
+    expect(w(a) + w(b) + 30).toBeLessThanOrEqual(300);
   });
 });
