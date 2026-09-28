@@ -80,11 +80,10 @@ jobs:
       - name: Ingress day counts (evidence for the box's prune gate)
         run: uv run --group transform python transform/ingress_counts.py --to "$LAKE/analytics/ops/ingress_day_counts.json"
 
+      # The internal ops view: private, never on the public site. Download it from this run's
+      # artifacts ("dashboard"), or build it locally with `make dashboard`.
       - name: Dashboard
-        run: |
-          uv run --group transform python transform/dashboard.py --src "$LAKE/analytics" --out ops-site/index.html
-          # The internal ops view (unlinked); the public pages are the Astro site (site.yml).
-          aws s3 cp ops-site/index.html "$SITE/ops/index.html" --content-type text/html --cache-control "max-age=300" --only-show-errors
+        run: uv run --group transform python transform/dashboard.py --src "$LAKE/analytics" --out ops-site/index.html
 
       - name: Scheduled gaps for today and tomorrow (the site's "right now" rules)
         working-directory: transform
