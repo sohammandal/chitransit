@@ -487,6 +487,79 @@ test("line view: a string of close buses isn't drawn as one tower (#66, Sep 28 1
   await expect(svg.locator("line.wait")).not.toHaveCount(0); // the real long waits still show
 });
 
+/** The fixture feed as today's poller writes it: each 66 westbound bus measured at its next
+ *  stop, plus a short-turn bus (another pattern) on the line (lib/waits.ts, lib/project.ts). */
+function stopFeed() {
+  const line = JSON.parse(readFileSync(new URL("patterns/6665.json", FIX), "utf8"));
+  const near = (ft: number) => line.s.reduce((a: number[], s: number[]) => (Math.abs(s[3] - ft) < Math.abs(a[3] - ft) ? s : a));
+  const at = near(24000);
+  const by8618 = near(29393); // a second short turn level with bus 8618: they stack
+  const wb = feed.vehicles.filter((v: { pid: number }) => v.pid === 6665);
+  const base = { stop_gap_s: 300, sched_s: 600, sched_due: 0 };
+  const by: Record<string, object> = {
+    "8185": { stop_gap_s: 1800, last_by: "S1", next_stop: "Chicago & Ashland", sched_due: 3 }, // buses due, none came
+    "8118": { stop_gap_s: 5000, last_by: "8185", next_stop: "Chicago & Halsted", sched_due: 1 }, // after a break
+    // two buses heading for the same stop: one hole, one claim, one bar
+    "8172": { stop_gap_s: 1500, last_by: "8185", next_stop: "Chicago & Racine", next_stpid: "R", sched_due: 2 },
+    "8601": { stop_gap_s: 1500, last_by: "8185", next_stop: "Chicago & Racine", next_stpid: "R", sched_due: 2 },
+  };
+  const shortTurn = { ...wb[0], vid: "S1", pid: 4357, lon: at[0], lat: at[1], pdist: 9000, at_terminal: false,
+    ...base, last_by: "8618", next_stop: "Chicago & Damen", next_stpid: "D" };
+  const beside = { ...shortTurn, vid: "S2", lon: by8618[0], lat: by8618[1], last_by: "8116", next_stpid: "S2" };
+  return { ...feed, vehicles: [
+    ...feed.vehicles.filter((v: { pid: number }) => v.pid !== 6665),
+    ...wb.map((v: { vid: string }) => ({ ...v, ...base, last_by: null, next_stop: "Chicago & Test", next_stpid: v.vid, ...by[v.vid] })),
+    shortTurn,
+    beside,
+  ] };
+}
+
+test("line view: a short-turn bus on the line is drawn hollow, and a long wait runs to it", async ({ page }) => {
+  await setUp(page);
+  const f = stopFeed();
+  await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: f }));
+  await page.goto("/route/66/");
+  const svg = page.locator(".sheet svg").filter({ has: page.locator(`[aria-label="Bus 8185"]`) });
+  await expect(svg.locator("circle.dot.other")).toHaveCount(2);
+  await expect(page.getByText("Runs part of the route")).toBeVisible();
+  const cx = async (vid: string) => Number(await svg.locator(`[aria-label="Bus ${vid}"] circle.dot`).getAttribute("cx"));
+  const bars = await svg.locator("line.wait").evaluateAll((ls) => ls.map((l) => [Number(l.getAttribute("x1")), Number(l.getAttribute("x2"))]));
+  expect(bars).toContainEqual([await cx("8185"), await cx("S1")]); // the stretch no bus is on
+  const racine = [await cx("8601"), await cx("8172")];
+  expect(bars.filter(([x1]) => racine.includes(x1))).toHaveLength(1); // one hole, one bar
+  // Rings and dots never touch: visible edges (a dot's blue inside its 2 px white halo, a
+  // ring's outer stroke) keep a gap, however close the buses (user, Sep 28: a ring overlapped)
+  const gaps = await page.locator(".sheet svg").evaluateAll((svgs) => svgs.flatMap((svg) => {
+    const dots = [...svg.querySelectorAll("circle.dot")].map((c) => {
+      const r = Number(c.getAttribute("r")), ring = c.classList.contains("other");
+      return { x: Number(c.getAttribute("cx")), y: Number(c.getAttribute("cy")), edge: ring ? r + 1.25 : r - 1 };
+    });
+    return dots.flatMap((a, i) => dots.slice(i + 1).map((b) => Math.hypot(a.x - b.x, a.y - b.y) - a.edge - b.edge));
+  }));
+  expect(Math.min(...gaps)).toBeGreaterThanOrEqual(1.5);
+});
+
+test("right now: a long wait is named at its stop, and a gap with one bus due isn't one", async ({ page }) => {
+  await setUp(page);
+  const f = stopFeed();
+  await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: f }));
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
+  await expect(page.locator(".sheet li").filter({ hasText: "Long wait at Ashland" })).toHaveCount(1);
+  await expect(page.locator(".sheet li").filter({ hasText: "Long wait at Halsted" })).toHaveCount(0);
+  await expect(page.locator(".sheet li").filter({ hasText: "Long wait at Racine" })).toHaveCount(1);
+});
+
+test("bus card: the wait is measured at the bus's next stop", async ({ page }) => {
+  await setUp(page);
+  const f = stopFeed();
+  await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: f }));
+  await page.goto("/route/66/");
+  await page.locator('[aria-label="Bus 8185"]').first().click();
+  await expect(page.getByText("since the last bus passed Chicago & Ashland")).toBeVisible();
+  await expect(page.locator(".gap strong").first()).toHaveText("30 min");
+});
+
 for (const rt of ["66", "J14"]) test(`line view: no two pieces of text overlap on #${rt}, at any size`, async ({ page }) => {
   await setUp(page);
   await page.goto(`/route/${rt}/`);

@@ -8,6 +8,8 @@
   import * as data from "../lib/data";
   import { pollFeed } from "../lib/feed";
   import { findProblems, scheduledGap } from "../lib/problems";
+  import { onLine } from "../lib/project";
+  import { behindOf } from "../lib/waits";
   import type { Feed, Headways, Pattern, Report, Vehicle } from "../lib/types";
   import About from "./About.svelte";
   import BusCard from "./BusCard.svelte";
@@ -164,9 +166,11 @@
         {@const pattern = bus.pid != null ? patterns.get(bus.pid) : undefined}
         <BusCard
           {bus}
-          behind={vehicles.find((v) => v.ahead === bus.vid && v.pid === bus.pid)}
+          behind={behindOf(bus, vehicles)}
           {pattern}
-          lineBuses={vehicles.filter((v) => v.pid === bus.pid)}
+          lineBuses={pattern && bus.pid != null
+            ? onLine(pattern, bus.pid, vehicles.filter((v) => v.rt === bus.rt && v.dir === bus.dir)).drawn
+            : vehicles.filter((v) => v.pid === bus.pid)}
           scheduled={gapFor(bus)}
           routeName={names[bus.rt]}
           age={Math.max(0, Math.round(now / 1000 - bus.t))}

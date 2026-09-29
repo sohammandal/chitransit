@@ -1,18 +1,21 @@
 <script lang="ts">
   // One direction of a route as a straight line: stops as ticks, buses at their real distance
-  // along it (travel is left to right), buses arriving together in amber, long waits in red.
+  // along it (travel is left to right), buses arriving together in amber, long waits in red
+  // (rules: lib/waits.ts). Buses on the route's other patterns (short turns) that are on this
+  // line are drawn hollow, at their place along it (lib/project.ts).
   // Rows, top to bottom, so text in one row can't meet text in another: wait times, the line,
   // major cross streets, the two ends, and the stop you tapped. Within a row, labels are
   // placed only where they fit (lib/labels.ts).
   import { minutes } from "../lib/format";
   import { crossStreet, fitEnds, ownStreet, place } from "../lib/labels";
-  import { isLongWait, isTogether } from "../lib/problems";
+  import type { LineBus } from "../lib/project";
   import { swarm } from "../lib/swarm";
   import type { Pattern, Vehicle } from "../lib/types";
+  import { isLongWait, isTogether, sameNextStop, waitOf } from "../lib/waits";
 
   let { pattern, buses, scheduled, selected = null, onSelect }: {
     pattern: Pattern;
-    buses: Vehicle[]; // on this pattern
+    buses: LineBus[]; // on this line (lib/project.ts onLine)
     scheduled: number | null; // seconds between buses right now
     selected?: string | null;
     onSelect: (vid: string) => void;
@@ -25,13 +28,20 @@
   const x = (feet: number | null) => PAD + Math.max(0, Math.min(1, (feet ?? 0) / length)) * (W - 2 * PAD);
   const ordered = $derived([...buses].filter((b) => b.pdist != null).sort((a, b) => (b.pdist ?? 0) - (a.pdist ?? 0)));
   const byVid = $derived(new Map(buses.map((b) => [b.vid, b])));
-  const together = $derived(new Set(ordered.flatMap((b, i) =>
-    isTogether(b, scheduled) && ordered[i - 1] ? [b.vid, ordered[i - 1].vid] : [])));
-  const waits = $derived(ordered.flatMap((b) => {
-    const lead = b.ahead ? byVid.get(b.ahead) : undefined;
-    return lead && isLongWait(b, scheduled)
-      ? [{ from: x(b.pdist), to: x(lead.pdist), label: minutes(b.gap_s ?? 0), s: b.gap_s ?? 0 }]
-      : [];
+  const waitFor = (b: Vehicle) => waitOf(b, scheduled);
+  // Together: a bus and the bus just before it at its next stop, when that one is drawn.
+  const together = $derived(new Set(ordered.flatMap((b) => {
+    const w = waitFor(b);
+    return isTogether(w) && w.by && byVid.has(w.by) ? [b.vid, w.by] : [];
+  })));
+  // A long wait: red from the bus to the next bus drawn ahead of it (or the line's end), the
+  // stretch no bus is on, labelled with the wait measured at its next stop.
+  const waits = $derived(ordered.flatMap((b, i) => {
+    const w = waitFor(b);
+    // the bus just ahead is heading for the same stop: that wait is its (one hole, one bar)
+    if (!isLongWait(w) || (ordered[i - 1] && sameNextStop(ordered[i - 1], b))) return [];
+    const to = ordered[i - 1] ? x(ordered[i - 1].pdist) : W - PAD;
+    return to > x(b.pdist) ? [{ from: x(b.pdist), to, label: minutes(w.s ?? 0), s: w.s ?? 0 }] : [];
   }));
   // Every red bar shows; its time label only where it fits (the longest waits first).
   const waitLabels = $derived(place(
@@ -133,7 +143,9 @@
       onclick={() => onSelect(b.vid)} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && onSelect(b.vid)}>
       <circle cx={x(b.pdist)} cy={cy(b)} r={crowded.has(b.vid) ? GAP / 2 : 15} class="hit" />
       {#if b.vid === selected}<circle cx={x(b.pdist)} cy={cy(b)} r="10.5" class="ring" />{/if}
-      <circle cx={x(b.pdist)} cy={cy(b)} r="6.5" class="dot" class:together={together.has(b.vid)} />
+      <!-- A short turn is a ring 6 px across its outer edge (4.75 + 2.5/2), inside a solid dot's
+           blue (6.5 - 2/2 = 5.5, plus its white halo), so neighbours 14 px apart never touch. -->
+      <circle cx={x(b.pdist)} cy={cy(b)} r={b.other ? 4.75 : 6.5} class="dot" class:together={together.has(b.vid)} class:other={b.other} />
     </g>
   {/each}
   {#each streets as s}<text x={s.x} y={streetsY} class="street" class:express-label={isExpress(s.text)}>{s.text}</text>{/each}
@@ -163,5 +175,7 @@
   .bus:focus-visible .dot { stroke: var(--asphalt); }
   .dot { fill: var(--flag-blue); stroke: var(--surface); stroke-width: 2; }
   .dot.together { fill: var(--signal-amber); }
+  .dot.other { fill: var(--surface); stroke: var(--flag-blue); stroke-width: 2.5; } /* a short turn: a ring */
+  .dot.other.together { fill: var(--surface); stroke: var(--signal-amber); }
   .ring { fill: none; stroke: var(--asphalt); stroke-width: 2.5; }
 </style>

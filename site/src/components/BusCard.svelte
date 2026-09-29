@@ -1,15 +1,17 @@
 <script lang="ts">
   // Bus level: the gap in front of this bus and behind it, with the bus on its route line.
   import { minutes } from "../lib/format";
+  import type { LineBus } from "../lib/project";
   import type { Pattern, Vehicle } from "../lib/types";
+  import { waitOf } from "../lib/waits";
   import Key from "./Key.svelte";
   import LineView from "./LineView.svelte";
 
   let { bus, behind, pattern, lineBuses, scheduled, routeName, age, onBack, onSelect }: {
     bus: Vehicle;
-    behind: Vehicle | undefined; // the next bus on the same pattern
+    behind: Vehicle | undefined; // the bus behind (lib/waits.ts behindOf)
     pattern: Pattern | undefined;
-    lineBuses: Vehicle[];
+    lineBuses: LineBus[];
     scheduled: number | null;
     routeName: string | undefined;
     age: number; // seconds since this bus reported
@@ -18,6 +20,10 @@
   } = $props();
 
   const starting = $derived((bus.pdist ?? 0) < 1000);
+  // Measured at its next stop (the "here" a rider on the corner ahead cares about)
+  const wait = $derived(waitOf(bus, scheduled));
+  const behindWait = $derived(behind ? waitOf(behind, scheduled) : null);
+  const here = $derived(wait.at ?? "here");
 </script>
 
 <div class="sheet-head">
@@ -42,14 +48,14 @@
   <div class="gap">
     {#if bus.at_terminal}
       <strong>{starting ? "Starting" : "Finishing"}</strong><span>its trip, at the {starting ? "first" : "last"} stop</span>
-    {:else if bus.gap_s != null}
-      <strong>{minutes(bus.gap_s)}</strong><span>since the last bus passed here</span>
+    {:else if wait.s != null}
+      <strong>{minutes(wait.s)}</strong><span>since the last bus passed {here}</span>
     {:else}
-      <strong>–</strong><span>can't tell when the last bus passed here</span>
+      <strong>–</strong><span>can't tell when the last bus passed {here}</span>
     {/if}
   </div>
-  {#if behind?.gap_s != null && !bus.at_terminal}
-    <div class="gap behind"><strong>{minutes(behind.gap_s)}</strong><span>until the next bus gets here</span></div>
+  {#if behindWait?.s != null && !bus.at_terminal}
+    <div class="gap behind"><strong>{minutes(behindWait.s)}</strong><span>until the next bus gets here</span></div>
   {/if}
 </div>
 
@@ -61,7 +67,7 @@
 <ul class="facts">
   <li>Bus {bus.vid}</li>
   <li>Seen {age} s ago</li>
-  {#if scheduled}<li>Scheduled every {minutes(scheduled)}</li>{/if}
+  {#if wait.sched}<li>Scheduled every {minutes(wait.sched)}</li>{/if}
   {#if bus.dly}<li class="late">Delayed, per CTA</li>{/if}
 </ul>
 

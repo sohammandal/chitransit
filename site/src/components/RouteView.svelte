@@ -2,6 +2,7 @@
   // Route level, two tabs: Now (each direction as a straight line with its live buses) and
   // Report card (how reliable the route has been on the days we watched).
   import { minutes } from "../lib/format";
+  import { onLine } from "../lib/project";
   import type { Pattern, ReportRow, Vehicle } from "../lib/types";
   import Key from "./Key.svelte";
   import LineView from "./LineView.svelte";
@@ -21,7 +22,8 @@
     onClose: () => void;
   } = $props();
 
-  // Per direction, the pattern most of its buses run; the rest run part of the route.
+  // Per direction, the line of the pattern most of its buses run; buses on the route's other
+  // patterns are drawn on it where they're on it (short turns), and counted where they aren't.
   const directions = $derived.by(() => {
     const dirs = [...new Set(buses.map((b) => b.dir).filter((d): d is string => !!d))].sort();
     return dirs.map((dir) => {
@@ -29,8 +31,8 @@
       const counts = new Map<number, number>();
       for (const b of mine) if (b.pid != null && patterns.has(b.pid)) counts.set(b.pid, (counts.get(b.pid) ?? 0) + 1);
       const pid = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
-      const onLine = pid == null ? [] : mine.filter((b) => b.pid === pid);
-      return { dir, pid, onLine, partial: mine.length - onLine.length, scheduled: scheduledFor(dir) };
+      const line = pid == null ? { drawn: [], off: 0 } : onLine(patterns.get(pid)!, pid, mine);
+      return { dir, pid, drawn: line.drawn, off: line.off, scheduled: scheduledFor(dir) };
     });
   });
   let tab = $state<"now" | "report">("now");
@@ -59,16 +61,16 @@
   <div class="dir line">
     <p class="lab"><b>{d.dir}</b>{#if d.scheduled}<span>scheduled every {minutes(d.scheduled)}</span>{/if}</p>
     {#if d.pid != null}
-      <LineView pattern={patterns.get(d.pid)!} buses={d.onLine} scheduled={d.scheduled} {selected} {onSelect} />
+      <LineView pattern={patterns.get(d.pid)!} buses={d.drawn} scheduled={d.scheduled} {selected} {onSelect} />
     {/if}
-    {#if d.pid != null && d.partial}<p class="note">{d.partial} more {d.partial === 1 ? "bus is" : "buses are"} running only part of the route (not shown on the line)</p>{/if}
+    {#if d.pid != null && d.off}<p class="note">{d.off} more {d.off === 1 ? "bus is" : "buses are"} on a branch or detour off this line (not shown)</p>{/if}
   </div>
 {:else}
   <p class="note">No buses on this route right now</p>
 {/each}
 
 {#if buses.length}
-  <Key />
+  <Key partial={directions.some((d) => d.drawn.some((b) => b.other))} />
 {/if}
 {/if}
 

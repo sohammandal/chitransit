@@ -12,7 +12,7 @@
 
   const together = $derived(problems.filter((p) => p.kind === "together").length);
   const waits = $derived(problems.length - together);
-  const at = (p: Problem) => (p.buses[0].near ? ` at ${placeName(p.buses[0].near, names[p.rt])}` : "");
+  const at = (p: Problem) => (p.where ? ` at ${placeName(p.where, names[p.rt])}` : "");
 </script>
 
 <div class="sheet-head">

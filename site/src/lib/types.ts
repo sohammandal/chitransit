@@ -17,6 +17,14 @@ export type Vehicle = {
   ahead: string | null; // vid of that bus
   at_terminal: boolean;
   near?: string | null; // the stop nearest the bus ("Clark & Belmont")
+  // Measured at the bus's next stop, counting every bus of the route and direction (short
+  // turns too), and the schedule there. Absent from an older feed (lib/waits.ts falls back).
+  stop_gap_s?: number | null; // time since the last bus passed the next stop
+  last_by?: string | null; // the bus that did
+  next_stop?: string | null; // "Clark & Belmont"
+  next_stpid?: string | null;
+  sched_s?: number | null; // scheduled gap at that stop now (null: nothing scheduled this hour)
+  sched_due?: number | null; // scheduled departures there since the last bus passed
 };
 
 export type Feed = { generated_at: string; build?: string; vehicles: Vehicle[] }; // build: the poller's commit
