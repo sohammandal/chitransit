@@ -755,7 +755,7 @@ test("right now: a bus far ahead isn't the wait after a bunch it saw on an earli
   await expect(wait).toContainText("every 30 min");
 });
 
-test("bus card: the gap behind is a lower bound, shown with a + (J14, Sep 28)", async ({ page }) => {
+test("bus card: the gap behind is an estimate, shown with a ~ (J14, Sep 28)", async ({ page }) => {
   // The next bus can be miles back: the number is how long ago this bus passed that bus's next stop.
   await setUp(page);
   const f = stopFeed();
@@ -763,6 +763,6 @@ test("bus card: the gap behind is a lower bound, shown with a + (J14, Sep 28)", 
   await page.goto("/route/66/");
   await page.locator('[aria-label="Bus 8185"]').first().click();
   const behind = page.locator(".gap.behind");
-  await expect(behind).toContainText("25 min+"); // at least: the next bus isn't there yet
+  await expect(behind).toContainText("~25 min"); // an estimate: the next bus isn't there yet
   await expect(behind).toContainText("until the next bus gets here");
 });
