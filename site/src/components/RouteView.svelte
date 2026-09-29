@@ -3,6 +3,7 @@
   // Report card (how reliable the route has been on the days we watched).
   import { minutes } from "../lib/format";
   import { mainPid, onLine } from "../lib/project";
+  import { scheduleRange } from "../lib/waits";
   import type { Pattern, ReportRow, Vehicle } from "../lib/types";
   import Key from "./Key.svelte";
   import LineView from "./LineView.svelte";
@@ -30,7 +31,8 @@
       const mine = buses.filter((b) => b.dir === dir);
       const pid = mainPid(mine, patterns);
       const line = pid == null ? { drawn: [], off: 0 } : onLine(patterns.get(pid)!, pid, mine);
-      return { dir, pid, drawn: line.drawn, off: line.off, scheduled: scheduledFor(dir) };
+      const scheduled = scheduledFor(dir);
+      return { dir, pid, drawn: line.drawn, off: line.off, scheduled, range: scheduleRange(mine, scheduled) };
     });
   });
   let tab = $state<"now" | "report">("now");
@@ -57,7 +59,7 @@
 {:else}
 {#each directions as d (d.dir)}
   <div class="dir line">
-    <p class="lab"><b>{d.dir}</b>{#if d.scheduled}<span>scheduled every {minutes(d.scheduled)}</span>{/if}</p>
+    <p class="lab"><b>{d.dir}</b>{#if d.range}<span>scheduled every {d.range[0] === d.range[1] ? minutes(d.range[0]) : `${Math.round(d.range[0] / 60)}–${minutes(d.range[1])}`}</span>{/if}</p>
     {#if d.pid != null}
       <LineView pattern={patterns.get(d.pid)!} buses={d.drawn} scheduled={d.scheduled} {selected} {onSelect} />
     {/if}

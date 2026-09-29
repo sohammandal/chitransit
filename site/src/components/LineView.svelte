@@ -11,7 +11,7 @@
   import type { LineBus } from "../lib/project";
   import { swarm } from "../lib/swarm";
   import type { Pattern, Vehicle } from "../lib/types";
-  import { isLongWait, isTogether, sameNextStop, waitOf } from "../lib/waits";
+  import { isLongWait, sameNextStop, togetherWith, waitOf } from "../lib/waits";
 
   let { pattern, buses, scheduled, selected = null, onSelect }: {
     pattern: Pattern;
@@ -29,10 +29,10 @@
   const ordered = $derived([...buses].filter((b) => b.pdist != null).sort((a, b) => (b.pdist ?? 0) - (a.pdist ?? 0)));
   const byVid = $derived(new Map(buses.map((b) => [b.vid, b])));
   const waitFor = (b: Vehicle) => waitOf(b, scheduled);
-  // Together: a bus and the bus just before it at its next stop, when that one is drawn.
+  // Together: a bus and the bus just ahead of it (lib/waits.ts togetherWith), when drawn.
   const together = $derived(new Set(ordered.flatMap((b) => {
-    const w = waitFor(b);
-    return isTogether(w) && w.by && byVid.has(w.by) ? [b.vid, w.by] : [];
+    const w = togetherWith(b, scheduled);
+    return w && byVid.has(w) ? [b.vid, w] : [];
   })));
   // A long wait: red from the bus to the next bus drawn ahead of it (or the line's end), the
   // stretch no bus is on, labelled with the wait measured at its next stop.

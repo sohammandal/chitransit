@@ -1,7 +1,7 @@
 // "Right now" problems: buses arriving together, and long waits (rules: lib/waits.ts).
 import { chicago } from "./format";
 import type { Headways, Vehicle } from "./types";
-import { isLongWait, isTogether, sameNextStop, waitOf } from "./waits";
+import { isLongWait, sameNextStop, stillAhead, togetherWith, waitOf } from "./waits";
 
 export type Problem = {
   kind: "together" | "wait";
@@ -24,8 +24,8 @@ export function scheduledGap(h: Headways | null, rt: string, dir: string | null,
 
 /** Every problem on the road, worst first (the wait riders face relative to the schedule).
  *  Rules: lib/waits.ts. Buses laying over at a terminal aren't serving riders and are left
- *  out. Buses together are chained by who passed whose next stop last, on any pattern of the
- *  route and direction, so a short turn bunched with a full-route bus reads as one bunch. */
+ *  out. Buses together are chained pairwise (lib/waits.ts togetherWith: measured where each
+ *  bus is, against the bus ahead on its pattern). */
 export function findProblems(vehicles: Vehicle[], gapFor: (v: Vehicle) => number | null): Problem[] {
   const live = vehicles.filter((v) => v.pid != null && v.pdist != null && !v.at_terminal);
   const byVid = new Map(live.map((v) => [v.vid, v]));
@@ -37,8 +37,8 @@ export function findProblems(vehicles: Vehicle[], gapFor: (v: Vehicle) => number
   const root = (x: string): string => (parent.get(x) === x ? x : root(parent.get(x)!));
   const together = new Set<string>();
   for (const v of live) {
-    const w = waits.get(v.vid)!, before = w.by ? byVid.get(w.by) : undefined;
-    if (before && sameLine(v, before) && isTogether(w)) {
+    const with_ = togetherWith(v, gapFor(v)), before = with_ ? byVid.get(with_) : undefined;
+    if (before && sameLine(v, before)) {
       parent.set(root(v.vid), root(before.vid));
       together.add(v.vid).add(before.vid);
     }
@@ -51,9 +51,13 @@ export function findProblems(vehicles: Vehicle[], gapFor: (v: Vehicle) => number
   for (const group of groups.values()) {
     const members = new Set(group.map((v) => v.vid));
     group.sort((a, b) => (b.pdist ?? 0) - (a.pdist ?? 0)); // the bus furthest along first
-    // The wait after them: the nearest bus behind whose last bus was one of them.
+    // The wait after them: the nearest bus behind whose last bus was one of them, on this trip
+    // (not a bus far ahead that one of them passed before turning around: then unknown).
     const after = live
-      .filter((v) => !members.has(v.vid) && members.has(waits.get(v.vid)!.by ?? ""))
+      .filter((v) => {
+        const by = byVid.get(waits.get(v.vid)!.by ?? "");
+        return !members.has(v.vid) && by != null && members.has(by.vid) && stillAhead(v, by);
+      })
       .sort((a, b) => (waits.get(a.vid)!.s ?? Infinity) - (waits.get(b.vid)!.s ?? Infinity))[0];
     if (after) behindGroup.add(after.vid);
     const lead = group[0];

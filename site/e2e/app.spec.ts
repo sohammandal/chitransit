@@ -728,3 +728,40 @@ test("bus view: the map shows only the open bus's direction; the route view show
   await page.getByRole("button", { name: "‹ 66 Chicago" }).click();
   await expect.poll(async () => (await dirsOnMap()).length, { timeout: 10_000 }).toBe(2);
 });
+
+test("right now: a bus far ahead isn't the wait after a bunch it saw on an earlier trip (#95, Sep 28)", async ({ page }) => {
+  // Two buses bunched at the start of the line; the bus near the far end last saw one of them
+  // pass its stop 66 min ago, before that bus turned around. The bunch's wait after them is
+  // unknown, and the far bus's own long wait is its own claim, at its stop and schedule.
+  await setUp(page);
+  const f = stopFeed();
+  const wb = f.vehicles.filter((v: { pid: number }) => v.pid === 6665).sort((a: { pdist: number }, b: { pdist: number }) => a.pdist - b.pdist);
+  const [rear, lead] = wb, front = wb.at(-1);
+  for (const v of wb) Object.assign(v, { last_by: null, stop_gap_s: 300, sched_due: 0, gap_s: 300 });
+  Object.assign(rear, { last_by: lead.vid, stop_gap_s: 30, gap_s: 30, ahead: lead.vid }); // just behind the lead: together
+  Object.assign(front, { at_terminal: false, last_by: lead.vid, stop_gap_s: 3960, sched_s: 1800, sched_due: 3, next_stop: "Chicago & Kostner", next_stpid: "K" });
+  f.vehicles = f.vehicles.filter((v: { vid: string }) => v.vid !== "S1" && v.vid !== "S2");
+  await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: f }));
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
+  const bunch = page.locator(".sheet li").filter({ hasText: "2 buses together" }).filter({ hasText: "Chicago westbound" });
+  await expect(bunch).toHaveCount(1);
+  await expect(bunch).toContainText("?");
+  await expect(bunch).not.toContainText("66 min");
+  const wait = page.locator(".sheet li").filter({ hasText: "Long wait at Kostner" });
+  await expect(wait).toContainText("66 min");
+  await expect(wait).toContainText("every 30 min");
+});
+
+test("bus card: the gap behind says what was measured, not when the next bus gets here (J14, Sep 28)", async ({ page }) => {
+  // The next bus can be miles back: the number is how long ago this bus passed that bus's next stop.
+  await setUp(page);
+  const f = stopFeed();
+  await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: f }));
+  await page.goto("/route/66/");
+  await page.locator('[aria-label="Bus 8185"]').first().click();
+  const behind = page.locator(".gap.behind");
+  await expect(behind).toContainText("25 min");
+  await expect(behind).toContainText("since this bus passed Chicago & Racine, where the next bus is headed");
+  await expect(page.getByText("until the next bus gets here")).toHaveCount(0);
+});

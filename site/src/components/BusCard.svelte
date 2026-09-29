@@ -1,5 +1,7 @@
 <script lang="ts">
   // Bus level: the gap in front of this bus and behind it, with the bus on its route line.
+  // Both are measured, never predicted: behind is how long ago this bus passed the stop the
+  // next bus is heading for (not when that bus gets here: it may be miles back, J14 Sep 28).
   import { minutes } from "../lib/format";
   import type { LineBus } from "../lib/project";
   import type { Pattern, Vehicle } from "../lib/types";
@@ -55,7 +57,7 @@
     {/if}
   </div>
   {#if behindWait?.s != null && !bus.at_terminal}
-    <div class="gap behind"><strong>{minutes(behindWait.s)}</strong><span>until the next bus gets here</span></div>
+    <div class="gap behind"><strong>{minutes(behindWait.s)}</strong><span>since this bus passed {behindWait.at ?? "the next bus's next stop"}, where the next bus is headed</span></div>
   {/if}
 </div>
 
