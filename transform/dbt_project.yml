@@ -26,6 +26,9 @@ vars:
   rule_flag_window_min: 30     # a stop sampled this long before the trip was due there
   rule_min_flag_looks: 2       # samples of its stops needed to call a trip unannounced
   rule_start_ft: 150           # a trip is under way this far past its lowest report (= live.START_FT)
+  rule_first_seen_ft: 500      # a trip first seen this soon past a stop passed it (= live.FIRST_SEEN_FT)
+  rule_dwell_ft: 100           # a bus this close to a stop is at it (= live.DWELL_FT)
+  rule_terminal_ft: 1000       # back this far on a new trip: the bus started over (= live.TERMINAL_FT)
 
 models:
   ghost_ledger:

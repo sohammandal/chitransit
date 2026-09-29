@@ -29,10 +29,11 @@ Reads Ingress read-only; caches the day under data/replay/<date>/.
 
 import argparse
 import importlib.util
+import math
 import statistics
 import sys
 import time
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -41,6 +42,7 @@ from zoneinfo import ZoneInfo
 import duckdb
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+import ghost_ledger.live as live_rules  # noqa: E402
 from ghost_ledger.live import (  # noqa: E402
     STALE,
     STEP,
@@ -48,6 +50,7 @@ from ghost_ledger.live import (  # noqa: E402
     LiveBoard,
     Schedule,
     departed_at,
+    runs,
     trip_passes,
 )
 
@@ -55,6 +58,16 @@ CHI = ZoneInfo("America/Chicago")
 ROOT = Path(__file__).resolve().parents[1]
 GTFS = ROOT / "data" / "gtfs_parquet"
 SWEEP = timedelta(seconds=30)
+NEAR_M = 150  # the GPS check: a bus this close to a stop was at it
+SAME_PASS = timedelta(minutes=5)
+LONG_BLACKOUT = timedelta(minutes=30)
+
+
+def metres(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    x = (lon2 - lon1) * math.cos(math.radians((lat1 + lat2) / 2)) * 111_320
+    return math.hypot(x, (lat2 - lat1) * 110_540)
+
+
 LOOKAHEAD = timedelta(seconds=60)
 
 
@@ -75,7 +88,7 @@ def extract(day: date, start: datetime, until: datetime, cache: Path) -> None:
     c.execute("ATTACH '354894954112' AS glue (TYPE iceberg, ENDPOINT_TYPE glue)")
     lo, hi = (start - TRAIL - timedelta(minutes=15)).isoformat(), until.isoformat()
     c.execute(f"""COPY (
-        SELECT vid, observed_at, rt, pid, pdist, stsd, stst
+        SELECT vid, observed_at, rt, pid, pdist, stsd, stst, lat, lon
         FROM glue.ghost_ledger_ingress.ghost_ops_bus_positions
         WHERE observed_at >= '{lo}'::timestamptz AND observed_at < '{hi}'::timestamptz
             AND pid IS NOT NULL AND pdist IS NOT NULL
@@ -93,7 +106,7 @@ def extract(day: date, start: datetime, until: datetime, cache: Path) -> None:
             FROM v
         )
         SELECT pid, rt, rtdir, length_ft, (pt->>'pdist')::double AS pdist, pt->>'stpid' AS stpid,
-            pt->>'stpnm' AS name
+            pt->>'stpnm' AS name, (pt->>'lat')::double AS lat, (pt->>'lon')::double AS lon
         FROM pts WHERE (pt->>'typ') = 'S' AND (pt->>'stpid') IS NOT NULL
     ) TO '{cache}/stops.parquet' (FORMAT parquet)""")  # noqa: S608
 
@@ -174,15 +187,19 @@ def main() -> int:
     ap.add_argument("--routes", default="", help="comma list: only these routes")
     ap.add_argument("--show-wrong", type=int, default=0, help="print N wrong new flags")
     args = ap.parse_args()
-    day, cache = args.date, ROOT / "data" / "replay" / args.date.isoformat()
+    day, cache = args.date, ROOT / "data" / "replay" / f"{args.date.isoformat()}-v2"
     start, until = at(day, args.start), at(day, args.until)
     extract(day, start, until, cache)
     routes = set(filter(None, args.routes.split(",")))
 
     board = LiveBoard()
-    for pid, rt, rtdir, length, feet, sid, name in duckdb.sql(
-        f"SELECT * FROM '{cache}/stops.parquet' ORDER BY pid, pdist"  # noqa: S608
+    stop_geo: dict[tuple, list[tuple[float, float]]] = defaultdict(list)
+    for pid, rt, rtdir, length, feet, sid, name, lat, lon in duckdb.sql(
+        "SELECT pid, rt, rtdir, length_ft, pdist, stpid, name, lat, lon"
+        f" FROM '{cache}/stops.parquet'"
+        " ORDER BY pid, pdist"  # noqa: S608
     ).fetchall():
+        stop_geo[(rt, rtdir, sid)].append((lat, lon))
         board.stop_ids.setdefault(int(pid), []).append((float(feet), sid, name or ""))
         board.stops.setdefault(int(pid), []).append((float(feet), name or ""))
         board.routes[int(pid)], board.dirs[int(pid)] = rt, rtdir
@@ -193,27 +210,67 @@ def main() -> int:
         f"SELECT vid, observed_at, rt, pid, pdist, stsd, stst FROM '{cache}/pos.parquet' {where} ORDER BY observed_at"  # noqa: S608, E501
     ).fetchall()
     print(f"{len(rows):,} reports, {len(board.stop_ids)} patterns")
+    # Every report's GPS position by route, for the independent check below
+    geo: dict[str, list] = defaultdict(list)
+    last_seen: dict[str, tuple[int, float]] = {}  # vid -> (pid, pdist) of its previous report
+    for vid, t, rt, pid, pdist, lat, lon in duckdb.sql(
+        f"SELECT vid, observed_at, rt, pid, pdist, lat, lon FROM '{cache}/pos.parquet' {where}"
+        " ORDER BY observed_at"  # noqa: S608
+    ).fetchall():
+        if lat is not None:
+            prev = last_seen.get(vid)
+            before = prev[1] if prev and prev[0] == int(pid) else None
+            geo[rt].append((t, vid, int(pid), float(pdist), lat, lon, before))
+            last_seen[vid] = (int(pid), float(pdist))
+    geo_times = {rt: [g[0] for g in rows_] for rt, rows_ in geo.items()}
 
     # Hindsight: every pass of the day, by the live rule and by the nightly's current rule.
-    trips: dict[tuple, list] = defaultdict(list)
+    trips: dict[tuple, list] = defaultdict(list)  # by CTA trip id: the nightly's old rule only
+    trails: dict[str, list] = defaultdict(list)  # as the live board keeps them
     for vid, t, _rt, pid, pdist, stsd, stst in rows:
-        if stsd is not None and stst is not None:
+        trip = (stsd, stst) if stsd is not None and stst is not None else None
+        trails[vid].append((t, int(pid), float(pdist), trip))
+        if trip is not None:
             trips[(vid, int(pid), stsd, stst)].append((t, float(pdist)))
+    live_runs = [(vid, pid, pts) for vid, tr in trails.items() for pid, pts in runs(tr)]
     truth: dict[tuple, list] = defaultdict(list)
+    unsure: set[tuple] = set()  # (vid, passed_at) timed only as a bound across a long blackout
+    at_stop: dict[tuple, list] = defaultdict(list)  # (arrived, left, vid) of buses that stood
     counts = {"live": defaultdict(int), "nightly": defaultdict(int)}
-    for (vid, pid, _, _), points in trips.items():
+    for vid, pid, points in live_runs:
         stops, rt, rtdir = board.stop_ids.get(pid), board.routes.get(pid), board.dirs.get(pid)
         if not stops or rt is None:
             continue
         left = departed_at(points)
         times = [p[0] for p in points]
+        # When it got there (the crossing, before any time standing at the stop): between
+        # arriving and leaving, a bus is at the stop and nobody there is waiting.
+        # (fixed at 100 ft here, whatever the rules under test say)
+        saved, live_rules.DWELL_FT = live_rules.DWELL_FT, -1
+        arrivals = trip_passes(points, stops)
+        live_rules.DWELL_FT = 100
+        departures = trip_passes(points, stops)
+        live_rules.DWELL_FT = saved
+        for (arr, _), (dep, sid) in zip(arrivals, departures, strict=False):
+            if dep > arr:
+                at_stop[(rt, rtdir, sid)].append((arr, dep, vid))
         for when, sid in trip_passes(points, stops):
             # knowable from the passing bus's next report, and not before its trip got going
             k = bisect_right(times, when)
             known = max(times[min(k, len(times) - 1)], left or when)
+            # a pass stamped across a long blackout is only a bound ("no later than"): when it
+            # really happened is unknown, so it can't prove a claim wrong
+            j = bisect_left(times, when)
+            if j > 0 and times[j - 1] < when - LONG_BLACKOUT:
+                unsure.add((vid, when))
             truth[(rt, rtdir, sid)].append((when, vid, known))
             if start <= when < until:
                 counts["live"][(rt, sid)] += 1
+
+    for (_vid, pid, _, _), points in trips.items():
+        stops, rt = board.stop_ids.get(pid), board.routes.get(pid)
+        if not stops or rt is None:
+            continue
         for when, sid in nightly_rule(points, stops):
             if start <= when < until:
                 counts["nightly"][(rt, sid)] += 1
@@ -335,6 +392,8 @@ def main() -> int:
     # scheduled departures due since the last bus (sched_due): buses were due and didn't come.
     n = flags = wrong = true_long = missed = no_sched = not_due = 0
     why: dict[str, int] = defaultdict(int)
+    geo_hits: list[str] = []
+    geo_now = 0
     miss_why: dict[str, int] = defaultdict(int)
     examples: list[str] = []
     for t, v, last, _hw in samples:
@@ -347,16 +406,58 @@ def main() -> int:
         n += 1
         true_s = (t - last[0]).total_seconds()
         true_due = live_schedule.judge(v["rt"], v["next_stpid"], t, last[0])[1] or 0
-        flagged = g is not None and g > 2 * s_ and (due or 0) >= 2
+        key_ = (v["rt"], v["dir"], v["next_stpid"])
+        standing = [a for a, d, o in at_stop.get(key_, ()) if a <= t < d and o != v["vid"]]
+        if standing:
+            true_s = true_due = 0  # a bus is standing at the stop now: no one is waiting
+            if all(t - a < SAME_PASS for a in standing):
+                last = (standing[0], t + LOOKAHEAD * 2)  # just got there: live hears next sweep
+        flagged = g is not None and g > 2 * s_ and (due or 0) >= 2  # the site's rule
         not_due += g is not None and g > 2 * s_ and (due or 0) < 2
         if flagged:
+            # Independent of the pass logic: was any bus of the route and direction at the
+            # stop (GPS within NEAR_M) during the claimed wait? A bus still lingering right
+            # after its own pass (up to SAME_PASS) doesn't count.
+            key = (v["rt"], v["dir"], v["next_stpid"])
+            spots = stop_geo.get(key, [])
+            own = {o: w for w, o, _ in truth.get(key, []) if w <= last[0] + LOOKAHEAD / 2}
+            lo_i = bisect_right(geo_times.get(v["rt"], []), last[0] + LOOKAHEAD / 2)
+            hi_i = bisect_right(geo_times.get(v["rt"], []), t)
+            for gt, gvid, gpid, gft, glat, glon, gprev in geo.get(v["rt"], [])[lo_i:hi_i]:
+                if gvid == v["vid"] or board.dirs.get(gpid) != v["dir"]:
+                    continue
+                # only a bus that serves this stop (its pattern has it) and has reached it:
+                # one still approaching hasn't ended the wait yet; an express skipping it isn't
+                # service there
+                at_ft = [f for f, sid, _ in board.stop_ids.get(gpid, ()) if sid == v["next_stpid"]]
+                # ...moving forward along its pattern, from before the stop: a bus driving the
+                # other way on its next trip's pattern (J14 4307, Sep 28) goes past the stop's
+                # corner without serving it
+                if gprev is None or gft <= gprev:
+                    continue
+                if not any(gft >= f - 50 and gprev <= f + 50 for f in at_ft):
+                    continue
+                if gvid in own and gt <= own[gvid] + SAME_PASS:
+                    continue
+                if any(metres(glat, glon, a, b) <= NEAR_M for a, b in spots):
+                    if t - gt <= timedelta(seconds=90):
+                        geo_now += 1  # arriving as we speak: the wait ends now (report lag)
+                        break
+                    geo_hits.append(f"{t:%H:%M} rt {v['rt']} {v['dir']} vid {v['vid']} at"
+                                    f" {v['next_stop']}: claimed {g // 60} min since"
+                                    f" {last[0]:%H:%M:%S};"
+                                    f" {gvid} was at the stop {gt:%H:%M:%S}")  # fmt: skip
+                    break
             flags += 1
             bad = not (true_s > 2 * s_ and true_due >= 2)
             wrong += bad
             if bad:
+                by_bus = next((o for w, o, _ in truth.get(key_, ()) if w == last[0]), None)
                 kind = (
                     "tracker lag"
                     if last[1] > t  # a bus passed but its report hadn't come
+                    else "unknowable (the passing bus was unseen 30+ min)"
+                    if (by_bus, last[0]) in unsure
                     else "within 60 s at the line"
                     if abs(g - true_s) <= 60
                     else "other"
@@ -384,6 +485,10 @@ def main() -> int:
         f" long but under 2 due {not_due:,}"
     )
     print("     wrong, by cause:", dict(why))
+    print(f"     GPS check: a bus at the stop within the last 90 s (arriving now) {geo_now:,};"
+          f" earlier in the claimed wait {len(geo_hits):,}")  # fmt: skip
+    for h in geo_hits[:40]:
+        print("       ", h)
     print("     missed, by cause:", dict(miss_why))
     for e in examples:
         print("     other:", e)

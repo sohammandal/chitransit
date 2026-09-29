@@ -91,6 +91,11 @@ OVERDUE = timedelta(seconds=45)
 # a bus laying over creeps a few dozen feet at most, while a bus that left, even in downtown
 # rush-hour traffic, covers more within a report or two (Sep 28 #146: 0 -> 523 ft in 9 s).
 START_FT = 150
+# A bus this close to a stop is at it (GPS and pole placement put a standing bus a few dozen
+# feet either side)
+DWELL_FT = 100
+# A trip first seen this soon after a stop passed it (a stop spacing is ~660 ft)
+FIRST_SEEN_FT = 500
 # Two reports further apart than this aren't interpolated (the bus dropped out of the feed in
 # between), as in the nightly's int_stop_passes.
 STEP = timedelta(minutes=5)
@@ -238,11 +243,7 @@ class LiveBoard:
         that arrives late (no second copy to keep in step)."""
         out: dict[tuple[str, str, str], list[tuple[datetime, str]]] = {}
         for vid, trail in self.trails.items():
-            trips: dict[tuple, list[tuple[datetime, float]]] = {}
-            for t, pid, d, trip in trail:
-                if trip is not None:
-                    trips.setdefault((pid, trip), []).append((t, d))
-            for (pid, _), points in trips.items():
+            for pid, points in runs(trail):
                 stops, rt, rtdir = self.stop_ids.get(pid), self.routes.get(pid), self.dirs.get(pid)
                 if not stops or rt is None or rtdir is None:
                     continue
@@ -251,14 +252,11 @@ class LiveBoard:
         return out
 
     def under_way(self, vid: str) -> bool:
-        """Whether the bus's current trip has left its start (departed_at). A bus without a trip
-        key can't be judged here and counts as under way (the terminal zone still applies)."""
+        """Whether the bus's current run has left its start (departed_at)."""
         trail = self.trails.get(vid)
-        if not trail or trail[-1][3] is None:
+        if not trail:
             return True
-        _, pid, _, trip = trail[-1]
-        points = [(t, d) for t, p, d, k in trail if p == pid and k == trip]
-        return departed_at(points) is not None
+        return departed_at(runs(trail)[-1][1]) is not None
 
     def dark_buses(
         self, now: datetime
@@ -445,6 +443,22 @@ class LiveBoard:
         }
 
 
+def runs(trail) -> list[tuple[int, list[tuple[datetime, float]]]]:
+    """A bus's trail cut into runs: continuous travel along one pattern, [(pid, [(t, pdist)])].
+    A new run starts when the pattern changes, or when the bus is back more than TERMINAL_FT
+    on a new trip (it started over, at a terminal). A trip change alone doesn't: CTA reassigns
+    a moving bus (#66, Sep 28: 8125 switched trips while driving out from the terminal, and
+    the stops it passed in between were lost). Nor does a jump back alone: GPS glitches."""
+    out: list[tuple[int, list[tuple[datetime, float]]]] = []
+    prev = None
+    for t, pid, d, trip in trail:
+        if prev is None or pid != prev[0] or (d < prev[1] - TERMINAL_FT and trip != prev[2]):
+            out.append((pid, []))
+        out[-1][1].append((t, d))
+        prev = (pid, d, trip)
+    return out
+
+
 def departed_at(points: list[tuple[datetime, float]]) -> datetime | None:
     """When a trip got under way: its first report TERMINAL_FT past the lowest point it has
     reported so far, or None while it is still at its start. Measured from the trip's own
@@ -501,7 +515,36 @@ def trip_passes(
                 starting[k] = max(when, waited)  # still there until it left
             elif k not in running and k not in starting:
                 running[k] = when
-    return [(when, stops[k][1]) for k, when in sorted({**running, **starting}.items())]
+    # First seen just past a stop: the bus drove past it (or pulled out there) just before its
+    # first report, so it passed no later than that (Sep 28, #3 at King & 83rd: a trip first
+    # seen 118 ft past the stop; without this riders there were told 45 min, not 24).
+    t_first, d_first = points[0]
+    k = bisect_left(stops, (d_first,)) - 1
+    if k >= 0 and d_first - stops[k][0] <= FIRST_SEEN_FT and k not in running and k not in starting:
+        running[k] = t_first
+    passes = {**running, **starting}
+    # A bus standing at a stop (within DWELL_FT either side) serves it until it leaves: the
+    # pass is its last report there before it moves on (Sep 28: #79 stood at Spaulding 11
+    # minutes while buses behind were told the last bus came 16-26 minutes ago).
+    # Standing means two reports or more there in a row: a moving bus whose next report just
+    # happens to land near the stop isn't held there.
+    times = [t for t, _ in points]
+    for k, when in passes.items():
+        at = stops[k][0]
+        there = []
+        for t, d in points[bisect_right(times, when) :]:
+            if d > at + DWELL_FT or d < at - DWELL_FT:
+                break
+            there.append(t)
+        if len(there) >= 2:
+            passes[k] = there[-1]
+    # Stops closer together than DWELL_FT: a later stop is never passed before an earlier one
+    later = None
+    for k in sorted(passes, reverse=True):
+        if later is not None and passes[k] > later:
+            passes[k] = later
+        later = passes[k]
+    return [(when, stops[k][1]) for k, when in sorted(passes.items())]
 
 
 def pattern_stop_ids(points: list[dict[str, Any]]) -> list[tuple[float, str, str]]:

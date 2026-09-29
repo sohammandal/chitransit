@@ -303,7 +303,7 @@ def test_going_backwards_passes_nothing_and_a_new_trip_starts_afresh():
     assert [t for t, _ in board.passes()[("79", "Eastbound", "s7")]] == [
         T0 + timedelta(minutes=2 / 3)
     ]
-    for m, d in ((5, 6500), (6, 7500)):  # the next trip (a new stst) passes s7 again
+    for m, d in ((5, 0), (6, 3000), (7, 6500), (8, 7500)):  # the next trip, from the start
         sweep(board, m, trip("A", d, m, stst=40000))
     assert len(board.passes()[("79", "Eastbound", "s7")]) == 2
 
@@ -482,3 +482,36 @@ def test_the_feed_carries_the_schedule_at_the_next_stop(tmp_path):
     b = by_vid(board.snapshot(T0 + timedelta(minutes=10)))["B"]
     assert b["stop_gap_s"] == 6 * 60
     assert b["sched_s"] == 300 and b["sched_due"] == 2  # due at m=5 and m=10; A came at m=4
+
+
+def test_a_trip_first_seen_just_past_a_stop_passed_it_by_then():
+    # Route 3, Sep 28: a trip's first report came 118 ft past King & 83rd. It drove past (or
+    # pulled out there) just before: passed at the latest by that first report.
+    board = stop_board()
+    for m, d in enumerate([7118, 7600, 8300, 9100]):
+        sweep(board, m, trip("A", d, m))
+    assert board.passes()[("79", "Eastbound", "s7")] == [(T0, "A")]
+    far = stop_board()
+    for m, d in enumerate([7700, 8200, 9000]):  # first seen 700 ft on: can't say it served s7
+        sweep(far, m, trip("A", d, m))
+    assert ("79", "Eastbound", "s7") not in far.passes()
+
+
+def test_a_bus_standing_at_a_stop_passes_it_when_it_leaves():
+    # #79 at Spaulding, Sep 28: stood ~10 ft past the stop for 11 minutes
+    board = stop_board()
+    for m, d in enumerate([5500, 6400, 7010, 7010, 7020, 7015, 7800, 8600]):
+        sweep(board, m, trip("A", d, m))
+    assert board.passes()[("79", "Eastbound", "s7")] == [
+        (T0 + timedelta(minutes=5), "A")
+    ]  # left at m=5
+
+
+def test_a_bus_reassigned_to_another_trip_while_driving_keeps_its_passes():
+    # #66, Sep 28: 8125 laid over at the terminal on one trip, then was switched to another
+    # trip as it drove off; the stops it passed in between belong to one continuous run.
+    board = stop_board()
+    for m in range(0, 4):
+        sweep(board, m, trip("A", 0, m, stst=76830))
+    sweep(board, 4, trip("A", 5113, 4, stst=75030))
+    assert [v for _, v in board.passes()[("79", "Eastbound", "s4")]] == ["A"]

@@ -63,7 +63,8 @@ unit_tests:
       Bus 1 creeps 20 ft past its first stop and waits 5 minutes: A is passed when it leaves
       (10:05), not when it crept (10:01). Bus 2 starts mid-pattern (#146, Sep 28): its first
       report jumps ahead (4,000 ft), it settles at 2,500 and leaves; the stop at 3,000 is
-      passed as it goes by, not lost to the early jump. Bus 3 never leaves: no passes.
+      passed as it goes by, not lost to the early jump. Bus 3 never leaves: no passes. Bus 4
+      is first seen 118 ft past A: it passed A no later than that first report.
     model: int_stop_passes
     overrides:
       vars: {start_date: "2026-09-26", end_date: "2026-09-26"}
@@ -81,6 +82,14 @@ unit_tests:
           - {vid: "2", observed_at: "2026-09-26 11:04:00-05", rt: "9", pid: 10, pdist: 3400, stsd: "2026-09-26", stst: 39600}
           - {vid: "3", observed_at: "2026-09-26 12:00:00-05", rt: "9", pid: 10, pdist: 0, stsd: "2026-09-26", stst: 43200}
           - {vid: "3", observed_at: "2026-09-26 12:01:00-05", rt: "9", pid: 10, pdist: 40, stsd: "2026-09-26", stst: 43200}
+          # waits at the start on one trip, then CTA switches it to another as it drives off
+          # (#66 bus 8125, Sep 28): one run, so S3 is passed on the way
+          - {vid: "5", observed_at: "2026-09-26 14:00:00-05", rt: "9", pid: 10, pdist: 0, stsd: "2026-09-26", stst: 52000}
+          - {vid: "5", observed_at: "2026-09-26 14:01:00-05", rt: "9", pid: 10, pdist: 0, stsd: "2026-09-26", stst: 52000}
+          - {vid: "5", observed_at: "2026-09-26 14:04:00-05", rt: "9", pid: 10, pdist: 5000, stsd: "2026-09-26", stst: 50000}
+          # first seen 118 ft past A (#3 at King & 83rd): passed A no later than 13:00
+          - {vid: "4", observed_at: "2026-09-26 13:00:00-05", rt: "9", pid: 10, pdist: 118, stsd: "2026-09-26", stst: 46800}
+          - {vid: "4", observed_at: "2026-09-26 13:01:00-05", rt: "9", pid: 10, pdist: 900, stsd: "2026-09-26", stst: 46800}
       - input: ref('stg_pattern_stops')
         rows:
           - {pid: 10, valid_from: "-infinity", valid_to: null, seq: 1, stop_id: "A", pdist: 0}
@@ -89,6 +98,9 @@ unit_tests:
       rows:
         - {vid: "1", stop_id: "A", passed_at: "2026-09-26 10:05:00-05"}
         - {vid: "2", stop_id: "S3", passed_at: "2026-09-26 11:03:25.714286-05"}
+        - {vid: "4", stop_id: "A", passed_at: "2026-09-26 13:00:00-05"}
+        - {vid: "5", stop_id: "A", passed_at: "2026-09-26 14:01:00-05"}
+        - {vid: "5", stop_id: "S3", passed_at: "2026-09-26 14:02:48-05"}
 
   - name: stop_passes_use_the_pattern_version_in_force
     description: >
@@ -414,3 +426,42 @@ unit_tests:
     expect:
       rows:
         - {stop_id: "B", hour_start: "2026-09-26 10:00:00-05", scheduled_buses: 6, observed_buses: 4, median_headway_min: 14.0, max_headway_min: 14.0, bunched: 0, gaps: 0}
+
+  - name: stop_passes_wait_for_a_bus_standing_at_the_stop
+    description: >
+      Bus 1 reaches B and stands there (10-20 ft past it) for 3 minutes: B is passed when it
+      leaves (10:05), not when it arrived (10:02). Bus 2 moves on past B with one report 80 ft
+      past it: not standing, so B keeps its interpolated pass. Bus 3's last report is 40 ft
+      short of C: not there yet (a bus queued before a stop hasn't served it).
+    model: int_stop_passes
+    overrides:
+      vars: {start_date: "2026-09-26", end_date: "2026-09-26"}
+    given:
+      - input: ref('stg_bus_positions')
+        rows:
+          - {vid: "1", observed_at: "2026-09-26 10:00:00-05", rt: "9", pid: 10, pdist: 0, stsd: "2026-09-26", stst: 36000}
+          - {vid: "1", observed_at: "2026-09-26 10:01:00-05", rt: "9", pid: 10, pdist: 600, stsd: "2026-09-26", stst: 36000}
+          - {vid: "1", observed_at: "2026-09-26 10:02:00-05", rt: "9", pid: 10, pdist: 1010, stsd: "2026-09-26", stst: 36000}
+          - {vid: "1", observed_at: "2026-09-26 10:03:00-05", rt: "9", pid: 10, pdist: 1015, stsd: "2026-09-26", stst: 36000}
+          - {vid: "1", observed_at: "2026-09-26 10:05:00-05", rt: "9", pid: 10, pdist: 1020, stsd: "2026-09-26", stst: 36000}
+          - {vid: "1", observed_at: "2026-09-26 10:06:00-05", rt: "9", pid: 10, pdist: 1600, stsd: "2026-09-26", stst: 36000}
+          - {vid: "2", observed_at: "2026-09-26 11:00:00-05", rt: "9", pid: 10, pdist: 0, stsd: "2026-09-26", stst: 39600}
+          - {vid: "2", observed_at: "2026-09-26 11:01:00-05", rt: "9", pid: 10, pdist: 800, stsd: "2026-09-26", stst: 39600}
+          - {vid: "2", observed_at: "2026-09-26 11:02:00-05", rt: "9", pid: 10, pdist: 1080, stsd: "2026-09-26", stst: 39600}
+          - {vid: "2", observed_at: "2026-09-26 11:03:00-05", rt: "9", pid: 10, pdist: 1700, stsd: "2026-09-26", stst: 39600}
+          - {vid: "3", observed_at: "2026-09-26 12:00:00-05", rt: "9", pid: 10, pdist: 0, stsd: "2026-09-26", stst: 43200}
+          - {vid: "3", observed_at: "2026-09-26 12:01:00-05", rt: "9", pid: 10, pdist: 1400, stsd: "2026-09-26", stst: 43200}
+          - {vid: "3", observed_at: "2026-09-26 12:02:00-05", rt: "9", pid: 10, pdist: 1960, stsd: "2026-09-26", stst: 43200}
+      - input: ref('stg_pattern_stops')
+        rows:
+          - {pid: 10, valid_from: "-infinity", valid_to: null, seq: 1, stop_id: "A", pdist: 0}
+          - {pid: 10, valid_from: "-infinity", valid_to: null, seq: 2, stop_id: "B", pdist: 1000}
+          - {pid: 10, valid_from: "-infinity", valid_to: null, seq: 3, stop_id: "C", pdist: 2000}
+    expect:
+      rows:
+        - {vid: "1", stop_id: "A", passed_at: "2026-09-26 10:00:00-05"}
+        - {vid: "1", stop_id: "B", passed_at: "2026-09-26 10:05:00-05"}
+        - {vid: "2", stop_id: "A", passed_at: "2026-09-26 11:00:00-05"}
+        - {vid: "2", stop_id: "B", passed_at: "2026-09-26 11:01:42.857143-05"}
+        - {vid: "3", stop_id: "A", passed_at: "2026-09-26 12:00:00-05"}
+        - {vid: "3", stop_id: "B", passed_at: "2026-09-26 12:00:42.857143-05"}
