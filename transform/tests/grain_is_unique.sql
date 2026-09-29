@@ -9,7 +9,7 @@ select 'int_missing_trip_evidence', count(*) from {{ ref('int_missing_trip_evide
 union all
 select 'int_trip_flags', count(*) from {{ ref('int_trip_flags') }} group by service_date, rt, direction, start_s, stop_id having count(*) > 1
 union all
-select 'int_stop_passes', count(*) from {{ ref('int_stop_passes') }} group by service_date, rt, pid, start_s, vid, seq having count(*) > 1
+select 'int_stop_passes', count(*) from {{ ref('int_stop_passes') }} group by service_date, rt, pid, start_s, vid, run_id, seq having count(*) > 1
 union all
 select 'int_scheduled_departures', count(*) from {{ ref('int_scheduled_departures') }} group by service_date, trip_id, stop_sequence having count(*) > 1
 union all

@@ -16,7 +16,8 @@
 --   * A trip first seen within rule_first_seen_ft past a stop passed it no later than its first
 --     report (bounded): it drove past or pulled out there (#3 at King & 83rd, Sep 28).
 -- Stops come from the pattern version in force at the report (SCD2).
--- Grain: (service_date, rt, pid, start_s, vid, seq).
+-- Grain: (service_date, rt, pid, start_s, vid, run_id, seq): a bus can make two runs on a
+-- pattern under one trip id (a detour and back), each with its own passes.
 with reports as (
     select
         vid,
@@ -366,6 +367,7 @@ select
     pid,
     start_s,
     vid,
+    run_id,
     seq,
     stop_id,
     min(passed_at) over (

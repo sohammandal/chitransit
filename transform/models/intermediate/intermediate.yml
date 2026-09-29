@@ -19,8 +19,8 @@ models:
         data_tests: [unique, not_null]
   - name: int_stop_passes
     description: >
-      Stop passes, with the live feed's rules (ghost_ledger.live.trip_passes). Grain
-      (service_date, rt, pid, start_s, vid, seq).
+      Stop passes, with the live feed's rules (ghost_ledger.live.runs, trip_passes). Grain
+      (service_date, rt, pid, start_s, vid, run_id, seq).
     columns:
       - name: passed_at
         data_tests: [not_null]
