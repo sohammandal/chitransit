@@ -29,6 +29,9 @@ ROUTES_PER_CALL = 10
 ALL_ROUTES_ESTIMATE = 125
 
 
+LIVE_SCHEDULE_PROD = "s3://ghost-ledger-lake-354894954112/analytics/ops/stop_departures.json"
+
+
 class ConfigError(SystemExit):
     """Bad configuration: stop at startup with a message that says how to fix it."""
 
@@ -51,6 +54,9 @@ class Settings:
     # Where the poller writes the public live feed after each sweep: s3://bucket/key in prod,
     # a file path in dev (the site's dev server reads it), unset = no feed
     live_target: str | None = None
+    # The nightly's live schedule (scheduled departures per stop) the feed judges waits by:
+    # the lake file in prod, unset in dev unless LIVE_SCHEDULE points at a copy
+    live_schedule: str | None = None
 
     @property
     def is_prod(self) -> bool:
@@ -116,6 +122,8 @@ def get_settings(environ: Mapping[str, str] | None = None, root: Path = REPO_ROO
         metrics_sink=sink,  # type: ignore[arg-type]
         ingress_freshness_table=v.get("INGRESS_FRESHNESS_TABLE", "").strip() or None,
         live_target=v.get("LIVE_TARGET", "").strip() or None,
+        live_schedule=v.get("LIVE_SCHEDULE", "").strip()
+        or (LIVE_SCHEDULE_PROD if env == "prod" else None),
     )
     calls = settings.vehicle_calls_per_day()
     if calls > MAX_VEHICLE_CALLS_PER_DAY:

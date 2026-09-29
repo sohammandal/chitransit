@@ -7,6 +7,7 @@ import pytest
 
 from ghost_ledger.config import (
     DEV_DATABASE_URL,
+    LIVE_SCHEDULE_PROD,
     REPO_ROOT,
     ConfigError,
     get_settings,
@@ -104,3 +105,11 @@ def test_committed_dev_file_points_at_local_postgres_and_holds_no_secrets():
     text = (REPO_ROOT / ".env.dev").read_text()
     assert f"DATABASE_URL={DEV_DATABASE_URL}" in text
     assert "API_KEY" not in text
+
+
+def test_the_live_schedule_is_the_lake_file_in_prod_and_off_in_dev(tmp_path):
+    assert get_settings({}, root=tmp_path).live_schedule is None
+    prod = {"GHOST_LEDGER_ENV": "prod", "DATABASE_URL": "postgresql://g:p@db/g"}
+    assert get_settings(prod, root=tmp_path).live_schedule == LIVE_SCHEDULE_PROD
+    local = get_settings({"LIVE_SCHEDULE": "data/stop_departures.json"}, root=tmp_path)
+    assert local.live_schedule == "data/stop_departures.json"

@@ -116,15 +116,22 @@ jobs:
       - name: Dashboard
         run: uv run --group transform python transform/dashboard.py --src "$LAKE/analytics" --out ops-site/index.html
 
-      - name: Scheduled gaps for today and tomorrow (the site's "right now" rules)
+      - name: Scheduled gaps and departures for today and tomorrow (the "right now" rules)
         working-directory: transform
         run: |
           # Schedule only (GTFS, no Ingress). Rebuilds int_scheduled_trips for these two days in
           # the local DuckDB file after the analytics are published, so nothing public changes.
           today=$(TZ=America/Chicago date +%F)
           tomorrow=$(TZ=America/Chicago date -d tomorrow +%F)
-          uv run --group transform dbt run -s +site_headways --profiles-dir . \
+          uv run --group transform dbt run -s +site_headways +live_stop_departures --profiles-dir . \
             --vars "{start_date: '$today', end_date: '$tomorrow'}"
+
+      - name: Live schedule for the poller (every scheduled departure per stop, today and tomorrow)
+        # Private (analytics/ops/, only the box reads it); checked before writing. The poller
+        # reloads it hourly and keeps its last good copy if this step fails.
+        run: |
+          uv run --group transform python transform/live_schedule.py \
+            --db transform/target/ghost_ledger.duckdb --to "$LAKE/analytics/ops/stop_departures.json"
 
       - name: Site data (route shapes, names, scheduled gaps, yesterday's summary)
         run: |

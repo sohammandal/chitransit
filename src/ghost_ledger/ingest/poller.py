@@ -43,6 +43,9 @@ SWEEP_SAFETY_SECONDS = 2.0
 PATTERN_REFRESH_EVERY = timedelta(hours=24)
 PATTERN_REFRESH_ROUTES_PER_SWEEP = 5
 PARTITION_CHECK_EVERY = timedelta(hours=1)
+# The nightly rewrites the live schedule once a day; hourly picks it up within the hour
+SCHEDULE_LOAD_EVERY = timedelta(hours=1)
+SCHEDULE_RETRY_EVERY = timedelta(minutes=10)
 ROUTES_REFRESH_EVERY = timedelta(hours=24)
 # Each sample stop gets one getpredictions call per cycle, spread over the cycle's sweeps.
 # ~730 stops -> ~73 calls per 5 min -> ~21k calls/day (docs/PLAN.md, quota). 5 min, not 10:
@@ -175,6 +178,8 @@ class Poller:
         self._next_partition_check = self.now()
         self._next_routes_refresh = self.now()
         self._next_alerts = self.now()
+        self._next_schedule_load = self.now()
+        self._schedule_version: str | None = None
         self._pending_calls: list[Call] = []
         self.live = live.LiveBoard()
         self.live_sink = live.make_sink(settings.live_target)
@@ -224,6 +229,7 @@ class Poller:
                     board.stop_ids[pid] = live.pattern_stop_ids(points)
                     if length is not None:
                         board.lengths[pid] = float(length)
+                board.schedule = self.live.schedule  # survives a state reload
                 self.live = board
         self.presence = PresenceTracker(self.presence.grace, trips, last_seen)
         # Every read above must sit inside the transaction block: a statement outside it opens
@@ -231,6 +237,26 @@ class Poller:
         # savepoint inside it (Sep 26 00:40 UTC: 9 sweeps logged, none committed).
         if conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
             raise RuntimeError("startup left a transaction open; sweeps would never commit")
+
+    def _load_schedule(self) -> None:
+        """The live schedule the feed judges waits by (live.Schedule): hourly, so a new nightly
+        file is picked up; best-effort, keeping the last good one when a load fails."""
+        target = self.settings.live_schedule
+        if self.live_sink is None or not target or self.now() < self._next_schedule_load:
+            return
+        try:
+            version = live.schedule_version(target)
+            if version != self._schedule_version or self.live.schedule is None:
+                self.live.schedule = live.load_schedule(target)
+                self._schedule_version = version
+                log.info("live schedule %s (built %s)", sorted(self.live.schedule.dates),
+                         self.live.schedule.built_at)  # fmt: skip
+            self._next_schedule_load = self.now() + SCHEDULE_LOAD_EVERY
+            if not self.live.schedule.covers(self.now()):
+                log.warning("live schedule doesn't cover today: no schedule fields until it does")
+        except Exception:  # noqa: BLE001 - logged; the feed goes on without schedule fields
+            log.exception("live schedule not loaded")
+            self._next_schedule_load = self.now() + SCHEDULE_RETRY_EVERY
 
     def _ensure_partitions(self, force: bool = False) -> None:
         if not force and self.now() < self._next_partition_check:
@@ -266,6 +292,7 @@ class Poller:
         deadline = t0 + self.settings.poll_interval_seconds - SWEEP_SAFETY_SECONDS
         started_at = self.now()
         self._ensure_partitions()
+        self._load_schedule()
         self._refresh_routes()
 
         vehicle_calls: list[Call] = []

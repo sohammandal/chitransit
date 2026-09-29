@@ -28,23 +28,35 @@ each bus's recent trail in memory and writes one JSON snapshot (docs/SITE.md, "l
   it leaves, so there the pass is its last crossing before it leaves, and only once it has.
   (Sep 28: 16% of trips still sat at their first stop 2+ minutes after the naive pass.)
 
+  Against the schedule at that stop (the nightly's live schedule, Schedule; None without it):
+  sched_s    the scheduled gap there now: 3,600 s / departures in the past hour (all trips of
+             the route), None when none were scheduled (no judgment in a service gap)
+  sched_due  scheduled departures there since the last bus passed: a long wait means buses
+             were due and didn't come, not just a long time (the first bus after a midday or
+             overnight break has waited hours, with nothing due)
+
 The snapshot is derived and disposable (DDIA ch. 12: a cache of the log, rebuilt from the next
 sweeps), so publishing is best-effort: a failed write is logged and never fails a sweep.
 Schedule-relative judgments (a gap "twice the scheduled headway") are made by the site, which
 joins this feed with the nightly schedule file; the poller only reports what it saw.
 """
 
+import base64
 import gzip
 import json
 import logging
 import os
-from bisect import bisect_left
+import sys
+from array import array
+from bisect import bisect_left, bisect_right
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 log = logging.getLogger("ghost_ledger.live")
+CHICAGO = ZoneInfo("America/Chicago")
 
 # Longer than any realistic gap: Sep 28 morning, J14 riders past Lake Shore Drive waited 79+ min
 # in a jam, and a 75-min window could only call that unknown. ~0.7 s per snapshot at 150.
@@ -86,6 +98,67 @@ STEP = timedelta(minutes=5)
 CACHE_CONTROL = "public, max-age=5"
 
 
+class Schedule:
+    """Scheduled departures at every stop, today and tomorrow (transform/live_schedule.py)."""
+
+    def __init__(self, doc: dict[str, Any]) -> None:
+        self.dates = set(doc["dates"])
+        self.built_at = doc.get("built_at")
+        # 8-byte arrays: ~2.3M departures take ~18 MB (a list of ints would take ~80)
+        self.times: dict[str, array[int]] = {}
+        for key, packed in doc["stops"].items():
+            deltas = array("i", base64.b64decode(packed))  # little-endian int32
+            if sys.byteorder != "little":
+                deltas.byteswap()
+            times = array("q", deltas)
+            times[0] += doc["base"]
+            for i in range(1, len(times)):
+                times[i] += times[i - 1]
+            self.times[key] = times
+
+    def covers(self, now: datetime) -> bool:
+        return str(now.astimezone(CHICAGO).date()) in self.dates
+
+    def judge(
+        self, rt: str, stpid: str, now: datetime, last_pass: datetime | None
+    ) -> tuple[int | None, int | None]:
+        """(scheduled gap at the stop now, departures due there since last_pass)."""
+        times = self.times.get(f"{rt}|{stpid}")
+        if not times or not self.covers(now):
+            return None, None
+        t = now.timestamp()
+        in_hour = bisect_left(times, t) - bisect_left(times, t - 3600)
+        due = None
+        if last_pass is not None:
+            due = bisect_right(times, t) - bisect_right(times, last_pass.timestamp())
+        return (round(3600 / in_hour) if in_hour else None), due
+
+
+def schedule_version(target: str) -> str:
+    """A cheap fingerprint of the schedule file (S3 ETag, or a local file's mtime), so the
+    poller reloads it only when the nightly has written a new one."""
+    if target.startswith("s3://"):
+        import boto3
+
+        bucket, key = target.removeprefix("s3://").split("/", 1)
+        return boto3.client("s3").head_object(Bucket=bucket, Key=key)["ETag"]
+    return str(Path(target).stat().st_mtime_ns)
+
+
+def load_schedule(target: str) -> Schedule:
+    """From s3://bucket/key or a local path; gzipped JSON."""
+    if target.startswith("s3://"):
+        import boto3
+
+        bucket, key = target.removeprefix("s3://").split("/", 1)
+        body = boto3.client("s3").get_object(Bucket=bucket, Key=key)["Body"].read()
+    else:
+        body = Path(target).read_bytes()
+    if body[:2] == b"\x1f\x8b":
+        body = gzip.decompress(body)
+    return Schedule(json.loads(body))
+
+
 class LiveBoard:
     def __init__(self) -> None:
         # vid -> [(observed_at, pid, pdist, trip)], oldest first; trip = (stsd, stst) or None
@@ -96,6 +169,7 @@ class LiveBoard:
         self.stops: dict[int, list[tuple[float, str]]] = {}  # pid -> [(feet, name)], sorted
         self.stop_ids: dict[int, list[tuple[float, str, str]]] = {}  # pid -> [(feet, stpid, name)]
         self.routes: dict[int, str] = {}  # pid -> rt, from the poller and the reports
+        self.schedule: Schedule | None = None  # the nightly's live schedule, if loaded
 
     def seed(self, rows) -> None:
         """Rebuild trails from stored positions (vid, observed_at, pid, pdist[, stsd, stst]),
@@ -345,6 +419,10 @@ class LiveBoard:
                 continue
             gap, ahead = gaps.get(p["vid"], (None, None))
             stop_gap, last_by, next_stop = stop_gaps.get(p["vid"], (None, None, None))
+            sched_s = sched_due = None
+            if self.schedule is not None and next_stop is not None:
+                last_pass = None if stop_gap is None else now - timedelta(seconds=stop_gap)
+                sched_s, sched_due = self.schedule.judge(p["rt"], next_stop[0], now, last_pass)
             pid = None if p.get("pid") is None else int(p["pid"])
             rows.append({
                 "vid": p["vid"], "rt": p["rt"], "pid": pid, "hdg": p.get("hdg"),
@@ -358,6 +436,7 @@ class LiveBoard:
                 "stop_gap_s": stop_gap, "last_by": last_by,
                 "next_stpid": next_stop[0] if next_stop else None,
                 "next_stop": next_stop[1] if next_stop else None,
+                "sched_s": sched_s, "sched_due": sched_due,
             })  # fmt: skip
         return {
             "generated_at": now.isoformat(timespec="seconds"),

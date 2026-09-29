@@ -1,7 +1,7 @@
 import json
 from datetime import UTC, datetime, timedelta
 
-from ghost_ledger.live import TRAIL, FileSink, LiveBoard, publish
+from ghost_ledger.live import CHICAGO, TRAIL, FileSink, LiveBoard, load_schedule, publish
 
 T0 = datetime(2026, 9, 26, 22, 0, tzinfo=UTC)
 
@@ -431,3 +431,54 @@ def test_the_old_gap_keeps_its_75_minute_view_while_the_stop_wait_looks_back_fur
     b = by_vid(board.snapshot(T0 + timedelta(minutes=100)))["B"]
     assert b["gap_s"] is None  # as before: A's pass is 95 minutes old
     assert b["stop_gap_s"] == 95 * 60 and b["last_by"] == "A"
+
+
+# ---- the live schedule (sched_s, sched_due) ----
+def schedule_file(tmp_path, departures):
+    """A live schedule file as the nightly writes it (transform/live_schedule.py)."""
+    import gzip
+    import importlib.util
+    import json as json_
+
+    spec = importlib.util.spec_from_file_location("live_schedule", "transform/live_schedule.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    rows = [
+        ("79", stop, T0.astimezone(CHICAGO).date(), int(t.timestamp())) for stop, t in departures
+    ]
+    path = tmp_path / "stop_departures.json"
+    path.write_bytes(gzip.compress(json_.dumps(mod.build(rows)).encode()))
+    return path
+
+
+def test_the_schedule_file_round_trips_from_the_nightly_to_the_feed(tmp_path):
+    every_10 = [("s7", T0 - timedelta(minutes=m)) for m in range(0, 120, 10)]
+    schedule = load_schedule(str(schedule_file(tmp_path, every_10)))
+    now = T0 + timedelta(minutes=5)
+    # six departures in the past hour: a 10-minute gap; since 25 min ago, two were due
+    assert schedule.judge("79", "s7", now, now - timedelta(minutes=25)) == (600, 2)
+    assert schedule.judge("79", "s8", now, None) == (None, None)  # no departures there
+
+
+def test_after_a_service_break_nothing_was_due_so_no_long_wait_is_implied(tmp_path):
+    # 54A-like: morning service, nothing midday, first afternoon departure at T0
+    departures = [("s7", T0 - timedelta(hours=h)) for h in (5, 4.5, 4)] + [("s7", T0)]
+    schedule = load_schedule(str(schedule_file(tmp_path, departures)))
+    now = T0 + timedelta(minutes=10)
+    sched_s, due = schedule.judge("79", "s7", now, now - timedelta(hours=4))
+    assert due == 1 and sched_s == 3600  # one bus due in 4 hours: not "buses didn't come"
+
+
+def test_the_feed_carries_the_schedule_at_the_next_stop(tmp_path):
+    board = stop_board()
+    board.schedule = load_schedule(
+        str(schedule_file(tmp_path, [("s7", T0 + timedelta(minutes=m)) for m in range(-60, 11, 5)]))
+    )
+    for m in range(0, 11):
+        buses = [trip("A", 3000 + 1000 * m, m)]  # passed s7 at m=4
+        if m >= 7:
+            buses.append(trip("B", 6600 - 600 * (10 - m), m))
+        sweep(board, m, *buses)
+    b = by_vid(board.snapshot(T0 + timedelta(minutes=10)))["B"]
+    assert b["stop_gap_s"] == 6 * 60
+    assert b["sched_s"] == 300 and b["sched_due"] == 2  # due at m=5 and m=10; A came at m=4

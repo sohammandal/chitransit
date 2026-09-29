@@ -73,5 +73,12 @@ models:
         data_tests: [unique, not_null]
   - name: site_headways
     description: Scheduled gap between buses per route, direction and Chicago hour (60 min / trips starting that hour).
+  - name: live_stop_departures
+    description: >
+      Scheduled departures at every stop (all trips of the route; a trip's last stop left
+      out), today and tomorrow, for the poller's live schedule (analytics/ops/stop_departures.json).
+    columns:
+      - name: departs_at
+        data_tests: [not_null]
   - name: site_route_summary
     description: Per route and finished service day, trips by outcome; silent as proven to possible.
