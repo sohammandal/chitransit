@@ -4,10 +4,11 @@ For every bus the site would flag (lib/waits.ts: stop_gap_s > 2x sched_s and sch
 look for any sign in the raw reports that a bus of the route and direction was at that stop
 during the claimed wait, independently of the live pass logic (ghost_ledger.live):
 
-  crossing  a bus reported on both sides of the stop, on a pattern that has it, with no
-            report at the stop in between: it passed (any gap between the reports, any trip,
-            no departure rule)
-  near      a bus of the route and direction reported within NEAR_M of the stop
+  crossing  a bus of the route and direction, on a pattern that has the stop, reported on both
+            sides of it after the claimed last pass (any gap, any trip, no departure rule)
+  near      such a bus, moving forward, within NEAR_M of the stop and at or just past it
+  first     such a bus first seen within 500 ft past the stop
+  A bus lingering after its own pass (up to SAME_PASS) is that pass, not evidence.
 
 A claim with neither is confirmed; otherwise it's refuted, with the evidence. Ingress lags the
 feed by a few minutes (CDC), so the last minutes before now can't refute anything: they're
@@ -24,6 +25,7 @@ import math
 import sys
 import urllib.request
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import duckdb
@@ -64,8 +66,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--min-wait", type=int, default=0, help="only claims of at least N minutes")
     ap.add_argument("--routes", default="")
+    ap.add_argument("--feed", help="audit a saved feed (JSON) instead of the live one")
     args = ap.parse_args()
-    doc = feed()
+    doc = json.loads(Path(args.feed).read_text()) if args.feed else feed()
     now = datetime.fromisoformat(doc["generated_at"]).astimezone(CHI)
     todo = claims(doc, args.min_wait, set(filter(None, args.routes.split(","))))
     print(
@@ -112,27 +115,35 @@ def main() -> int:
         key = (v["rt"], v["dir"], v["next_stpid"])
         last = now - timedelta(seconds=v["stop_gap_s"])
         where = at_stop.get(key, [])
-        pids = {p for p, *_ in where}
         found = []
         prev = None
+        done: dict[str, datetime] = {}  # buses whose own pass here came before the claimed one
         for vid, t, _rt, pid, pdist, lat, lon in pos:
-            if dirs.get(pid, (None, None)) != (v["rt"], v["dir"]) or vid == v["vid"]:
-                prev = (vid, t, pid, pdist)
-                continue
-            if vid == v["last_by"] and t <= last + SAME_PASS:
-                prev = (vid, t, pid, pdist)
-                continue  # the claimed last bus itself, still at or just past the stop
-            if t > last + SLACK:
-                near = min((metres(lat, lon, la, lo) for _, _, la, lo in where), default=1e9)
-                if near <= NEAR_M:
-                    found.append(f"{vid} reported {near:.0f} m from the stop at {t:%H:%M:%S}")
-                if prev and prev[0] == vid and prev[2] == pid and pid in pids:
-                    ft = next(f for p, f, *_ in where if p == pid)
-                    if prev[3] < ft <= pdist and prev[1] > last - SLACK:
-                        found.append(
-                            f"{vid} crossed it between {prev[1]:%H:%M:%S} and {t:%H:%M:%S}"
-                        )
+            before = prev if prev and prev[0] == vid and prev[2] == pid else None
             prev = (vid, t, pid, pdist)
+            if dirs.get(pid, (None, None)) != (v["rt"], v["dir"]) or vid == v["vid"]:
+                continue
+            ft = next((f for p, f, *_ in where if p == pid), None)
+            if ft is None:
+                continue  # only a bus on a pattern that serves this stop
+            if before is None:  # first seen on this pattern: just past the stop means it passed
+                if t > last + SLACK and 0 <= pdist - ft <= 500:
+                    found.append(f"{vid} first seen {pdist - ft:.0f} ft past it at {t:%H:%M:%S}")
+                continue
+            if pdist <= before[3]:
+                continue  # moving forward along its pattern only
+            if before[3] < ft <= pdist:  # crossed the stop in this step
+                when = before[1] + (t - before[1]) * ((ft - before[3]) / (pdist - before[3]))
+                if when <= last + SLACK:
+                    done[vid] = when  # that pass (or an earlier one): not evidence
+                else:
+                    found.append(f"{vid} crossed it at {when:%H:%M:%S}")
+                continue
+            if vid in done and t <= done[vid] + SAME_PASS:
+                continue  # lingering after its own pass
+            near = min((metres(lat, lon, la, lo) for _, _, la, lo in where), default=1e9)
+            if t > last + SLACK and near <= NEAR_M and pdist >= ft - 50 and before[3] <= ft + 50:
+                found.append(f"{vid} at the stop ({near:.0f} m) at {t:%H:%M:%S}")
         verdict = "REFUTED" if found else "confirmed"
         confirmed += not found
         print(f"\n{verdict}: rt {v['rt']} {v['dir']} bus {v['vid']} at {v['next_stop']}"
