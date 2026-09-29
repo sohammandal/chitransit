@@ -217,9 +217,11 @@ class Poller:
             if self.live_sink is not None:
                 board = live.LiveBoard()
                 board.seed(conn.execute(sql.LOAD_TRAILS, {"since": self.now() - live.TRAIL}))
-                for pid, rtdir, length, points in conn.execute(sql.LOAD_PATTERN_SHAPES):
+                for pid, rt, rtdir, length, points in conn.execute(sql.LOAD_PATTERN_SHAPES):
+                    board.routes[pid] = rt
                     board.dirs[pid] = rtdir
                     board.stops[pid] = live.pattern_stops(points)
+                    board.stop_ids[pid] = live.pattern_stop_ids(points)
                     if length is not None:
                         board.lengths[pid] = float(length)
                 self.live = board
@@ -394,8 +396,10 @@ class Poller:
             if self.patterns.get(pid, (None, None))[1] == h:
                 continue
             self.patterns[pid] = (ptr["rtdir"], h)
+            self.live.routes[pid] = rt
             self.live.dirs[pid] = ptr["rtdir"]
             self.live.stops[pid] = live.pattern_stops(ptr.get("pt", []))
+            self.live.stop_ids[pid] = live.pattern_stop_ids(ptr.get("pt", []))
             if ptr.get("ln") is not None:
                 self.live.lengths[pid] = float(ptr["ln"])
             self.stops.update(dict.fromkeys(sample_stops(ptr), rt))

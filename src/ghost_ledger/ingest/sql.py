@@ -152,11 +152,11 @@ ORDER BY vid, fetched_at DESC
 
 LOAD_PATTERNS = "SELECT pid, rtdir, content_hash FROM ops.patterns"
 
-LOAD_PATTERN_SHAPES = "SELECT pid, rtdir, length_ft, pattern -> 'pt' FROM ops.patterns"
+LOAD_PATTERN_SHAPES = "SELECT pid, rt, rtdir, length_ft, pattern -> 'pt' FROM ops.patterns"
 
 # Recent trails for the live feed's gaps, so a restart doesn't blank them (ghost_ledger.live).
 LOAD_TRAILS = """
-SELECT vid, observed_at, pid, pdist
+SELECT vid, observed_at, pid, pdist, stsd, stst
 FROM ops.bus_positions
 WHERE observed_at > %(since)s AND pid IS NOT NULL AND pdist IS NOT NULL
 ORDER BY vid, observed_at
