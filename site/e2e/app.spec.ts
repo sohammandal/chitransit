@@ -550,6 +550,22 @@ test("right now: a long wait is named at its stop, and a gap with one bus due is
   await expect(page.locator(".sheet li").filter({ hasText: "Long wait at Racine" })).toHaveCount(1);
 });
 
+test("bus card: a short turn you tap stays a ring on the same line, highlighted", async ({ page }) => {
+  await setUp(page);
+  const f = stopFeed();
+  await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: f }));
+  await page.goto("/route/66/");
+  await page.locator('[aria-label="Bus S1"]').first().click();
+  await expect(page.getByText("since the last bus passed Chicago & Damen")).toBeVisible();
+  const line = page.locator(".sheet svg").filter({ has: page.locator('[aria-label="Bus S1"]') });
+  await expect(line.locator('[aria-label="Bus S1"] circle.dot.other')).toHaveCount(1); // still a ring
+  await expect(line.locator('[aria-label="Bus S1"] circle.ring')).toHaveCount(1); // and the one highlighted
+  await expect(line.locator('[aria-label="Bus 8185"] circle.dot.other')).toHaveCount(0); // full route: solid
+  await line.locator('[aria-label="Bus S1"]').click(); // tap it again: back to the route
+  await expect(page.getByRole("tab", { name: "Now" })).toBeVisible();
+  await expect(page.locator(".sheet svg circle.ring")).toHaveCount(0);
+});
+
 test("bus card: the wait is measured at the bus's next stop", async ({ page }) => {
   await setUp(page);
   const f = stopFeed();

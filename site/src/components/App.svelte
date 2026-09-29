@@ -8,7 +8,7 @@
   import * as data from "../lib/data";
   import { pollFeed } from "../lib/feed";
   import { findProblems, scheduledGap } from "../lib/problems";
-  import { onLine } from "../lib/project";
+  import { mainPid, onLine } from "../lib/project";
   import { behindOf } from "../lib/waits";
   import type { Feed, Headways, Pattern, Report, Vehicle } from "../lib/types";
   import About from "./About.svelte";
@@ -103,6 +103,7 @@
   function select(vid: string, from: "map" | "line") {
     const v = vehicles.find((x) => x.vid === vid);
     if (!v) return;
+    if (from === "line" && vid === selected) return toRoute(); // tap it again: back to the route
     if (v.rt !== route) go(v.rt, "push", false);
     selected = vid;
     if (from === "line") {
@@ -163,13 +164,20 @@
       {#if level === "about"}
         <About onClose={() => (about = false)} />
       {:else if level === "bus" && bus}
-        {@const pattern = bus.pid != null ? patterns.get(bus.pid) : undefined}
+        <!-- The direction's main line, as on the route view, so a short turn stays a ring;
+             a bus that isn't on it (a branch, a detour) gets its own pattern's line -->
+        {@const sameDir = vehicles.filter((v) => v.rt === bus.rt && v.dir === bus.dir)}
+        {@const mainP = mainPid(sameDir, patterns)}
+        {@const main = mainP != null ? onLine(patterns.get(mainP)!, mainP, sameDir) : undefined}
+        {@const onMain = main?.drawn.some((v) => v.vid === bus.vid) ?? false}
+        {@const linePid = onMain ? mainP : bus.pid}
+        {@const pattern = linePid != null ? patterns.get(linePid) : undefined}
         <BusCard
           {bus}
           behind={behindOf(bus, vehicles)}
           {pattern}
-          lineBuses={pattern && bus.pid != null
-            ? onLine(pattern, bus.pid, vehicles.filter((v) => v.rt === bus.rt && v.dir === bus.dir)).drawn
+          lineBuses={onMain && main ? main.drawn
+            : pattern && linePid != null ? onLine(pattern, linePid, sameDir).drawn
             : vehicles.filter((v) => v.pid === bus.pid)}
           scheduled={gapFor(bus)}
           routeName={names[bus.rt]}

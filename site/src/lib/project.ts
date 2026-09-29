@@ -75,3 +75,11 @@ export function onLine(p: Pattern, pid: number, buses: Vehicle[]): { drawn: Line
   }
   return { drawn, off };
 }
+
+/** The pattern a direction's line is drawn for: the one most of its buses run (with a loaded
+ *  shape). The route view and the bus card use the same one, so a bus looks the same in both. */
+export function mainPid(buses: Vehicle[], patterns: Map<number, Pattern>): number | undefined {
+  const counts = new Map<number, number>();
+  for (const b of buses) if (b.pid != null && patterns.has(b.pid)) counts.set(b.pid, (counts.get(b.pid) ?? 0) + 1);
+  return [...counts].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0];
+}

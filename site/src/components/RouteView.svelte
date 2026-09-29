@@ -2,7 +2,7 @@
   // Route level, two tabs: Now (each direction as a straight line with its live buses) and
   // Report card (how reliable the route has been on the days we watched).
   import { minutes } from "../lib/format";
-  import { onLine } from "../lib/project";
+  import { mainPid, onLine } from "../lib/project";
   import type { Pattern, ReportRow, Vehicle } from "../lib/types";
   import Key from "./Key.svelte";
   import LineView from "./LineView.svelte";
@@ -28,9 +28,7 @@
     const dirs = [...new Set(buses.map((b) => b.dir).filter((d): d is string => !!d))].sort();
     return dirs.map((dir) => {
       const mine = buses.filter((b) => b.dir === dir);
-      const counts = new Map<number, number>();
-      for (const b of mine) if (b.pid != null && patterns.has(b.pid)) counts.set(b.pid, (counts.get(b.pid) ?? 0) + 1);
-      const pid = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+      const pid = mainPid(mine, patterns);
       const line = pid == null ? { drawn: [], off: 0 } : onLine(patterns.get(pid)!, pid, mine);
       return { dir, pid, drawn: line.drawn, off: line.off, scheduled: scheduledFor(dir) };
     });
