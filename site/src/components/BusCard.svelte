@@ -1,7 +1,8 @@
 <script lang="ts">
   // Bus level: the gap in front of this bus and behind it, with the bus on its route line.
   // Both are measured, never predicted: behind is how long ago this bus passed the stop the
-  // next bus is heading for (not when that bus gets here: it may be miles back, J14 Sep 28).
+  // next bus is heading for, so the next bus is at least that far from here ("+": it may be
+  // miles back, J14 Sep 28).
   import { minutes } from "../lib/format";
   import type { LineBus } from "../lib/project";
   import type { Pattern, Vehicle } from "../lib/types";
@@ -25,7 +26,11 @@
   // Measured at its next stop (the "here" a rider on the corner ahead cares about)
   const wait = $derived(waitOf(bus, scheduled));
   const behindWait = $derived(behind ? waitOf(behind, scheduled) : null);
-  const here = $derived(wait.at ?? "here");
+  // One stop on the card: the bus's next stop, where its wait is measured (not also the stop
+  // it is nearest, which can be the one it just passed: #66 Sep 28 showed two names). A bus at
+  // a terminal, or an older feed, shows where it is instead.
+  const nextStop = $derived(!bus.at_terminal && bus.stop_gap_s !== undefined ? bus.next_stop ?? null : null);
+  const here = $derived(nextStop ? "here" : wait.at ?? "here");
 </script>
 
 <div class="sheet-head">
@@ -38,11 +43,11 @@
   </div>
 </header>
 </div>
-{#if bus.near}
-  <!-- Where the bus is: the "here" both gap boxes below refer to. -->
+{#if nextStop || bus.near}
+  <!-- Where the bus is: the stop the gap boxes below refer to. -->
   <p class="near">
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a4.5 4.5 0 0 0-4.5 4.5c0 3.4 4.5 8.5 4.5 8.5s4.5-5.1 4.5-8.5A4.5 4.5 0 0 0 8 1.5Zm0 6.2a1.7 1.7 0 1 1 0-3.4 1.7 1.7 0 0 1 0 3.4Z" /></svg>
-    Near <b>{bus.near}</b>
+    {#if nextStop}Next stop <b>{nextStop}</b>{:else}Near <b>{bus.near}</b>{/if}
   </p>
 {/if}
 
@@ -57,7 +62,9 @@
     {/if}
   </div>
   {#if behindWait?.s != null && !bus.at_terminal}
-    <div class="gap behind"><strong>{minutes(behindWait.s)}</strong><span>since this bus passed {behindWait.at ?? "the next bus's next stop"}, where the next bus is headed</span></div>
+    <!-- "+": at least. This bus passed the next bus's next stop that long ago, and the next bus
+         isn't there yet, so it is at least that far from here. -->
+    <div class="gap behind"><strong>{minutes(behindWait.s)}+</strong><span>until the next bus gets here</span></div>
   {/if}
 </div>
 
