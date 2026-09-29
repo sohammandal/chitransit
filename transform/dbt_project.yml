@@ -25,6 +25,7 @@ vars:
   rule_reappear_m: 500         # a vanished bus reappearing this close to a trip end
   rule_flag_window_min: 30     # a stop sampled this long before the trip was due there
   rule_min_flag_looks: 2       # samples of its stops needed to call a trip unannounced
+  rule_start_ft: 150           # a trip is under way this far past its lowest report (= live.START_FT)
 
 models:
   ghost_ledger:

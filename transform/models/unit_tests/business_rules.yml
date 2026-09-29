@@ -24,11 +24,12 @@ unit_tests:
         - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 600, n_reports: 2, n_buses: 1, min_pdist: 500, max_pdist: 900}
         - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 28800, n_reports: 1, n_buses: 1, min_pdist: 100, max_pdist: 100}
 
-  - name: stop_passes_interpolate_forward_progress_only
+  - name: stop_passes_follow_forward_progress
     description: >
-      A stop between two reports is passed in proportion to the distance covered. A report
-      behind the furthest point reached (pdist jumped back) starts no step, and pairs more
-      than 5 minutes apart are not interpolated.
+      A stop between two reports is passed in proportion to the distance covered. After a
+      jump back (to 0) nothing is passed twice, and once the bus is past its furthest point
+      again the stops beyond it are passed (D). Across a 10-minute blackout the stop is passed
+      at the later report, the latest it can have been (E).
     model: int_stop_passes
     overrides:
       vars: {start_date: "2026-09-26", end_date: "2026-09-26"}
@@ -37,10 +38,10 @@ unit_tests:
         rows:
           - {vid: "1", observed_at: "2026-09-26 10:00:00-05", rt: "9", pid: 10, pdist: 0, stsd: "2026-09-26", stst: 36000}
           - {vid: "1", observed_at: "2026-09-26 10:00:40-05", rt: "9", pid: 10, pdist: 1000, stsd: "2026-09-26", stst: 36000}
-          # jumps back to 0: no step starts here
+          # jumps back to 0: C isn't passed again
           - {vid: "1", observed_at: "2026-09-26 10:01:10-05", rt: "9", pid: 10, pdist: 0, stsd: "2026-09-26", stst: 36000}
           - {vid: "1", observed_at: "2026-09-26 10:01:40-05", rt: "9", pid: 10, pdist: 1200, stsd: "2026-09-26", stst: 36000}
-          # 10 minutes later: too long a gap to interpolate stop 5
+          # 10 minutes later: E is passed by then at the latest
           - {vid: "1", observed_at: "2026-09-26 10:11:40-05", rt: "9", pid: 10, pdist: 3000, stsd: "2026-09-26", stst: 36000}
       - input: ref('stg_pattern_stops')
         rows:
@@ -51,9 +52,43 @@ unit_tests:
           - {pid: 10, valid_from: "-infinity", valid_to: null, seq: 5, stop_id: "E", pdist: 2000}
     expect:
       rows:
-        - {seq: 1, stop_id: "A", passed_at: "2026-09-26 10:00:00-05"}
-        - {seq: 2, stop_id: "B", passed_at: "2026-09-26 10:00:20-05"}
-        - {seq: 3, stop_id: "C", passed_at: "2026-09-26 10:00:40-05"}
+        - {seq: 1, stop_id: "A", passed_at: "2026-09-26 10:00:00-05", bounded: false}
+        - {seq: 2, stop_id: "B", passed_at: "2026-09-26 10:00:20-05", bounded: false}
+        - {seq: 3, stop_id: "C", passed_at: "2026-09-26 10:00:40-05", bounded: false}
+        - {seq: 4, stop_id: "D", passed_at: "2026-09-26 10:01:37.5-05", bounded: false}
+        - {seq: 5, stop_id: "E", passed_at: "2026-09-26 10:11:40-05", bounded: true}
+
+  - name: stop_passes_at_the_start_count_when_the_bus_leaves
+    description: >
+      Bus 1 creeps 20 ft past its first stop and waits 5 minutes: A is passed when it leaves
+      (10:05), not when it crept (10:01). Bus 2 starts mid-pattern (#146, Sep 28): its first
+      report jumps ahead (4,000 ft), it settles at 2,500 and leaves; the stop at 3,000 is
+      passed as it goes by, not lost to the early jump. Bus 3 never leaves: no passes.
+    model: int_stop_passes
+    overrides:
+      vars: {start_date: "2026-09-26", end_date: "2026-09-26"}
+    given:
+      - input: ref('stg_bus_positions')
+        rows:
+          - {vid: "1", observed_at: "2026-09-26 10:00:00-05", rt: "9", pid: 10, pdist: 0, stsd: "2026-09-26", stst: 36000}
+          - {vid: "1", observed_at: "2026-09-26 10:01:00-05", rt: "9", pid: 10, pdist: 20, stsd: "2026-09-26", stst: 36000}
+          - {vid: "1", observed_at: "2026-09-26 10:05:00-05", rt: "9", pid: 10, pdist: 20, stsd: "2026-09-26", stst: 36000}
+          - {vid: "1", observed_at: "2026-09-26 10:06:00-05", rt: "9", pid: 10, pdist: 900, stsd: "2026-09-26", stst: 36000}
+          - {vid: "2", observed_at: "2026-09-26 11:00:00-05", rt: "9", pid: 10, pdist: 4000, stsd: "2026-09-26", stst: 39600}
+          - {vid: "2", observed_at: "2026-09-26 11:01:00-05", rt: "9", pid: 10, pdist: 2500, stsd: "2026-09-26", stst: 39600}
+          - {vid: "2", observed_at: "2026-09-26 11:02:00-05", rt: "9", pid: 10, pdist: 2500, stsd: "2026-09-26", stst: 39600}
+          - {vid: "2", observed_at: "2026-09-26 11:03:00-05", rt: "9", pid: 10, pdist: 2700, stsd: "2026-09-26", stst: 39600}
+          - {vid: "2", observed_at: "2026-09-26 11:04:00-05", rt: "9", pid: 10, pdist: 3400, stsd: "2026-09-26", stst: 39600}
+          - {vid: "3", observed_at: "2026-09-26 12:00:00-05", rt: "9", pid: 10, pdist: 0, stsd: "2026-09-26", stst: 43200}
+          - {vid: "3", observed_at: "2026-09-26 12:01:00-05", rt: "9", pid: 10, pdist: 40, stsd: "2026-09-26", stst: 43200}
+      - input: ref('stg_pattern_stops')
+        rows:
+          - {pid: 10, valid_from: "-infinity", valid_to: null, seq: 1, stop_id: "A", pdist: 0}
+          - {pid: 10, valid_from: "-infinity", valid_to: null, seq: 2, stop_id: "S3", pdist: 3000}
+    expect:
+      rows:
+        - {vid: "1", stop_id: "A", passed_at: "2026-09-26 10:05:00-05"}
+        - {vid: "2", stop_id: "S3", passed_at: "2026-09-26 11:03:25.714286-05"}
 
   - name: stop_passes_use_the_pattern_version_in_force
     description: >
@@ -343,3 +378,39 @@ unit_tests:
         - {trip_id: "M2", status: "missing", reason: "flags_not_sampled", strict_evidence: false}
         # two looks, but at a stop that has never shown a cancellation
         - {trip_id: "M3", status: "missing", reason: "flags_not_sampled", strict_evidence: false}
+
+  - name: stop_hour_service_does_not_time_headways_at_a_blackout_pass
+    description: >
+      The 10:25 pass came out of a tracker blackout (bounded: no later than 10:25). The bus
+      counts as observed, but the headways either side of it aren't timed: counted, they'd
+      read as a 25-minute gap and a 1-minute bunch that may never have happened.
+    model: stop_hour_service
+    given:
+      - input: ref('int_stop_passes')
+        rows:
+          - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 1, vid: "1", seq: 2, stop_id: "B", passed_at: "2026-09-26 10:00:00-05", bounded: false}
+          - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 2, vid: "2", seq: 2, stop_id: "B", passed_at: "2026-09-26 10:25:00-05", bounded: true}
+          - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 3, vid: "3", seq: 2, stop_id: "B", passed_at: "2026-09-26 10:26:00-05", bounded: false}
+          - {service_date: "2026-09-26", rt: "9", pid: 10, start_s: 4, vid: "4", seq: 2, stop_id: "B", passed_at: "2026-09-26 10:40:00-05", bounded: false}
+      - input: ref('stg_patterns')
+        rows:
+          - {pid: 10, rt: "9", direction: "North"}
+      - input: ref('stg_pattern_stops')
+        rows:
+          - {pid: 10, valid_from: "-infinity", valid_to: null, seq: 1, stop_id: "A", pdist: 0}
+          - {pid: 10, valid_from: "-infinity", valid_to: null, seq: 2, stop_id: "B", pdist: 500}
+          - {pid: 10, valid_from: "-infinity", valid_to: null, seq: 3, stop_id: "C", pdist: 1000}
+      - input: ref('int_scheduled_departures')
+        format: sql
+        rows: |
+          select date '2026-09-26' as service_date, '9' as rt, 'North' as direction, 'B' as stop_id,
+              d as departs_at, false as is_terminal
+          from generate_series(timestamptz '2026-09-26 10:00:00-05', timestamptz '2026-09-26 10:50:00-05', interval 10 minute) as t (d)
+      - input: ref('int_feed_minutes')
+        format: sql
+        rows: |
+          select m as minute, true as swept, true as predictions_sampled
+          from generate_series(timestamptz '2026-09-26 10:00:00-05', timestamptz '2026-09-26 10:59:00-05', interval 1 minute) as t (m)
+    expect:
+      rows:
+        - {stop_id: "B", hour_start: "2026-09-26 10:00:00-05", scheduled_buses: 6, observed_buses: 4, median_headway_min: 14.0, max_headway_min: 14.0, bunched: 0, gaps: 0}

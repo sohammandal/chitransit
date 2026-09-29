@@ -22,7 +22,11 @@ passes as (
         pt.direction,
         p.stop_id,
         p.passed_at,
-        date_diff('second', lag(p.passed_at) over stop_line, p.passed_at) / 60.0 as headway_min
+        -- a headway next to a pass timed only as "no later than" (a tracker blackout) isn't
+        -- timed: the bus counts as observed, but not toward headways, bunching or gaps
+        case when not (p.bounded or coalesce(lag(p.bounded) over stop_line, false)) then
+            date_diff('second', lag(p.passed_at) over stop_line, p.passed_at) / 60.0
+        end as headway_min
     from {{ ref('int_stop_passes') }} as p
     inner join {{ ref('stg_patterns') }} as pt on p.pid = pt.pid
     inner join pattern_ends as e

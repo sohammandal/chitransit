@@ -18,9 +18,16 @@ models:
       - name: minute
         data_tests: [unique, not_null]
   - name: int_stop_passes
-    description: Interpolated stop passes. Grain (service_date, rt, pid, start_s, vid, seq).
+    description: >
+      Stop passes, with the live feed's rules (ghost_ledger.live.trip_passes). Grain
+      (service_date, rt, pid, start_s, vid, seq).
     columns:
       - name: passed_at
+        data_tests: [not_null]
+      - name: bounded
+        description: >
+          Passed during a tracker blackout: passed_at is the latest it can have been (the
+          next report), not an interpolation. Headways next to it aren't timed.
         data_tests: [not_null]
   - name: int_scheduled_departures
     description: Scheduled departures per stop. Grain (service_date, trip_id, stop_sequence).

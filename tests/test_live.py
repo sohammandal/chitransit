@@ -287,6 +287,15 @@ def test_a_dark_bus_behind_this_one_changes_nothing_across_patterns():
     assert b["next_stpid"] == "s7" and b["stop_gap_s"] == 5 * 60 and b["last_by"] == "A"
 
 
+def test_after_a_jump_back_the_stops_beyond_the_furthest_point_still_pass():
+    board = stop_board()
+    for m, d in enumerate([5000, 6500, 0, 7400]):  # a glitch to 0, then on past s7
+        sweep(board, m, trip("A", d, m))
+    passes = board.passes()
+    assert ("79", "Eastbound", "s6") in passes and len(passes[("79", "Eastbound", "s6")]) == 1
+    assert passes[("79", "Eastbound", "s7")] == [(T0 + timedelta(minutes=2 + 7000 / 7400), "A")]
+
+
 def test_going_backwards_passes_nothing_and_a_new_trip_starts_afresh():
     board = stop_board()
     for m, d in enumerate([6000, 7500, 6800, 7200]):  # jumps back at m=2: no step until past 7,500

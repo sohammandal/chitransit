@@ -387,10 +387,12 @@ def trip_passes(
 
     Before the trip gets under way (departed_at), a bus laying over creeps back and forth: each
     stop it crosses keeps its last crossing, which is when the bus left it, and none count
-    until it has left. From then on, the nightly's rule (int_stop_passes): a step from a report
-    at the furthest point reached so far (counting from departure) to a report further on
-    passes the stops between them, inclusive and interpolated; each stop keeps its earliest
-    pass. Across a blackout (reports more than STEP apart) the time in between is unknown, so
+    until it has left. From then on (int_stop_passes has the same rules), a step forward passes
+    the stops between the furthest point reached so far (counting from departure) and its end,
+    inclusive and interpolated along the step; each stop keeps its earliest pass. So a report
+    that jumps back (to 0 at a terminal, or GPS noise) neither passes stops twice nor, once
+    the bus is past its furthest point again, loses the stops beyond it. Across a blackout
+    (reports more than STEP apart) the time in between is unknown, so
     those stops are passed at the later report: the latest the bus can have passed them. That
     can only understate a wait, never inflate it (Sep 28: J14 buses go dark for 20+ minutes on
     Lake Shore Drive, and the stops after it would otherwise never be passed)."""
@@ -404,13 +406,14 @@ def trip_passes(
     furthest = float("-inf")
     for (t0, d0), (t1, d1) in zip(points, points[1:], strict=False):
         before = t1 <= left
+        lo = d0
         if not before:
-            at_furthest = d0 >= furthest
             furthest = max(furthest, d0)
-        if d1 <= d0 or (not before and not at_furthest):
+            lo = furthest  # only new ground: a jump back and forth passes nothing twice
+        if d1 <= lo or d1 <= d0:
             continue
         blackout = t1 - t0 > STEP
-        for k in range(bisect_left(stops, (d0,)), len(stops)):
+        for k in range(bisect_left(stops, (lo,)), len(stops)):
             at = stops[k][0]
             if at > d1:
                 break
