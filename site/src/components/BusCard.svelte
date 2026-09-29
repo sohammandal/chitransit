@@ -12,7 +12,7 @@
 
   let { bus, behind, pattern, lineBuses, scheduled, routeName, age, onBack, onSelect }: {
     bus: Vehicle;
-    behind: Vehicle | undefined; // the bus behind (lib/waits.ts behindOf)
+    behind: { bus: Vehicle; s: number } | undefined; // the bus behind (lib/waits.ts behindOf)
     pattern: Pattern | undefined;
     lineBuses: LineBus[];
     scheduled: number | null;
@@ -25,7 +25,7 @@
   const starting = $derived((bus.pdist ?? 0) < 1000);
   // Measured at its next stop (the "here" a rider on the corner ahead cares about)
   const wait = $derived(waitOf(bus, scheduled));
-  const behindWait = $derived(behind ? waitOf(behind, scheduled) : null);
+  const behindWait = $derived(behind ? { s: behind.s } : null);
   // One stop on the card: the bus's next stop, where its wait is measured (not also the stop
   // it is nearest, which can be the one it just passed: #66 Sep 28 showed two names). A bus at
   // a terminal, or an older feed, shows where it is instead.

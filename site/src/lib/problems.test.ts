@@ -125,11 +125,15 @@ describe("behindOf and scheduleRange", () => {
   });
   it("finds the bus behind only if it is behind", () => {
     const a = v("A", { pdist: 5000 });
-    expect(behindOf(a, [a, v("B", { pdist: 1000, last_by: "A" })])?.vid).toBe("B");
+    expect(behindOf(a, [a, v("B", { pdist: 1000, last_by: "A" })])?.bus.vid).toBe("B");
     expect(behindOf(a, [a, v("C", { pdist: 40000, last_by: "A" })])).toBeUndefined(); // ahead: an older pass
     // another pattern: by GPS along the direction (westbound: further west is ahead)
     expect(behindOf(a, [a, v("D", { pid: 2, lon: -87.7, last_by: "A" })])).toBeUndefined();
-    expect(behindOf(a, [a, v("E", { pid: 2, lon: -87.55, last_by: "A" })])?.vid).toBe("E");
+    expect(behindOf(a, [a, v("E", { pid: 2, lon: -87.55, last_by: "A" })])?.bus.vid).toBe("E");
+    // #66 Sep 29: A and X ran 71 s apart and swapped, so X was last at B's next stop; B's bus
+    // ahead on the pattern is A, which passed B's spot 14 min ago: that's A's gap behind
+    const b = v("B", { pdist: 1000, last_by: "X", stop_gap_s: 821, ahead: "A", gap_s: 847 });
+    expect(behindOf(a, [a, v("X", { pdist: 5500 }), b])).toEqual({ bus: b, s: 847 });
   });
   it("shows the stops' schedule range, or the route's without it", () => {
     expect(scheduleRange([v("A", {}), v("B", { sched_s: 1800 })], 900)).toEqual([600, 1800]);

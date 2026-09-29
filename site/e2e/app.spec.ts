@@ -763,6 +763,7 @@ test("bus card: the gap behind is an estimate, shown with a ~ (J14, Sep 28)", as
   await page.goto("/route/66/");
   await page.locator('[aria-label="Bus 8185"]').first().click();
   const behind = page.locator(".gap.behind");
-  await expect(behind).toContainText("~25 min"); // an estimate: the next bus isn't there yet
+  // 8118, on the same pattern, is where 8185 was 651 s ago (gap_s): measured, then "~"
+  await expect(behind).toContainText("~11 min");
   await expect(behind).toContainText("until the next bus gets here");
 });

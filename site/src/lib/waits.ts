@@ -74,12 +74,21 @@ export function stillAhead(v: Vehicle, by: Vehicle): boolean {
   return a == null || b == null || b > a - BEHIND_MARGIN_M;
 }
 
-/** The bus behind `bus`: the nearest one whose last bus (at its next stop) was `bus`. */
-export function behindOf(bus: Vehicle, vehicles: Vehicle[]): Vehicle | undefined {
-  if (bus.stop_gap_s === undefined) return vehicles.find((v) => v.ahead === bus.vid && v.pid === bus.pid);
-  return vehicles
+/** The bus behind `bus`, and how long ago `bus` was where it is. First the bus on the same
+ *  pattern whose bus ahead is `bus` (gap_s: measured at that bus's own position); else the
+ *  nearest one whose last bus at its next stop was `bus`. (#66 Sep 29: 8178 and 8663 ran 71 s
+ *  apart and swapped, so 8663 was last at the next bus's stop and 8178's card had no gap
+ *  behind, though 8178 had passed that bus's spot 14 min before.) */
+export function behindOf(bus: Vehicle, vehicles: Vehicle[]): { bus: Vehicle; s: number } | undefined {
+  const same = vehicles
+    .filter((v) => v.ahead === bus.vid && v.pid === bus.pid && v.gap_s != null && !v.at_terminal)
+    .sort((a, b) => a.gap_s! - b.gap_s!)[0];
+  if (same) return { bus: same, s: same.gap_s! };
+  if (bus.stop_gap_s === undefined) return undefined;
+  const byStop = vehicles
     .filter((v) => v.last_by === bus.vid && v.stop_gap_s != null && !v.at_terminal && stillAhead(v, bus))
     .sort((a, b) => a.stop_gap_s! - b.stop_gap_s!)[0];
+  return byStop ? { bus: byStop, s: byStop.stop_gap_s! } : undefined;
 }
 
 /** The scheduled gap a direction's header shows: the range over its buses' next stops (the
