@@ -72,7 +72,7 @@
 
 {#if pattern}
   <LineView {pattern} buses={lineBuses} {scheduled} selected={bus.vid} {onSelect} />
-  <Key />
+  <Key partial={lineBuses.some((b) => b.other)} />
 {/if}
 
 <ul class="facts">

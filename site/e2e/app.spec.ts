@@ -789,3 +789,27 @@ test("bus card: a bus with only its last stop left says it's finishing, not \"ca
   await expect(page.getByText(/can't tell/)).toHaveCount(0);
   await expect(page.locator(".gap.behind")).toHaveCount(0); // nobody waits on a finishing bus's stop
 });
+
+test("bus card: the key names short turns, and a ring's colour follows its state (Sep 29)", async ({ page }) => {
+  // The bus card's line draws short turns as rings, so its key says what a ring is; a ring is
+  // amber when that bus is together with another, blue otherwise; the key's ring is neutral
+  await setUp(page);
+  const f = stopFeed();
+  const s1 = f.vehicles.find((v: { vid: string }) => v.vid === "S1");
+  Object.assign(s1, { together_with: "8185", together_s: 40 }); // S1 bunched, S2 not
+  await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: f }));
+  await page.goto("/route/66/");
+  await page.locator('[aria-label="Bus 8185"]').first().click();
+  await expect(page.locator(".sheet .key")).toContainText("Runs part of the route");
+  const stroke = (vid: string) =>
+    page.locator(`.sheet svg [aria-label="Bus ${vid}"] circle.dot`).first().evaluate((c) => getComputedStyle(c).stroke);
+  const [amber, blue, fog] = await page.evaluate(() => {
+    const css = getComputedStyle(document.documentElement);
+    const rgb = (v: string) => { const el = document.createElement("i"); el.style.color = css.getPropertyValue(v); document.body.append(el); const c = getComputedStyle(el).color; el.remove(); return c; };
+    return [rgb("--signal-amber"), rgb("--flag-blue"), rgb("--fog")];
+  });
+  expect(await stroke("S1")).toBe(amber);
+  expect(await stroke("S2")).toBe(blue);
+  const keyRing = await page.locator(".sheet .key .dot.other").evaluate((i) => getComputedStyle(i).borderTopColor);
+  expect(keyRing).toBe(fog);
+});
