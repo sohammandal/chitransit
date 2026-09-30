@@ -11,12 +11,14 @@
 </div>
 <p class="what">How Chicago's buses are really running, live and over time</p>
 <dl>
-  <dt>Tap a route or bus</dt>
-  <dd>See the route live or its Report Card, and when the last bus passed</dd>
+  <dt>Search a route, or tap any bus</dt>
+  <dd>On the map or on its route</dd>
+  <dt>Zoom in for stops</dt>
+  <dd>Tap one to see what's coming</dd>
   <dt>Right now</dt>
-  <dd>Long waits and buses together, judged against the schedule at each stop</dd>
-  <dt>Updates</dt>
-  <dd>Every 30 seconds. A position can be up to a minute old</dd>
+  <dd>Long waits and bunching, judged against the schedule</dd>
+  <dt>Live</dt>
+  <dd>Updates every 30 seconds. A position can be up to a minute old</dd>
 </dl>
 <div class="fine">
   <p>Data provided by Chicago Transit Authority</p>
@@ -29,9 +31,10 @@
   h2 { margin: 0; font-size: 20px; line-height: 1.15; }
   .tag { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border: 1px solid var(--rule); border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1; color: var(--fog); padding-top: 4px; /* Overpass sits high: nudge */ }
   .x { margin-left: auto; width: 44px; height: 44px; flex: none; border: 0; border-radius: 50%; background: var(--concrete); color: var(--fog); font-size: 24px; line-height: 1; cursor: pointer; }
-  dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 10px 16px; font-size: 15px; }
+  dl { margin: 0; display: grid; gap: 2px; font-size: 15px; } /* each line under its heading */
   dt { font-weight: 700; }
-  dd { margin: 0; }
+  dt:not(:first-child) { margin-top: 12px; }
+  dd { margin: 0; color: var(--fog); }
   .what { margin: -4px 0 0; font-size: 16px; line-height: 1.4; }
   .fine { border-top: 1px solid var(--rule); padding-top: 12px; display: grid; gap: 6px; font-size: 13px; color: var(--fog); line-height: 1.45; }
   .fine p { margin: 0; }

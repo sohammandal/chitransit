@@ -846,6 +846,7 @@ test("stop: tap a stop on the map (zoomed in) to see the next buses there, by st
 });
 
 test("stop: click around like a rider: route, stop, bus, back link, Back/Forward, close (Sep 29)", async ({ page }) => {
+  test.slow(); // a whole journey: ~47 s on CI's runner, over the 45 s default (Sep 29)
   const errors = await setUp(page);
   const stops = JSON.parse(fixture("stops.json")!.toString()) as [number, number, string, number[]][];
   // The stops on the map (all of them, not just the ones in view) are exactly those the pids serve
