@@ -156,7 +156,7 @@ LOAD_PATTERN_SHAPES = "SELECT pid, rt, rtdir, length_ft, pattern -> 'pt' FROM op
 
 # Recent trails for the live feed's gaps, so a restart doesn't blank them (ghost_ledger.live).
 LOAD_TRAILS = """
-SELECT vid, observed_at, pid, pdist, stsd, stst
+SELECT vid, observed_at, pid, pdist, stsd, stst, lat, lon
 FROM ops.bus_positions
 WHERE observed_at > %(since)s AND pid IS NOT NULL AND pdist IS NOT NULL
 ORDER BY vid, observed_at

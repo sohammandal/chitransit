@@ -227,6 +227,7 @@ class Poller:
                     board.dirs[pid] = rtdir
                     board.stops[pid] = live.pattern_stops(points)
                     board.stop_ids[pid] = live.pattern_stop_ids(points)
+                    board.shapes[pid] = live.pattern_shape(points)
                     if length is not None:
                         board.lengths[pid] = float(length)
                 board.schedule = self.live.schedule  # survives a state reload
@@ -427,6 +428,7 @@ class Poller:
             self.live.dirs[pid] = ptr["rtdir"]
             self.live.stops[pid] = live.pattern_stops(ptr.get("pt", []))
             self.live.stop_ids[pid] = live.pattern_stop_ids(ptr.get("pt", []))
+            self.live.shapes[pid] = live.pattern_shape(ptr.get("pt", []))
             if ptr.get("ln") is not None:
                 self.live.lengths[pid] = float(ptr["ln"])
             self.stops.update(dict.fromkeys(sample_stops(ptr), rt))

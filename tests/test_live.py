@@ -198,8 +198,8 @@ def stop_board():
     return board
 
 
-def trip(vid, pdist, minute, pid=MAIN, stst=36000):
-    return pos(vid, pdist, T0 + timedelta(minutes=minute), pid=pid, stsd=DAY, stst=stst)
+def trip(vid, pdist, minute, pid=MAIN, stst=36000, **kw):
+    return pos(vid, pdist, T0 + timedelta(minutes=minute), pid=pid, stsd=DAY, stst=stst, **kw)
 
 
 def sweep(board, minute, *positions):
@@ -247,6 +247,7 @@ def test_no_start_pass_while_the_bus_is_still_laying_over():
     for m, d in enumerate([0, 30, 0, 30]):
         sweep(board, m, trip("L", d, m))
     assert ("79", "Eastbound", "s0") not in board.passes()
+    assert by_vid(board.snapshot(T0 + timedelta(minutes=3)))["L"]["trip"] == "starting"
 
 
 def test_across_a_blackout_stops_are_passed_at_the_latest_possible_time():
@@ -515,3 +516,248 @@ def test_a_bus_reassigned_to_another_trip_while_driving_keeps_its_passes():
         sweep(board, m, trip("A", 0, m, stst=76830))
     sweep(board, 4, trip("A", 5113, 4, stst=75030))
     assert [v for _, v in board.passes()[("79", "Eastbound", "s4")]] == ["A"]
+
+
+# --- The claims decided in the poller (module docstring): serving passes, behind, together ---
+
+
+def test_a_short_turn_arriving_at_its_last_stop_does_not_serve_it():
+    # #66 Sep 29: short turns end at Pulaski. S ends at s12 at m=8; the last bus that served
+    # s12 (for riders going on) was A at m=2
+    board = stop_board()
+    for m in range(0, 11):
+        buses = [trip("A", 10000 + 1000 * m, m)]
+        buses.append(trip("S", min(8000, 1000 * m), m, pid=SHORT))
+        if m >= 9:
+            buses.append(trip("B", 11500 - 500 * (10 - m), m))
+        sweep(board, m, *buses)
+    assert ("79", "Eastbound", "s12") in board.passes()
+    assert [v for _, v in board.passes()[("79", "Eastbound", "s12")]] == ["A"]
+    b = by_vid(board.snapshot(T0 + timedelta(minutes=10)))["B"]
+    assert (b["next_stpid"], b["last_by"], b["stop_gap_s"]) == ("s12", "A", 8 * 60)
+
+
+def test_a_bus_with_only_its_last_stop_left_is_finishing_and_waits_on_no_stop():
+    board = stop_board()
+    for m in range(0, 4):
+        sweep(board, m, trip("W", 1000 * m, m, pid=WEST))  # its last stop, w1, is at 5,000 ft
+    w = by_vid(board.snapshot(T0 + timedelta(minutes=3)))["W"]
+    assert w["next_stop"] is None and w["stop_gap_s"] is None and not w["at_terminal"]
+    assert w["trip"] == "finishing"
+
+
+def test_the_bus_behind_can_be_a_short_turn_that_stops_here():
+    board = stop_board()
+    for m in range(0, 11):
+        buses = [trip("A", 1000 * m - 500, m)]  # main: passed s7 at m=7.5, heading for s10
+        if m >= 5:
+            buses.append(trip("S", 500 * (m - 5), m, pid=SHORT))  # short turn: heading for s7
+        sweep(board, m, *buses)
+    a = by_vid(board.snapshot(T0 + timedelta(minutes=10)))["A"]
+    assert a["next_stpid"] == "s10"
+    assert (a["behind_vid"], a["behind_stops"]) == ("S", 3)  # S heads for s7, A for s10
+
+
+def test_a_short_turn_that_ends_before_this_bus_s_stop_is_not_the_bus_behind():
+    board = stop_board()
+    for m in range(0, 11):
+        buses = [trip("A", 1000 * m + 4500, m)]  # main, heading for s15: passed s6 at m=1.5
+        if m >= 5:
+            buses.append(trip("S", 500 * (m - 5), m, pid=SHORT))  # nearer, but ends at s12
+        if m >= 4:
+            buses.append(trip("B", 1000 * (m - 4) - 200, m))  # main, heading for s6
+        sweep(board, m, *buses)
+    a = by_vid(board.snapshot(T0 + timedelta(minutes=10)))["A"]
+    assert a["next_stpid"] == "s15"
+    assert (a["behind_vid"], a["behind_stops"]) == ("B", 9)  # B heads for s6, A for s15
+
+
+def test_two_buses_heading_for_one_stop_are_measured_at_the_last_stop_both_passed():
+    board = stop_board()
+    for m in range(0, 11):
+        sweep(board, m, trip("A", 1000 * m - 200, m), trip("B", 1000 * m - 800, m))
+    a = by_vid(board.snapshot(T0 + timedelta(minutes=10)))["A"]
+    assert (
+        a["next_stpid"] == "s10"
+        and by_vid(board.snapshot(T0 + timedelta(minutes=10)))["B"]["next_stpid"] == "s10"
+    )
+    assert (a["behind_vid"], a["behind_stops"]) == ("B", 0)  # right behind: the same stop next
+
+
+def test_the_bus_behind_needs_no_pass_history_only_positions():
+    board = stop_board()
+    for m in range(0, 11):
+        buses = [trip("B", 1000 * m - 3500, m)]  # heading for s7 at m=10
+        if m >= 9:
+            buses.append(trip("A", 9500 + 500 * (m - 9), m))  # joined at 9,500 ft at m=9
+        sweep(board, m, *buses)
+    a = by_vid(board.snapshot(T0 + timedelta(minutes=10)))["A"]
+    assert (a["behind_vid"], a["behind_stops"]) == ("B", 3)  # A heads for s10, B for s7
+
+
+def test_a_bus_laying_over_at_the_start_is_the_bus_behind():
+    board = stop_board()
+    for m, d in zip(range(6, 11), (0, 800, 1800, 2800, 3800), strict=True):
+        sweep(board, m, trip("A", d, m), trip("L", 30 * ((m + 1) % 2), m, stst=37000))
+    a = by_vid(board.snapshot(T0 + timedelta(minutes=10)))["A"]
+    assert (a["behind_vid"], a["behind_stops"]) == ("L", 4)  # L waits at s0; A heads for s4
+
+
+def test_buses_together_across_patterns_at_the_last_stop_both_passed(tmp_path):
+    board = stop_board()
+    every_10 = [(s, T0 + timedelta(minutes=k)) for s in ("s7", "s8") for k in range(-60, 30, 10)]
+    board.schedule = load_schedule(str(schedule_file(tmp_path, every_10)))
+    for m in range(0, 10):
+        buses = [trip("A", 1000 * m - 1100, m)]  # main: s8 at m=9.1
+        if m >= 4:
+            buses.append(trip("S", 1000 * (m - 4), m, pid=SHORT))  # short turn: s8 at m=8
+        sweep(board, m, *buses)
+    snap = by_vid(board.snapshot(T0 + timedelta(minutes=9.5)))
+    assert (snap["A"]["together_with"], snap["A"]["together_s"]) == ("S", round(1.1 * 60))
+    assert snap["S"]["together_with"] is None  # nothing just ahead of the leader
+
+
+def test_buses_a_third_of_the_schedule_apart_are_not_together(tmp_path):
+    board = stop_board()
+    every_10 = [(s, T0 + timedelta(minutes=k)) for s in ("s7", "s8") for k in range(-60, 30, 10)]
+    board.schedule = load_schedule(str(schedule_file(tmp_path, every_10)))
+    for m in range(0, 12):
+        buses = [trip("A", 1000 * m - 3000, m)]  # s8 at m=11
+        if m >= 4:
+            buses.append(trip("S", 1000 * (m - 4), m, pid=SHORT))  # s8 at m=8: 3 min ahead
+        sweep(board, m, *buses)
+    assert by_vid(board.snapshot(T0 + timedelta(minutes=11.2)))["A"]["together_with"] is None
+
+
+def test_the_feed_flags_a_long_wait_when_buses_were_due_and_did_not_come(tmp_path):
+    board = stop_board()
+    every_5 = [("s7", T0 + timedelta(minutes=k)) for k in range(-60, 31, 5)]
+    board.schedule = load_schedule(str(schedule_file(tmp_path, every_5)))
+    for m in range(0, 17):
+        buses = [trip("A", 3000 + 1000 * m, m)]  # passed s7 at m=4
+        if m >= 15:
+            buses.append(trip("B", 6000 + 200 * (m - 15), m))
+        sweep(board, m, *buses)
+    b = by_vid(board.snapshot(T0 + timedelta(minutes=16)))["B"]
+    assert b["stop_gap_s"] == 12 * 60 and b["sched_s"] == 300 and b["sched_due"] == 3
+    assert b["long_wait"] is True
+
+
+def test_buses_together_long_ago_on_a_stretch_without_stops_are_not_claimed(tmp_path):
+    # J14 on Lake Shore Drive: 7 miles without a stop. Two buses left s20 a minute apart, but
+    # that was over TOGETHER_FRESH ago: says nothing about now
+    board = stop_board()
+    every_10 = [("s20", T0 + timedelta(minutes=k)) for k in range(-60, 30, 10)]
+    board.schedule = load_schedule(str(schedule_file(tmp_path, every_10)))
+    for m in range(0, 14):
+        buses = [trip("F", 300 * m, m, pid=WEST)]  # leaves s20 at m=0-1, slowly
+        buses.append(trip("B", max(0, 300 * (m - 1)), m, pid=WEST, stst=36060))  # a minute later
+        sweep(board, m, *buses)
+    early = by_vid(board.snapshot(T0 + timedelta(minutes=5)))
+    late = by_vid(board.snapshot(T0 + timedelta(minutes=13)))
+    assert early["B"]["together_with"] == "F"
+    assert late["B"]["together_with"] is None
+
+
+def test_no_long_wait_when_only_one_bus_was_due_since_the_last(tmp_path):
+    # A long gap, but the schedule thinned out: one departure due since A came
+    board = stop_board()
+    deps = [("s7", T0 + timedelta(minutes=k)) for k in range(-60, 5, 5)] + [
+        ("s7", T0 + timedelta(minutes=10))
+    ]
+    board.schedule = load_schedule(str(schedule_file(tmp_path, deps)))
+    for m in range(0, 18):
+        buses = [trip("A", 3000 + 1000 * m, m)]  # passed s7 at m=4
+        if m >= 15:
+            buses.append(trip("B", 6000 + 200 * (m - 15), m))
+        sweep(board, m, *buses)
+    b = by_vid(board.snapshot(T0 + timedelta(minutes=17)))["B"]
+    assert b["stop_gap_s"] == 13 * 60 and b["sched_due"] == 1 and b["stop_gap_s"] > 2 * b["sched_s"]
+    assert b["long_wait"] is False
+
+
+def test_a_bus_ahead_is_never_the_bus_behind():
+    board = stop_board()
+    for m in range(0, 11):
+        buses = [trip("A", 1000 * m - 500, m), trip("C", 1000 * m + 2500, m)]
+        if m >= 3:
+            buses.append(trip("B", 1000 * (m - 3) - 500, m))  # heading for s7: A there at 7.5
+        if m >= 7:
+            buses.append(trip("D", 1000 * (m - 7) - 500, m))  # further back, heading for s3
+        sweep(board, m, *buses)
+    a = by_vid(board.snapshot(T0 + timedelta(minutes=10)))["A"]
+    # C, heading for s13, is ahead of A (heading for s10); B is the nearest bus behind, not D
+    assert (a["behind_vid"], a["behind_stops"]) == ("B", 3)
+
+
+def test_not_together_with_a_bus_that_has_since_turned_around_or_gone(tmp_path):
+    # #66 Sep 29: 8174 passed the last stop just ahead of 8300, then reached Austin and started
+    # back the other way: they are no longer on the road together
+    board = stop_board()
+    every_10 = [(s, T0 + timedelta(minutes=k)) for s in ("s7", "s8") for k in range(-60, 30, 10)]
+    board.schedule = load_schedule(str(schedule_file(tmp_path, every_10)))
+    for m in range(0, 10):
+        buses = [trip("A", 1000 * m - 1100, m)]  # s8 at m=9.1
+        if 4 <= m < 9:
+            buses.append(trip("S", 1000 * (m - 4), m, pid=SHORT))  # s8 at m=8, then gone
+        sweep(board, m, *buses)
+    assert by_vid(board.snapshot(T0 + timedelta(minutes=9.5)))["A"]["together_with"] is None
+
+
+def test_a_report_off_its_route_is_left_out():
+    # The GPS must sit on the pattern at the reported pdist. #3 8405, Sep 29: dark 32 minutes
+    # at 79th St, then back downtown with 79th's pdist; #66 8677: assigned its next trip while
+    # 5 km away, its pdist creeping along the pattern
+    board = stop_board()
+    board.shapes[MAIN] = [(0.0, 41.75, -87.65), (20000.0, 41.80, -87.65)]  # due north
+    on = lambda d: 41.75 + 0.05 * d / 20000  # noqa: E731 - the pattern's latitude at d feet
+    sweep(board, 0, trip("B", 2200, 0, lat=on(2200)))
+    sweep(board, 1, trip("B", 2800, 1, lat=on(2800)))  # under way, heading for s3
+    for m in range(2, 32):  # A passes s3 at m=2.5: a wait B would measure, were it trusted
+        sweep(board, m, trip("A", 500 + 1000 * m, m, lat=on(500 + 1000 * m)))
+    sweep(board, 32, trip("B", 2800, 32, lat=on(2800) + 0.1))  # 11 km away, same pdist
+    assert [d for _, _, d, _ in board.trails["B"]] == [2200, 2800]
+    b = by_vid(board.snapshot(T0 + timedelta(minutes=32)))["B"]
+    assert b["lat"] == round(on(2800) + 0.1, 5)  # on the map where it is: not a claim
+    assert b["next_stop"] is None and b["stop_gap_s"] is None and b["trip"] is None
+    # laying over at a terminal it is still at the terminal, off route or not
+    sweep(board, 32.5, trip("T", 300, 32.5, lat=on(300) + 0.1))
+    assert by_vid(board.snapshot(T0 + timedelta(minutes=32.5)))["T"]["at_terminal"] is True
+    sweep(board, 33, trip("B", 17000, 33, lat=on(17000)))
+    assert [d for _, _, d, _ in board.trails["B"]] == [2200, 2800, 17000]
+    sweep(board, 34, trip("B", 17100, 34, lat=on(17100) + 0.002))  # 220 m off: GPS noise, taken
+    assert len(board.trails["B"]) == 4
+    # restored trails are checked too
+    seeded = stop_board()
+    seeded.shapes[MAIN] = board.shapes[MAIN]
+    t1 = T0 + timedelta(minutes=1)
+    off, ok = on(5000) + 0.1, on(6000)
+    seeded.seed(
+        [
+            ("C", T0, MAIN, 5000.0, DAY, 36000, off, -87.65),
+            ("C", t1, MAIN, 6000.0, DAY, 36000, ok, -87.65),
+        ]
+    )
+    assert [d for _, _, d, _ in seeded.trails["C"]] == [6000]
+
+
+def test_of_two_buses_heading_for_one_stop_the_one_nearer_it_is_ahead():
+    # #147 Sep 29: 4014 downtown and 4204 near Foster both had Foster next (5 miles of Lake
+    # Shore Drive without a stop); each was listed as "right behind" the other
+    board = stop_board()
+    board.stop_ids[MAIN] = [(0.0, "s0", "Stop 0"), (20000.0, "far", "Far"), (21000.0, "end", "End")]
+    for m in range(0, 11):
+        sweep(board, m, trip("A", 1500 + 1000 * m, m), trip("B", 3000 + 1000 * m, m))
+    snap = by_vid(board.snapshot(T0 + timedelta(minutes=10)))
+    assert snap["A"]["next_stpid"] == snap["B"]["next_stpid"] == "far"
+    assert (snap["B"]["behind_vid"], snap["B"]["behind_stops"]) == ("A", 0)  # A is behind B
+    assert snap["A"]["behind_vid"] is None  # B, nearer the stop, is ahead of A
+
+
+def test_a_sparse_stretch_of_the_pattern_allows_more_room():
+    # Lake Shore Drive: 16,000 ft between two points; a straight line strays from the road
+    board = stop_board()
+    board.shapes[MAIN] = [(0.0, 41.75, -87.65), (16000.0, 41.79, -87.65)]
+    mid = 41.77  # halfway, 8,000 ft
+    sweep(board, 0, trip("B", 8000, 0, lat=mid, lon=-87.65 + 0.005))  # ~415 m off the chord
+    assert [d for _, _, d, _ in board.trails["B"]] == [8000]  # within 15% of 4.9 km

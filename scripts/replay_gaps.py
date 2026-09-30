@@ -18,8 +18,9 @@ schedule:
             far below its route's median loses passes (e.g. #146's first stops, Sep 28)
   speed     seconds per snapshot (the poller has 30 s per sweep)
 
-Gates (exit 1 on failure): new within 60 s >= 98.5%, wrong flags <= 0.5% of new flags,
-missed long waits <= 2% of real ones, snapshot p95 <= 3 s.
+Gates (exit 1 on failure): new within 60 s >= 98.5%; by the site's rule (over twice the stop's
+schedule, 2+ due): wrong flags <= 0.5% of flags, missed long waits <= 2% of real ones;
+snapshot p95 <= 3 s.
 
   eval "$(aws configure export-credentials --profile ghost-ledger --format env)"
   uv run --group transform python scripts/replay_gaps.py --date 2026-09-28 [--start 05:00]
@@ -29,6 +30,7 @@ Reads Ingress read-only; caches the day under data/replay/<date>/.
 
 import argparse
 import importlib.util
+import json
 import math
 import statistics
 import sys
@@ -77,8 +79,10 @@ def at(day: date, hhmm: str) -> datetime:
 
 
 def extract(day: date, start: datetime, until: datetime, cache: Path) -> None:
-    """Positions (from TRAIL before start) and the last pattern version before `until`."""
-    if (cache / "pos.parquet").exists() and (cache / "stops.parquet").exists():
+    """Positions (from TRAIL before start) and the last pattern version before `until`: its
+    stops, and its whole shape (stops and waypoints) for the live board's on-route check."""
+    files = ("pos.parquet", "stops.parquet", "shape.parquet")
+    if all((cache / f).exists() for f in files):
         return
     cache.mkdir(parents=True, exist_ok=True)
     c = duckdb.connect()
@@ -87,14 +91,7 @@ def extract(day: date, start: datetime, until: datetime, cache: Path) -> None:
     c.execute("CREATE SECRET (TYPE s3, PROVIDER credential_chain, REGION 'us-east-2')")
     c.execute("ATTACH '354894954112' AS glue (TYPE iceberg, ENDPOINT_TYPE glue)")
     lo, hi = (start - TRAIL - timedelta(minutes=15)).isoformat(), until.isoformat()
-    c.execute(f"""COPY (
-        SELECT vid, observed_at, rt, pid, pdist, stsd, stst, lat, lon
-        FROM glue.ghost_ledger_ingress.ghost_ops_bus_positions
-        WHERE observed_at >= '{lo}'::timestamptz AND observed_at < '{hi}'::timestamptz
-            AND pid IS NOT NULL AND pdist IS NOT NULL
-        QUALIFY row_number() OVER (PARTITION BY vid, observed_at ORDER BY __lsn) = 1
-    ) TO '{cache}/pos.parquet' (FORMAT parquet)""")  # noqa: S608 - our own dates
-    c.execute(f"""COPY (
+    patterns = f"""
         WITH v AS (
             SELECT pid, rt, rtdir, pattern FROM glue.ghost_ledger_ingress.ghost_ops_patterns
             WHERE __op != 'd' AND changed_at < '{hi}'::timestamptz
@@ -104,7 +101,23 @@ def extract(day: date, start: datetime, until: datetime, cache: Path) -> None:
             SELECT pid, rt, rtdir, (pattern->>'ln')::double AS length_ft,
                 unnest(from_json(json_extract(pattern, '$.pt'), '["JSON"]')) AS pt
             FROM v
-        )
+        )"""  # noqa: S608
+    if not (cache / "shape.parquet").exists():
+        c.execute(f"""COPY ({patterns}
+            SELECT pid, (pt->>'pdist')::double AS pdist, (pt->>'lat')::double AS lat,
+                (pt->>'lon')::double AS lon
+            FROM pts ORDER BY pid, pdist
+        ) TO '{cache}/shape.parquet' (FORMAT parquet)""")  # noqa: S608
+    if (cache / "pos.parquet").exists() and (cache / "stops.parquet").exists():
+        return
+    c.execute(f"""COPY (
+        SELECT vid, observed_at, rt, pid, pdist, stsd, stst, lat, lon
+        FROM glue.ghost_ledger_ingress.ghost_ops_bus_positions
+        WHERE observed_at >= '{lo}'::timestamptz AND observed_at < '{hi}'::timestamptz
+            AND pid IS NOT NULL AND pdist IS NOT NULL
+        QUALIFY row_number() OVER (PARTITION BY vid, observed_at ORDER BY __lsn) = 1
+    ) TO '{cache}/pos.parquet' (FORMAT parquet)""")  # noqa: S608 - our own dates
+    c.execute(f"""COPY ({patterns}
         SELECT pid, rt, rtdir, length_ft, (pt->>'pdist')::double AS pdist, pt->>'stpid' AS stpid,
             pt->>'stpnm' AS name, (pt->>'lat')::double AS lat, (pt->>'lon')::double AS lon
         FROM pts WHERE (pt->>'typ') = 'S' AND (pt->>'stpid') IS NOT NULL
@@ -178,6 +191,32 @@ def nightly_rule(points, stops):
     return out
 
 
+DUMPED = ("vid", "rt", "dir", "pid", "pdist", "at_terminal", "next_stop", "next_stpid",
+          "stop_gap_s", "last_by", "gap_s", "ahead", "sched_s", "sched_due", "long_wait",
+          "together_with", "together_s", "behind_vid", "behind_stops")  # fmt: skip
+
+
+def dump_row(v: dict, t: datetime, truth: dict) -> dict:
+    """One sampled bus for --dump: its live fields, and hindsight at its next stop (the last
+    pass by another bus before now; when it got there itself, and the passes just before and
+    after its own: the true headways in front and behind)."""
+    passes = truth.get((v["rt"], v["dir"], v.get("next_stpid")), [])
+    k = bisect_right(passes, (t, "\uffff", t))
+    last = next(((w, o) for w, o, _ in reversed(passes[:k]) if o != v["vid"]), None)
+    row = {f: v.get(f) for f in DUMPED}
+    row["t"] = t.isoformat()
+    row["truth_s"] = None if last is None else round((t - last[0]).total_seconds())
+    row["truth_by"] = None if last is None else last[1]
+    mine = next((w for w, o, _ in passes if o == v["vid"] and w >= t), None)
+    if mine is not None:
+        before = [w for w, o, _ in passes if o != v["vid"] and w < mine]
+        after = [w for w, o, _ in passes if o != v["vid"] and w > mine]
+        row["true_front_s"] = round((mine - max(before)).total_seconds()) if before else None
+        row["true_behind_s"] = round((min(after) - mine).total_seconds()) if after else None
+        row["arrive_s"] = round((mine - t).total_seconds())
+    return row
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", required=True, type=date.fromisoformat)
@@ -186,6 +225,11 @@ def main() -> int:
     ap.add_argument("--every", type=int, default=5, help="minutes between scored snapshots")
     ap.add_argument("--routes", default="", help="comma list: only these routes")
     ap.add_argument("--show-wrong", type=int, default=0, help="print N wrong new flags")
+    ap.add_argument(
+        "--dump",
+        help="write every sampled bus (terminal buses too) with its live"
+        " claim and the hindsight last pass, one JSON line each",
+    )
     args = ap.parse_args()
     day, cache = args.date, ROOT / "data" / "replay" / f"{args.date.isoformat()}-v2"
     start, until = at(day, args.start), at(day, args.until)
@@ -205,9 +249,12 @@ def main() -> int:
         board.routes[int(pid)], board.dirs[int(pid)] = rt, rtdir
         if length:
             board.lengths[int(pid)] = float(length)
+    for pid, feet, lat, lon in duckdb.sql(f"SELECT * FROM '{cache}/shape.parquet'").fetchall():
+        if None not in (feet, lat, lon):
+            board.shapes.setdefault(int(pid), []).append((float(feet), float(lat), float(lon)))
     where = f"WHERE rt IN ({','.join(repr(r) for r in routes)})" if routes else ""
     rows = duckdb.sql(
-        f"SELECT vid, observed_at, rt, pid, pdist, stsd, stst FROM '{cache}/pos.parquet' {where} ORDER BY observed_at"  # noqa: S608, E501
+        f"SELECT vid, observed_at, rt, pid, pdist, stsd, stst, lat, lon FROM '{cache}/pos.parquet' {where} ORDER BY observed_at"  # noqa: S608, E501
     ).fetchall()
     print(f"{len(rows):,} reports, {len(board.stop_ids)} patterns")
     # Every report's GPS position by route, for the independent check below
@@ -227,7 +274,9 @@ def main() -> int:
     # Hindsight: every pass of the day, by the live rule and by the nightly's current rule.
     trips: dict[tuple, list] = defaultdict(list)  # by CTA trip id: the nightly's old rule only
     trails: dict[str, list] = defaultdict(list)  # as the live board keeps them
-    for vid, t, _rt, pid, pdist, stsd, stst in rows:
+    for vid, t, _rt, pid, pdist, stsd, stst, lat, lon in rows:
+        if not board.on_route({"pid": pid, "pdist": pdist, "lat": lat, "lon": lon}):
+            continue  # as the live board does
         trip = (stsd, stst) if stsd is not None and stst is not None else None
         trails[vid].append((t, int(pid), float(pdist), trip))
         if trip is not None:
@@ -247,14 +296,14 @@ def main() -> int:
         # arriving and leaving, a bus is at the stop and nobody there is waiting.
         # (fixed at 100 ft here, whatever the rules under test say)
         saved, live_rules.DWELL_FT = live_rules.DWELL_FT, -1
-        arrivals = trip_passes(points, stops)
+        arrivals = trip_passes(points, stops[:-1])
         live_rules.DWELL_FT = 100
-        departures = trip_passes(points, stops)
+        departures = trip_passes(points, stops[:-1])
         live_rules.DWELL_FT = saved
         for (arr, _), (dep, sid) in zip(arrivals, departures, strict=False):
             if dep > arr:
                 at_stop[(rt, rtdir, sid)].append((arr, dep, vid))
-        for when, sid in trip_passes(points, stops):
+        for when, sid in trip_passes(points, stops[:-1]):
             # knowable from the passing bus's next report, and not before its trip got going
             k = bisect_right(times, when)
             known = max(times[min(k, len(times) - 1)], left or when)
@@ -290,9 +339,10 @@ def main() -> int:
     while t <= until:
         new = []
         while i < len(rows) and rows[i][1] <= t:
-            vid, obs, rt, pid, pdist, stsd, stst = rows[i]
+            vid, obs, rt, pid, pdist, stsd, stst, lat, lon = rows[i]
             latest[vid] = {"vid": vid, "rt": rt, "pid": int(pid), "pdist": float(pdist),
-                           "observed_at": obs, "stsd": stsd, "stst": stst}  # fmt: skip
+                           "observed_at": obs, "stsd": stsd, "stst": stst, "lat": lat,
+                           "lon": lon}  # fmt: skip
             new.append(latest[vid])
             i += 1
         fresh = {p["vid"] for p in new}
@@ -302,6 +352,10 @@ def main() -> int:
             t0 = time.perf_counter()
             snap = board.snapshot(t)
             snap_s.append(time.perf_counter() - t0)
+            if args.dump:
+                with open(args.dump, "a") as out:
+                    for v in snap["vehicles"]:
+                        out.write(json.dumps(dump_row(v, t, truth)) + "\n")
             for v in snap["vehicles"]:
                 if v["at_terminal"] or v["pid"] is None or v["next_stpid"] is None:
                     continue
@@ -526,9 +580,9 @@ def main() -> int:
     print(f"  snapshot time: median {statistics.median(snap_s):.2f} s, p95 {p95:.2f} s")
     gates = {
         "new within 60 s >= 98.5%": new["within60"] >= 0.985,
-        "wrong flags <= 0.5%": new["wrong"] <= 0.005 * max(1, new["flags"]),
-        "missed long waits <= 2%": new["miss_unknown"] + new["miss_under"]
-        <= 0.02 * max(1, new["true_long"]),
+        # the site's rule (the stop's own schedule, 2+ due), not the route-hour one above
+        "wrong flags <= 0.5%": wrong <= 0.005 * max(1, flags),
+        "missed long waits <= 2%": missed <= 0.02 * max(1, true_long),
         "snapshot p95 <= 3 s": p95 <= 3,
     }
     for g, ok in gates.items():

@@ -28,12 +28,29 @@ each bus's recent trail in memory and writes one JSON snapshot (docs/SITE.md, "l
   it leaves, so there the pass is its last crossing before it leaves, and only once it has.
   (Sep 28: 16% of trips still sat at their first stop 2+ minutes after the naive pass.)
 
+  Only serving passes count: a pass at a stop on the bus's own pattern, never its last stop
+  (a bus arriving to end its trip serves nobody waiting there: #66 short turns end at Pulaski).
+  The next stop is likewise the next stop the bus serves; a bus whose only stop left is its
+  last is finishing and has none.
+
   Against the schedule at that stop (the nightly's live schedule, Schedule; None without it):
   sched_s    the scheduled gap there now: 3,600 s / departures in the past hour (all trips of
              the route), None when none were scheduled (no judgment in a service gap)
   sched_due  scheduled departures there since the last bus passed: a long wait means buses
              were due and didn't come, not just a long time (the first bus after a midday or
              overnight break has waited hours, with nothing due)
+
+  The claims the site shows, decided here once:
+  long_wait      stop_gap_s over twice sched_s with at least 2 departures due
+  together_with  the bus just ahead at this bus's last serving pass (any pattern), when it
+                 passed that stop under a quarter of the scheduled gap before this one, within
+                 the last TOGETHER_FRESH; together_s: that headway
+  trip           why a bus has no next stop: "starting" (not under way yet: laying over or
+                 just pulled out) or "finishing" (only its last stop left); None otherwise
+  behind_vid     the nearest bus behind (same route and direction, any pattern, laying over at
+                 a start too) that will stop at this bus's next stop; behind_stops: how many of
+                 this bus's stops it is back (0: heading for the same stop). Positions only, no
+                 forecast: minutes behind were a forecast, wrong by 5+ min 1 time in 10 (Sep 29).
 
 The snapshot is derived and disposable (DDIA ch. 12: a cache of the log, rebuilt from the next
 sweeps), so publishing is best-effort: a failed write is logged and never fails a sweep.
@@ -96,6 +113,19 @@ START_FT = 150
 DWELL_FT = 100
 # A trip first seen this soon after a stop passed it (a stop spacing is ~660 ft)
 FIRST_SEEN_FT = 500
+# A report counts only if its GPS is within this of its pattern at its pdist. Otherwise the
+# two disagree and neither can be trusted for passes: a bus assigned its next trip while still
+# driving from the garage creeps along the pattern kilometres away (Sep 29 rush: 1.2% of
+# mid-route reports, e.g. #66 8677 "at" 1,092 ft while 5 km off), or CTA sends a new GPS with
+# the old pdist after a blackout (#3 8405: back downtown with 79th Street's pdist). Such a
+# report still puts the bus on the map (where it is is not a claim) but makes no passes and no
+# claims. Where the pattern's points are far apart (Lake Shore Drive: 16,000 ft without a
+# waypoint) a straight line between them strays from the road, so the tolerance grows with
+# the gap: OFF_ROUTE_SHARE of it.
+OFF_ROUTE_M = 300
+OFF_ROUTE_SHARE = 0.15
+# "Together" is judged at the last stop a bus passed; an older pass says little about now.
+TOGETHER_FRESH = timedelta(minutes=10)
 # Two reports further apart than this aren't interpolated (the bus dropped out of the feed in
 # between), as in the nightly's int_stop_passes.
 STEP = timedelta(minutes=5)
@@ -175,18 +205,25 @@ class LiveBoard:
         self.stop_ids: dict[int, list[tuple[float, str, str]]] = {}  # pid -> [(feet, stpid, name)]
         self.routes: dict[int, str] = {}  # pid -> rt, from the poller and the reports
         self.schedule: Schedule | None = None  # the nightly's live schedule, if loaded
+        self.shapes: dict[int, list[tuple[float, float, float]]] = {}  # pid -> [(feet, lat, lon)]
 
     def seed(self, rows) -> None:
-        """Rebuild trails from stored positions (vid, observed_at, pid, pdist[, stsd, stst]),
-        oldest first."""
-        for vid, t, pid, pdist, *trip in rows:
-            key = (trip[0], trip[1]) if len(trip) == 2 and None not in trip else None
+        """Rebuild trails from stored positions (vid, observed_at, pid, pdist[, stsd, stst[, lat,
+        lon]]), oldest first; reports off their route (OFF_ROUTE_M) are left out."""
+        for vid, t, pid, pdist, *rest in rows:
+            stsd, stst, lat, lon = (list(rest) + [None] * 4)[:4]
+            if not self.on_route({"pid": pid, "pdist": pdist, "lat": lat, "lon": lon}):
+                continue
+            key = (stsd, stst) if None not in (stsd, stst) else None
             self.trails.setdefault(vid, deque()).append((t, int(pid), float(pdist), key))
 
     def update(self, positions: list[dict[str, Any]], now: datetime) -> None:
         """Record this sweep's reports (parsed vehicles, repeats included) and forget the rest."""
         present = {}
         for p in positions:
+            if not self.on_route(p):
+                present[p["vid"]] = {**p, "off_route": True}  # on the map; no passes, no claims
+                continue
             present[p["vid"]] = p
             if p.get("pid") is None or p.get("pdist") is None:
                 continue
@@ -205,6 +242,23 @@ class LiveBoard:
                 trail.popleft()
             if not trail:
                 del self.trails[vid]
+
+    def on_route(self, p: dict[str, Any]) -> bool:
+        """Whether a report's GPS is within OFF_ROUTE_M (or OFF_ROUTE_SHARE of the gap between
+        the pattern's points there) of its pattern at its pdist; True with nothing to check."""
+        pid, d, lat, lon = p.get("pid"), p.get("pdist"), p.get("lat"), p.get("lon")
+        shape = self.shapes.get(int(pid)) if pid is not None else None
+        if not shape or None in (d, lat, lon):
+            return True
+        d = float(d)
+        i = bisect_left(shape, (d,))
+        a, b = shape[max(0, i - 1)], shape[min(i, len(shape) - 1)]
+        f = (d - a[0]) / (b[0] - a[0]) if b[0] > a[0] else 0.0
+        f = min(1.0, max(0.0, f))
+        dy = (float(lat) - (a[1] + f * (b[1] - a[1]))) * 110_540
+        dx = (float(lon) - (a[2] + f * (b[2] - a[2]))) * 82_990
+        allowed = max(OFF_ROUTE_M, OFF_ROUTE_SHARE * (b[0] - a[0]) * 0.3048)
+        return (dx * dx + dy * dy) ** 0.5 <= allowed
 
     def crossed_at(
         self, vid: str, pid: int, pdist: float, since: datetime | None = None
@@ -238,18 +292,32 @@ class LiveBoard:
         return d
 
     def passes(self) -> dict[tuple[str, str, str], list[tuple[datetime, str]]]:
-        """Every stop pass in the trails: (rt, rtdir, stpid) -> [(passed_at, vid)]. Derived from
-        the trails on each snapshot, so it is the same after a restart, eviction or a pattern
-        that arrives late (no second copy to keep in step)."""
+        """Every serving stop pass in the trails: (rt, rtdir, stpid) -> [(passed_at, vid)]."""
+        return self.pass_log()[0]
+
+    def pass_log(
+        self,
+    ) -> tuple[
+        dict[tuple[str, str, str], list[tuple[datetime, str]]], dict[str, dict[str, datetime]]
+    ]:
+        """(every serving pass by (rt, rtdir, stpid), each bus's passes on its current run by
+        stpid). Serving: a stop on the bus's pattern other than its last. Derived from the
+        trails on each snapshot, so it is the same after a restart, eviction or a pattern that
+        arrives late (no second copy to keep in step)."""
         out: dict[tuple[str, str, str], list[tuple[datetime, str]]] = {}
+        current: dict[str, dict[str, datetime]] = {}
         for vid, trail in self.trails.items():
-            for pid, points in runs(trail):
+            rs = runs(trail)
+            for n, (pid, points) in enumerate(rs):
                 stops, rt, rtdir = self.stop_ids.get(pid), self.routes.get(pid), self.dirs.get(pid)
                 if not stops or rt is None or rtdir is None:
                     continue
-                for passed_at, stpid in trip_passes(points, stops):
+                for passed_at, stpid in trip_passes(points, stops[:-1]):
                     out.setdefault((rt, rtdir, stpid), []).append((passed_at, vid))
-        return out
+                    if n == len(rs) - 1:
+                        mine = current.setdefault(vid, {})
+                        mine[stpid] = max(passed_at, mine.get(stpid, passed_at))
+        return out, current
 
     def under_way(self, vid: str) -> bool:
         """Whether the bus's current run has left its start (departed_at)."""
@@ -299,8 +367,8 @@ class LiveBoard:
         if not stops or rt is None or rtdir is None:
             return None, None, None
         i = bisect_left(stops, (pdist,))
-        if i == len(stops):
-            return None, None, None  # past its last stop
+        if i >= len(stops) - 1:
+            return None, None, None  # only its last stop left: finishing, serves no one
         at, stpid, name = stops[i]
         last, last_by = None, None
         for t, other in index.get((rt, rtdir, stpid), ()):
@@ -357,6 +425,114 @@ class LiveBoard:
                 return None  # it went dark ahead of this bus, short of here: it may have passed
         return None if last is None else max(0, round((now - last).total_seconds()))
 
+    def trip_state(self, p: dict[str, Any]) -> str | None:
+        """ "starting" or "finishing" for a bus with no next stop (see the module docstring)."""
+        if p.get("pid") is None or p.get("pdist") is None:
+            return None
+        stops = self.stop_ids.get(int(p["pid"]))
+        if not stops:
+            return None
+        if not self.under_way(p["vid"]):
+            return "starting"
+        if bisect_left(stops, (float(p["pdist"]),)) >= len(stops) - 1:
+            return "finishing"
+        return None
+
+    def heading_for(self, vid: str, pid: int, pdist: float) -> tuple[str, float] | None:
+        """The next stop a bus will serve and how far it is from it (feet): for a bus still at
+        its start, the first stop from where it has been waiting; None when only its last stop
+        is left."""
+        stops = self.stop_ids.get(pid)
+        if not stops:
+            return None
+        d = pdist
+        if not self.under_way(vid):
+            trail = self.trails.get(vid)
+            if trail:
+                d = min(x for _, x in runs(trail)[-1][1])
+        i = bisect_left(stops, (d - 1,))
+        return None if i >= len(stops) - 1 else (stops[i][1], stops[i][0] - pdist)
+
+    def behind(
+        self, fresh: list[dict[str, Any]], stop_gaps: dict[str, tuple[Any, Any, Any]]
+    ) -> dict[str, tuple[str, int]]:
+        """vid -> (the bus behind, stops back): see the module docstring (behind_vid)."""
+        serves: dict[int, dict[str, int]] = {}  # pid -> stpid -> first index (not its last stop)
+        for pid, stops in self.stop_ids.items():
+            serves[pid] = {}
+            for i, (_, sid, _) in enumerate(stops[:-1]):
+                serves[pid].setdefault(sid, i)
+        # (rt, dir) -> [(vid, pid, the stop it's heading for, feet to go)]
+        lines: dict[tuple[str, str], list[tuple[str, int, str, float]]] = {}
+        for p in fresh:
+            if p.get("pid") is None or p.get("pdist") is None:
+                continue
+            pid = int(p["pid"])
+            rt, rtdir = self.routes.get(pid), self.dirs.get(pid)
+            heading = self.heading_for(p["vid"], pid, float(p["pdist"]))
+            if rt is not None and rtdir is not None and heading is not None:
+                lines.setdefault((rt, rtdir), []).append((p["vid"], pid, *heading))
+        out: dict[str, tuple[str, int]] = {}
+        for buses in lines.values():
+            for vid_a, pid_a, _, to_go_a in buses:
+                _, _, nxt = stop_gaps.get(vid_a, (None, None, None))
+                mine = serves.get(pid_a, {})
+                if nxt is None or nxt[0] not in mine:
+                    continue
+                k_a, best = mine[nxt[0]], None
+                for vid_b, pid_b, s_b, to_go_b in buses:
+                    if vid_b == vid_a or nxt[0] not in serves.get(pid_b, {}):
+                        continue  # itself, or it won't stop at this bus's next stop
+                    k_b = mine.get(s_b)
+                    if k_b is None or k_b > k_a:
+                        continue  # ahead of this bus, or not on its line yet (a branch)
+                    if k_b == k_a and to_go_b <= to_go_a:
+                        continue  # heading for the same stop but nearer to it: ahead (#147 Sep 29)
+                    if best is None or (k_b, -to_go_b) > (best[1], -best[2]):
+                        best = (vid_b, k_b, to_go_b)
+                if best is not None:
+                    out[vid_a] = (best[0], k_a - best[1])
+        return out
+
+    def together(
+        self,
+        fresh: list[dict[str, Any]],
+        index: dict[tuple[str, str, str], list[tuple[datetime, str]]],
+        current: dict[str, dict[str, datetime]],
+        terminal: set[str],
+        now: datetime,
+    ) -> dict[str, tuple[str, int]]:
+        """vid -> (the bus just ahead, headway s) for buses together: see the module docstring.
+        The bus ahead must still be on the road with it: in the feed, on the same route and
+        direction, not laying over (#66 Sep 29: 8174 was just ahead at the last stop, then
+        reached Austin and turned around)."""
+        out: dict[str, tuple[str, int]] = {}
+        line: dict[str, tuple[str | None, str | None]] = {}
+        for p in fresh:
+            if p.get("pid") is not None and p["vid"] not in terminal:
+                line[p["vid"]] = (self.routes.get(int(p["pid"])), self.dirs.get(int(p["pid"])))
+        for p in fresh:
+            if p.get("pid") is None or self.schedule is None:
+                continue
+            pid = int(p["pid"])
+            rt, rtdir = self.routes.get(pid), self.dirs.get(pid)
+            mine = current.get(p["vid"])
+            if not mine or rt is None or rtdir is None:
+                continue
+            sid, t_b = max(mine.items(), key=lambda kv: kv[1])
+            if now - t_b > TOGETHER_FRESH:
+                continue
+            passes = index.get((rt, rtdir, sid), ())
+            before = [(t, v) for t, v in passes if t < t_b and v != p["vid"]]
+            if not before:
+                continue
+            t_f, front = max(before)
+            sched, _ = self.schedule.judge(rt, sid, t_b, None)
+            headway = (t_b - t_f).total_seconds()
+            if sched and headway < 0.25 * sched and line.get(front) == (rt, rtdir):
+                out[p["vid"]] = (front, round(headway))
+        return out
+
     def near(self, pid: int | None, pdist: float | None) -> str | None:
         """The name of the stop on pattern `pid` nearest to `pdist` feet along it."""
         stops = self.stops.get(pid) if pid is not None else None
@@ -378,11 +554,13 @@ class LiveBoard:
         for p in self.latest.values():
             if p.get("pid") is None or p.get("pdist") is None:
                 continue
-            if now - p["observed_at"] <= DARK:
-                live.setdefault(int(p["pid"]), {})[p["vid"]] = float(p["pdist"])
             if self.at_terminal(p):
                 terminal.add(p["vid"])
-            else:
+            if p.get("off_route"):
+                continue  # on the map, but no gaps or claims
+            if now - p["observed_at"] <= DARK:
+                live.setdefault(int(p["pid"]), {})[p["vid"]] = float(p["pdist"])
+            if p["vid"] not in terminal:
                 by_pid.setdefault(int(p["pid"]), []).append(p)
         seen: dict[int, list[str]] = {}  # pid -> buses with trail on it
         for vid, trail in self.trails.items():
@@ -396,7 +574,7 @@ class LiveBoard:
                     bus["vid"], pid, float(bus["pdist"]), live.get(pid, {}), seen.get(pid, []), now
                 )
                 gaps[bus["vid"]] = (gap, buses[i - 1]["vid"] if i else None)
-        index = self.passes()
+        index, current = self.pass_log()
         dark = self.dark_buses(now)
         stop_at: dict[int, dict[str, list[float]]] = {}
         for p_, stops in self.stop_ids.items():
@@ -411,10 +589,13 @@ class LiveBoard:
             if self.under_way(bus["vid"])  # still at its start: not waited on by anyone yet
         }
 
+        fresh = [p for p in self.latest.values() if now - p["observed_at"] <= STALE]
+        on_route = [p for p in fresh if not p.get("off_route")]
+        behind = self.behind(on_route, stop_gaps)
+        together = self.together(on_route, index, current, terminal, now)
+
         rows = []
-        for p in sorted(self.latest.values(), key=lambda p: (p["rt"], p["vid"])):
-            if now - p["observed_at"] > STALE:
-                continue
+        for p in sorted(fresh, key=lambda p: (p["rt"], p["vid"])):
             gap, ahead = gaps.get(p["vid"], (None, None))
             stop_gap, last_by, next_stop = stop_gaps.get(p["vid"], (None, None, None))
             sched_s = sched_due = None
@@ -435,6 +616,13 @@ class LiveBoard:
                 "next_stpid": next_stop[0] if next_stop else None,
                 "next_stop": next_stop[1] if next_stop else None,
                 "sched_s": sched_s, "sched_due": sched_due,
+                "long_wait": bool(stop_gap is not None and sched_s and stop_gap > 2 * sched_s
+                                  and (sched_due or 0) >= 2),
+                "together_with": together.get(p["vid"], (None, None))[0],
+                "together_s": together.get(p["vid"], (None, None))[1],
+                "behind_vid": behind.get(p["vid"], (None, None))[0],
+                "behind_stops": behind.get(p["vid"], (None, None))[1],
+                "trip": None if next_stop or p.get("off_route") else self.trip_state(p),
             })  # fmt: skip
         return {
             "generated_at": now.isoformat(timespec="seconds"),
@@ -545,6 +733,15 @@ def trip_passes(
             passes[k] = later
         later = passes[k]
     return [(when, stops[k][1]) for k, when in sorted(passes.items())]
+
+
+def pattern_shape(points: list[dict[str, Any]]) -> list[tuple[float, float, float]]:
+    """[(feet along, lat, lon)] for a Bus Tracker pattern's points (stops and waypoints)."""
+    return sorted(
+        (float(p["pdist"]), float(p["lat"]), float(p["lon"]))
+        for p in points or []
+        if p.get("pdist") is not None and p.get("lat") is not None and p.get("lon") is not None
+    )
 
 
 def pattern_stop_ids(points: list[dict[str, Any]]) -> list[tuple[float, str, str]]:
