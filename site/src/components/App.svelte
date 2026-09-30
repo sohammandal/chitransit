@@ -3,20 +3,23 @@
   //   city  (/)             : "Right now", the worst long waits and buses arriving together
   //   route (/route/66/)    : Now (the route as a line per direction) and its Report card
   //   bus   (tap a bus)     : the gap ahead of and behind that bus
+  //   stop  (tap a stop on the map, zoomed in): the next buses there, by stops away
   // The URL tracks the route, so a route page can be shared and Back works.
   import { onMount } from "svelte";
   import * as data from "../lib/data";
   import { pollFeed } from "../lib/feed";
   import { findProblems, scheduledGap } from "../lib/problems";
   import { mainPid, onLine } from "../lib/project";
+  import { stopRows } from "../lib/stops";
   import { behindOf } from "../lib/waits";
-  import type { Feed, Headways, Pattern, Report, Vehicle } from "../lib/types";
+  import type { Feed, Headways, Pattern, Report, Stop, Vehicle } from "../lib/types";
   import About from "./About.svelte";
   import BusCard from "./BusCard.svelte";
   import MapView from "./MapView.svelte";
   import RightNow from "./RightNow.svelte";
   import RouteView from "./RouteView.svelte";
   import Sheet from "./Sheet.svelte";
+  import StopView from "./StopView.svelte";
   import TopBar from "./TopBar.svelte";
 
   type Size = "peek" | "half" | "full";
@@ -31,6 +34,8 @@
 
   let route = $state<string | null>(null);
   let selected = $state<string | null>(null);
+  let stop = $state.raw<Stop | null>(null); // raw: it goes into history.state
+  let fromStop = $state<string | null>(null); // a bus opened from this stop: its back link returns there
   let about = $state(false);
   let size = $state<Size>("peek");
   let phone = $state(false);
@@ -46,8 +51,19 @@
   const bus = $derived(selected ? vehicles.find((v) => v.vid === selected) : undefined);
   // With a bus open, the map shows only its direction: the card is all about that direction.
   const direction = $derived(bus?.dir ?? null);
-  const shapes = $derived(route ? [...patterns.values()].filter((p) => p.rt === route && (!direction || p.dir === direction)) : []);
-  const level = $derived(about ? "about" : bus ? "bus" : route ? "route" : "city");
+  const level = $derived(about ? "about" : bus ? "bus" : route ? "route" : stop ? "stop" : "city");
+  const stopLoading = $derived(stop ? stop[3].some((pid) => !patterns.has(pid)) : false);
+  const rows = $derived(stop ? stopRows(stop, vehicles, patterns) : []);
+  // A stop's map: only the buses on its card, and their lines
+  const stopBuses = $derived(level !== "stop" ? null : stopLoading ? [] : rows.flatMap((r) => r.next.map((n) => n.bus)));
+  const shapes = $derived(route ? [...patterns.values()].filter((p) => p.rt === route && (!direction || p.dir === direction))
+    : stopBuses ? [...new Set(stopBuses.map((b) => b.pid))].flatMap((pid) => patterns.get(pid!) ?? [])
+    : []);
+  // The map's stops: a bus's own pattern, a route's running patterns, none beside an open stop, or all
+  const stopPids = $derived(bus?.pid != null ? [bus.pid]
+    : route ? [...new Set(routeBuses.flatMap((b) => (b.pid != null ? [b.pid] : [])))]
+    : stopBuses ? []
+    : null);
 
   // Map padding keeps the route clear of the panel: beside it on wide screens, above it on phones.
   const padding = $derived(phone
@@ -62,6 +78,22 @@
       data.pattern(pid).then((p) => { patterns = new Map(patterns).set(pid, p); }).catch(() => {});
     }
   });
+
+  // Load an open stop's patterns (where the stop is on each one)
+  $effect(() => {
+    for (const pid of stop?.[3] ?? []) {
+      if (patterns.has(pid)) continue;
+      data.pattern(pid).then((p) => { patterns = new Map(patterns).set(pid, p); }).catch(() => {});
+    }
+  });
+  /** Open a stop tapped on the map: its own history entry (so Back returns to it), and the
+   *  camera stays where the rider put it. */
+  function openStop(s: Stop) {
+    go(null, "none", false);
+    history.pushState({ stop: s }, "", "/");
+    stop = s;
+    size = "half";
+  }
 
   // Phones: the map's buttons sit just above the sheet (MapView reads --sheet, which the
   // sheet sets while it's shown).
@@ -88,6 +120,8 @@
    *  typing a search, so Back skips the in-between routes), or "none" (Back/Forward). */
   function go(rt: string | null, history_: "push" | "replace" | "none" = "push", fitMap = true) {
     frame(fitMap);
+    stop = null;
+    fromStop = null;
     route = rt;
     selected = null;
     about = false;
@@ -121,6 +155,7 @@
   const close = () => go(null, "push", fit);
   function back() {
     if (about) about = false;
+    else if (stop) history.back();
     else if (selected) toRoute();
     else if (route) close();
   }
@@ -128,12 +163,17 @@
   onMount(() => {
     document.querySelector(".shell")?.remove(); // index.astro's static shell, for the first paint
     route = fromPath();
-    if (route) size = "half";
+    stop = history.state?.stop ?? null; // a reload keeps an open stop
+    if (route || stop) size = "half";
     const narrow = window.matchMedia("(max-width: 640px)");
     const onWidth = () => (phone = narrow.matches);
     onWidth();
     narrow.addEventListener("change", onWidth);
-    const onPop = () => go(fromPath(), "none");
+    const onPop = () => {
+      const s: Stop | null = history.state?.stop ?? null;
+      go(fromPath(), "none", !s);
+      if (s) { stop = s; size = "half"; }
+    };
     window.addEventListener("popstate", onPop);
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") back(); };
     window.addEventListener("keydown", onKey);
@@ -141,10 +181,10 @@
     data.routeNames().then((r) => (names = r)).catch(() => {});
     data.headways().then((h) => (hw = h)).catch(() => {});
     data.report().then((r) => (report = r)).catch(() => {});
-    const stop = pollFeed((f) => { feed = f; failed = false; }, () => (failed = true));
+    const stopPolling = pollFeed((f) => { feed = f; failed = false; }, () => (failed = true));
     const tick = window.setInterval(() => (now = Date.now()), 1000);
     return () => {
-      stop();
+      stopPolling();
       window.clearInterval(tick);
       narrow.removeEventListener("change", onWidth);
       window.removeEventListener("popstate", onPop);
@@ -153,11 +193,11 @@
   });
 </script>
 
-<MapView {vehicles} {route} {direction} {selected} {shapes} {padding} {fit} {fitNonce} {focusNonce} onSelect={(vid) => select(vid, "map")} />
+<MapView vehicles={stopBuses ?? vehicles} {route} {direction} {selected} {shapes} {stopPids} stop={level === "stop" ? stop : null} {padding} {fit} {fitNonce} {focusNonce} onSelect={(vid) => select(vid, "map")} onStop={openStop} />
 
 <div class="side panel-column" style:--top-h="{topH}px">
   <div bind:clientHeight={topH}>
-    <TopBar count={feed ? vehicles.length : null} {age} {failed} {names} onOpen={(rt, replace) => go(rt, replace ? "replace" : "push")} aboutOpen={about} onAbout={() => { about = !about; if (about && size === "peek") size = "half"; }} />
+    <TopBar {route} count={feed ? vehicles.length : null} {age} {failed} {names} onOpen={(rt, replace) => go(rt, replace ? "replace" : "push")} aboutOpen={about} onAbout={() => { about = !about; if (about && size === "peek") size = "half"; }} />
   </div>
   {#if feed || about}
     <Sheet {size} onSize={(s) => (size = s)}>
@@ -182,7 +222,8 @@
           scheduled={gapFor(bus)}
           routeName={names[bus.rt]}
           age={Math.max(0, Math.round(now / 1000 - bus.t))}
-          onBack={toRoute}
+          backTo={fromStop}
+          onBack={fromStop ? () => history.back() : toRoute}
           onSelect={(vid) => select(vid, "line")}
         />
       {:else if level === "route" && route}
@@ -199,6 +240,8 @@
           onSelect={(vid) => select(vid, "line")}
           onClose={close}
         />
+      {:else if level === "stop" && stop}
+        <StopView {stop} {rows} loading={stopLoading} {names} onSelect={(vid) => { const name = stop![2]; select(vid, "line"); fromStop = name; }} onClose={() => history.back()} />
       {:else}
         <RightNow {problems} {names} onOpen={(rt) => go(rt)} />
       {/if}

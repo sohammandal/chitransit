@@ -7,17 +7,22 @@ const FIX = new URL("./fixtures/", import.meta.url);
 const feed = JSON.parse(readFileSync(new URL("vehicles.json", FIX), "utf8"));
 const fixture = (name: string) => (existsSync(new URL(name, FIX)) ? readFileSync(new URL(name, FIX)) : null);
 
-type Map = { loaded(): boolean; getFilter(id: string): unknown; queryRenderedFeatures(o: object): { properties: { rt: string } }[] };
+type Map = {
+  loaded(): boolean; getFilter(id: string): unknown; queryRenderedFeatures(o: object): { properties: { rt: string } }[];
+  jumpTo(o: { center: [number, number]; zoom: number }): void; project(p: [number, number]): { x: number; y: number };
+  getCanvas(): HTMLCanvasElement;
+};
 declare global { interface Window { map?: Map; __e2e?: boolean } }
 
-/** Serve the fixtures (or 404 for the files in `missing`), freeze the clock just after the feed. */
-async function setUp(page: Page, missing: string[] = []) {
+/** Serve the fixtures (or 404 for the files in `missing`, or another feed `f`), freeze the clock
+ *  just after the feed. */
+async function setUp(page: Page, missing: string[] = [], f = feed) {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => { if (m.type() === "error" && !/openfreemap|Failed to load resource/.test(m.text())) errors.push(m.text()); });
-  await page.clock.setFixedTime(new Date(new Date(feed.generated_at).getTime() + 10_000));
-  await page.addInitScript((f) => { window.__e2e = true; (window as unknown as { __feed: unknown }).__feed = f; }, feed);
-  await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: feed }));
+  await page.clock.setFixedTime(new Date(new Date(f.generated_at).getTime() + 10_000));
+  await page.addInitScript((f) => { window.__e2e = true; (window as unknown as { __feed: unknown }).__feed = f; }, f);
+  await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: f }));
   await page.route("**/data/v1/**", (r) => {
     const name = new URL(r.request().url()).pathname.replace("/data/v1/", "");
     const body = missing.includes(name) ? null : fixture(name);
@@ -814,4 +819,157 @@ test("bus card: the key names short turns, and a ring's colour follows its state
   const keyRing = await page.locator(".sheet .key .dot.other").evaluate((i) => getComputedStyle(i).borderTopColor);
   expect(keyRing).toBe(blue);
   expect(keyRing).not.toBe(fog);
+});
+
+test("stop: tap a stop on the map (zoomed in) to see the next buses there, by stops away (Sep 29)", async ({ page }) => {
+  const errors = await setUp(page);
+  await page.goto("/");
+  await busesDrawn(page);
+  // Chicago & Ashland (fixture stops.json, built by transform/site_data.py stops_index)
+  await page.evaluate(() => window.map!.jumpTo({ center: [-87.66733, 41.89608], zoom: 17 }));
+  await page.waitForFunction(() => window.map!.queryRenderedFeatures({ layers: ["stops"] }).length > 0);
+  const pt = await page.evaluate(() => {
+    const p = window.map!.project([-87.66733, 41.89608]);
+    const r = window.map!.getCanvas().getBoundingClientRect();
+    return { x: r.left + p.x, y: r.top + p.y };
+  });
+  await page.mouse.click(pt.x, pt.y);
+  await expect(page.locator(".sheet h2")).toHaveText("Chicago & Ashland");
+  const row = page.locator(".sheet .rows li").filter({ hasText: "Westbound" });
+  await expect(row).toContainText("66");
+  await expect(row.locator(".bus").nth(0)).toContainText("1 stop away"); // 8185, just short of it
+  await expect(row.locator(".bus").nth(1)).toContainText("12 stops away"); // 8118
+  await expect(page.getByText(/min(ute)? until|arrives in/i)).toHaveCount(0); // positions, never a forecast
+  await row.locator(".bus").nth(0).click(); // a bus opens its card
+  await expect(page.getByText("Bus 8185")).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("stop: click around like a rider: route, stop, bus, back link, Back/Forward, close (Sep 29)", async ({ page }) => {
+  const errors = await setUp(page);
+  const stops = JSON.parse(fixture("stops.json")!.toString()) as [number, number, string, number[]][];
+  // The stops on the map (all of them, not just the ones in view) are exactly those the pids serve
+  const drawnStopsServe = async (pids: number[]) => {
+    const idx = await page.evaluate(() => (window.map as unknown as { getSource(id: string): { serialize(): {
+      data: { features: { properties: { i: number } }[] } } } }).getSource("stops").serialize().data.features.map((f) => f.properties.i));
+    const want = stops.flatMap((s, i) => (s[3].some((p) => pids.includes(p)) ? [i] : []));
+    return want.length > 0 && want.length < stops.length && JSON.stringify(idx) === JSON.stringify(want);
+  };
+  const routePids = [...new Set(feed.vehicles.filter((v: { rt: string }) => v.rt === "66").map((v: { pid: number }) => v.pid))] as number[];
+
+  // A route from the search box, zoomed in: only its stops
+  await page.goto("/");
+  await (await searchBox(page)).fill("66"); // opens after a pause, no Enter
+  await expect(page).toHaveURL(/\/route\/66\/$/);
+  await busesDrawn(page);
+  await page.waitForFunction(() => window.map!.queryRenderedFeatures({ layers: ["route"] }).length > 0);
+  await page.evaluate(() => window.map!.jumpTo({ center: [-87.66733, 41.89608], zoom: 16 }));
+  await page.waitForFunction(() => window.map!.queryRenderedFeatures({ layers: ["stops"] }).length > 0);
+  expect(await drawnStopsServe(routePids)).toBe(true);
+
+  // Tap a stop: its own page in history
+  const pt = await page.evaluate(() => {
+    const p = window.map!.project([-87.66733, 41.89608]);
+    const r = window.map!.getCanvas().getBoundingClientRect();
+    return { x: r.left + p.x, y: r.top + p.y };
+  });
+  await page.mouse.click(pt.x, pt.y);
+  const title = page.locator(".sheet h2");
+  await expect(title).toHaveText("Chicago & Ashland");
+  expect(new URL(page.url()).pathname).toBe("/");
+  await expect(page.getByLabel("Go to a route")).toHaveValue(""); // left the route it opened
+
+  // The stop's map: no other stop, the stop itself highlighted, only the buses on its card
+  type Src = { getSource(id: string): { serialize(): { data: { type: string; features?: { properties: { vid: string } }[] } } } };
+  const onMap = () => page.evaluate(() => {
+    const m = window.map as unknown as Src;
+    return { stops: m.getSource("stops").serialize().data.features!.length, stop: m.getSource("stop").serialize().data.type,
+      buses: m.getSource("buses").serialize().data.features!.map((f) => f.properties.vid) };
+  });
+  const cardBuses = await page.locator(".sheet .bus").count();
+  await expect.poll(onMap).toMatchObject({ stops: 0, stop: "Feature" });
+  await expect.poll(async () => (await onMap()).buses.length).toBe(cardBuses);
+  expect((await onMap()).buses).toContain("8185");
+
+  // A bus from the stop: its back link names the stop, the map shows only that bus's stops
+  await page.locator(".sheet .rows li").filter({ hasText: "Westbound" }).locator(".bus").nth(0).click();
+  await expect(page.getByText("Bus 8185")).toBeVisible();
+  const backLink = page.getByRole("button", { name: /Chicago & Ashland/ });
+  await expect(backLink).toBeVisible();
+  const pid = feed.vehicles.find((v: { vid: string }) => v.vid === "8185").pid;
+  await page.waitForFunction(() => window.map!.queryRenderedFeatures({ layers: ["stops"] }).length > 0);
+  expect(await drawnStopsServe([pid])).toBe(true);
+  await backLink.click();
+  await expect(title).toHaveText("Chicago & Ashland");
+
+  // The same with the browser's Back (a swipe on iPhone), then Back to the route, Forward again
+  await page.locator(".sheet .rows li").filter({ hasText: "Westbound" }).locator(".bus").nth(0).click();
+  await expect(page.getByText("Bus 8185")).toBeVisible();
+  await page.goBack();
+  await expect(title).toHaveText("Chicago & Ashland");
+  await page.goBack();
+  await expect(page).toHaveURL(/\/route\/66\/$/);
+  await expect(page.getByText("Chicago & Ashland")).toHaveCount(0);
+  await page.goForward();
+  await expect(title).toHaveText("Chicago & Ashland");
+
+  // Close: back where the rider came from; closing the route then goes to the city, not the stop
+  await page.getByRole("button", { name: "Close stop" }).click();
+  await expect(page).toHaveURL(/\/route\/66\/$/);
+  await page.getByRole("button", { name: "Back to all routes" }).click();
+  await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("stop: a stop tapped low on the map stays in view when the sheet rises over it (Sep 29)", async ({ page }) => {
+  const errors = await setUp(page);
+  await page.goto("/");
+  await busesDrawn(page);
+  const at: [number, number] = [-87.66733, 41.89608]; // Chicago & Ashland
+  // put the stop 70% of the way down: clear of the small sheet, under the half-height one
+  await page.evaluate((at) => {
+    const m = window.map!, h = m.getCanvas().getBoundingClientRect().height;
+    m.jumpTo({ center: at, zoom: 17 });
+    (m as unknown as { panBy(o: [number, number], a: object): void }).panBy([0, -(0.7 * h - h / 2)], { duration: 0 });
+  }, at);
+  await page.waitForFunction(() => window.map!.queryRenderedFeatures({ layers: ["stops"] }).length > 0);
+  const where = () => page.evaluate((at) => {
+    const p = window.map!.project(at), r = window.map!.getCanvas().getBoundingClientRect();
+    return { x: r.left + p.x, y: r.top + p.y };
+  }, at);
+  const pt = await where();
+  await page.mouse.click(pt.x, pt.y);
+  await expect(page.locator(".sheet h2")).toHaveText("Chicago & Ashland");
+  await expect.poll(async () => {
+    const [p, s] = [await where(), await page.locator(".sheet").boundingBox()];
+    return p.x < s!.x || p.x > s!.x + s!.width || p.y < s!.y; // not under the sheet
+  }).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test("stop: a long gap is said under the bus it's about, in a rider's words (Sep 29)", async ({ page }) => {
+  // the poller's claim on 8185 (the fixture feed predates long_wait)
+  const f = { ...feed, vehicles: feed.vehicles.map((v: { vid: string }) => (v.vid === "8185" ? { ...v, long_wait: true, stop_gap_s: 1500 } : v)) };
+  const errors = await setUp(page, [], f);
+  await page.goto("/");
+  await busesDrawn(page);
+  const at: [number, number] = [-87.66733, 41.89608]; // Chicago & Ashland
+  await page.evaluate((at) => window.map!.jumpTo({ center: at, zoom: 17 }), at);
+  await page.waitForFunction(() => window.map!.queryRenderedFeatures({ layers: ["stops"] }).length > 0);
+  const pt = await page.evaluate((at) => {
+    const p = window.map!.project(at), r = window.map!.getCanvas().getBoundingClientRect();
+    return { x: r.left + p.x, y: r.top + p.y };
+  }, at);
+  await page.mouse.click(pt.x, pt.y);
+  const row = page.locator(".rows li").filter({ hasText: "Westbound" });
+  const flag = row.getByText("Long gap: no bus for 25 min before this one");
+  await expect(flag).toBeVisible();
+  // right under the Next bus (8185), above the Then bus (measured at once: the sheet may be moving)
+  const order = () => row.evaluate((li) => {
+    const [next, then] = [...li.querySelectorAll(".bus")].map((e) => e.getBoundingClientRect());
+    const flag = li.querySelector(".flag.red")!.getBoundingClientRect();
+    return flag.top >= next.bottom - 1 && flag.bottom <= then.top + 1;
+  });
+  await expect.poll(order).toBe(true);
+  expect(errors).toEqual([]);
 });

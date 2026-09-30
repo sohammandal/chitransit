@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { onLine, project } from "./project";
+import { onLine, project, withoutSpurs } from "./project";
 import type { Pattern, Vehicle } from "./types";
 
 // A straight line north along a street, stops every ~1,000 ft (0.00275° of latitude)
@@ -30,5 +30,15 @@ describe("onLine", () => {
     expect(drawn.map((b) => [b.vid, b.other ?? false])).toEqual([["A", false], ["S", true]]);
     expect(drawn[1].pdist).toBeCloseTo(2000, -1);
     expect(off).toBe(1);
+  });
+});
+
+describe("withoutSpurs", () => {
+  it("drops a short out-and-back to a stop, keeps a real turnaround", () => {
+    const A: [number, number] = [-87.77193, 41.89476], stop: [number, number] = [-87.77193, 41.8947]; // 7 m
+    const end: [number, number] = [-87.76991, 41.89478];
+    expect(withoutSpurs([[-87.77437, 41.89472], A, stop, A, end])).toEqual([[-87.77437, 41.89472], A, end]);
+    const far: [number, number] = [-87.77193, 41.8940]; // 84 m up a street and back
+    expect(withoutSpurs([A, far, A, end])).toEqual([A, far, A, end]);
   });
 });

@@ -36,6 +36,9 @@ export type Vehicle = {
 
 export type Feed = { generated_at: string; build?: string; vehicles: Vehicle[] }; // build: the poller's commit
 
+/** A stop riders board at (same-named stops at a corner merged): [lon, lat, name, pids]. */
+export type Stop = [number, number, string, number[]];
+
 export type Pattern = {
   rt: string;
   dir: string;

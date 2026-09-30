@@ -2,14 +2,16 @@
   // Brand, live status and route search. Search suggests as you type and opens a route once
   // typing pauses (lib/search.ts), so phones need no Return key; a tap on a suggestion or
   // Return opens at once.
+  import { untrack } from "svelte";
   import { matchRoutes, toOpen } from "../lib/search";
   import Mark from "./Mark.svelte";
 
-  let { count, age, failed, names, onOpen, aboutOpen = false, onAbout }: {
+  let { route, count, age, failed, names, onOpen, aboutOpen = false, onAbout }: {
     count: number | null;
     age: number | null; // seconds since the feed was written
     failed: boolean;
     names: Record<string, string>;
+    route: string | null; // the open route: leaving one this search opened clears the box
     onOpen: (rt: string, replace: boolean) => void; // replace: swap the history entry
     aboutOpen?: boolean;
     onAbout: () => void;
@@ -24,6 +26,10 @@
 
   const matches = $derived(matchRoutes(query, names));
   const showList = $derived(focused && query.trim() !== "" && matches.length > 0 && matches[0].rt !== opened);
+
+  $effect(() => {
+    if (route !== untrack(() => opened)) [query, opened] = ["", null];
+  });
 
   function open(rt: string, done: boolean) {
     if (rt !== opened) onOpen(rt, opened !== null);

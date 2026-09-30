@@ -83,3 +83,17 @@ export function mainPid(buses: Vehicle[], patterns: Map<number, Pattern>): numbe
   for (const b of buses) if (b.pid != null && patterns.has(b.pid)) counts.set(b.pid, (counts.get(b.pid) ?? 0) + 1);
   return [...counts].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0];
 }
+
+const metres = (a: [number, number], b: [number, number]) => Math.hypot((a[0] - b[0]) * 82_990, (a[1] - b[1]) * 110_540);
+/** A pattern's line without its out-and-back spurs to the curb at each stop (A, stop, A → A):
+ *  drawn see-through, a spur doubles over itself into a dark dot. A spur returns within 2 m and
+ *  is under 30 m (all 26k in CTA's patterns, Sep 29); anything longer is a real turnaround. */
+export function withoutSpurs(c: [number, number][]): [number, number][] {
+  const out: [number, number][] = [];
+  for (let i = 0; i < c.length; i++) {
+    const [a, b, n] = [c[i - 1], c[i], c[i + 1]];
+    if (a && n && metres(a, n) < 2 && metres(a, b) < 30) { i++; continue; } // skip b and the return
+    out.push(b);
+  }
+  return out;
+}

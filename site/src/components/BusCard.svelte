@@ -8,7 +8,7 @@
   import Key from "./Key.svelte";
   import LineView from "./LineView.svelte";
 
-  let { bus, behind, pattern, lineBuses, scheduled, routeName, age, onBack, onSelect }: {
+  let { bus, behind, pattern, lineBuses, scheduled, routeName, backTo = null, age, onBack, onSelect }: {
     bus: Vehicle;
     behind: { bus: Vehicle; stops: number } | undefined; // the bus behind (lib/waits.ts behindOf)
     pattern: Pattern | undefined;
@@ -16,6 +16,7 @@
     scheduled: number | null;
     routeName: string | undefined;
     age: number; // seconds since this bus reported
+    backTo?: string | null; // where Back goes when not the route (the stop it was opened from)
     onBack: () => void;
     onSelect: (vid: string) => void;
   } = $props();
@@ -34,7 +35,7 @@
 </script>
 
 <div class="sheet-head">
-<button class="back" onclick={onBack}>‹ {bus.rt} {routeName ?? ""}</button>
+<button class="back" onclick={onBack}>‹ {backTo ?? `${bus.rt} ${routeName ?? ""}`}</button>
 <header>
   <span class="rt">{bus.rt}</span>
   <div>

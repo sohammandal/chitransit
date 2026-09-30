@@ -1,5 +1,5 @@
 // The nightly data files, each fetched once per page view (they change daily).
-import type { Headways, Pattern, Report } from "./types";
+import type { Headways, Pattern, Report, Stop } from "./types";
 
 const BASE = "/data/v1";
 const cache = new Map<string, Promise<unknown>>();
@@ -21,3 +21,4 @@ export const routeNames = () => load<Record<string, string>>("routes.json");
 export const headways = () => load<Headways>("headways.json");
 export const report = () => load<Report>("report.json");
 export const pattern = (pid: number) => load<Pattern>(`patterns/${pid}.json`);
+export const stops = () => load<Stop[]>("stops.json");

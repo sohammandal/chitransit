@@ -1,27 +1,35 @@
 <script lang="ts">
   // The map: every bus, gliding between feed updates. With a route open, only that route's
-  // buses show and the map fits its shape around the panel. Tap a bus to select it.
+  // buses show and the map fits its shape around the panel. Tap a bus to select it. Zoomed in
+  // to street level, stops show too (stops.json, fetched then): tap one to open it.
   import { onMount, untrack } from "svelte";
   import * as maplibregl from "maplibre-gl";
   import "maplibre-gl/dist/maplibre-gl.css";
   // MapLibre 6 parses tiles in a module worker; bundled, it can't find it on its own.
   import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
-  import type { Pattern, Vehicle } from "../lib/types";
+  import * as data from "../lib/data";
+  import { withoutSpurs } from "../lib/project";
+  import type { Pattern, Stop, Vehicle } from "../lib/types";
 
   maplibregl.setWorkerUrl(workerUrl);
 
-  let { vehicles, route, direction, selected, shapes, padding, fit, fitNonce, focusNonce, onSelect }: {
+  let { vehicles, route, direction, selected, shapes, stopPids, stop, padding, fit, fitNonce, focusNonce, onSelect, onStop }: {
     vehicles: Vehicle[];
     route: string | null;
     direction: string | null; // a bus is open: show only its direction ("Eastbound")
     selected: string | null;
     shapes: Pattern[]; // the open route's patterns
+    stopPids: number[] | null; // show only stops these patterns serve (a route, a bus); null: all
+    stop: Stop | null; // the open stop, highlighted at every zoom
     padding: { top: number; bottom: number; left: number; right: number };
     fit: boolean; // frame the route (or the city) at all; false keeps the camera (a tapped bus)
     fitNonce: number; // bumped on every request to frame again
     focusNonce: number; // bumped to zoom in on the selected bus
     onSelect: (vid: string) => void;
+    onStop: (stop: Stop) => void;
   } = $props();
+  const STOPS_ZOOM = 14; // stops show from here (a neighbourhood): ~6,000 would clutter the city view
+  let stops = $state.raw<Stop[]>([]);
 
   const STYLES = { light: "https://tiles.openfreemap.org/styles/positron", dark: "https://tiles.openfreemap.org/styles/dark" };
   const CITY = { center: [-87.66, 41.86] as [number, number], zoom: 10.6 };
@@ -70,8 +78,18 @@
     setImage("gl-bus", busIcon(bus, halo));
     map.addSource("route", { type: "geojson", data: empty });
     map.addSource("buses", { type: "geojson", data: empty });
+    map.addSource("stops", { type: "geojson", data: stopFeatures() });
+    map.addLayer({ id: "stops", type: "circle", source: "stops", minzoom: STOPS_ZOOM,
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], STOPS_ZOOM, 4.5, 18, 8],
+        "circle-color": halo, "circle-stroke-color": ink, "circle-stroke-width": 2 } });
+    // a finger-sized target around each small dot (invisible)
+    map.addLayer({ id: "stops-hit", type: "circle", source: "stops", minzoom: STOPS_ZOOM,
+      paint: { "circle-radius": 16, "circle-color": "#000", "circle-opacity": 0 } });
     map.addLayer({ id: "route", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": bus, "line-width": ["interpolate", ["linear"], ["zoom"], 10, 3, 15, 7], "line-opacity": 0.45 } });
+    map.addSource("stop", { type: "geojson", data: empty });
+    map.addLayer({ id: "stop", type: "circle", source: "stop",
+      paint: { "circle-radius": 9, "circle-color": ink, "circle-stroke-color": halo, "circle-stroke-width": 3 } });
     map.addLayer({ id: "bus-dot", type: "circle", source: "buses", maxzoom: 13,
       paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 9, 2.5, 13, 5.5],
         "circle-color": bus, "circle-stroke-color": halo, "circle-stroke-width": 1 } });
@@ -85,6 +103,22 @@
       paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 10, 13, 14, 17, 19], "circle-color": "transparent", "circle-stroke-color": ink, "circle-stroke-width": 2.5 } });
     ready = true;
     draw(1);
+  }
+
+  // Only the stops the open route's (or bus's) patterns serve; all of them when nothing is open.
+  function stopFeatures(): GeoJSON.FeatureCollection {
+    const features: GeoJSON.Feature[] = [];
+    stops.forEach(([lon, lat, name, pids], i) => {
+      if (stopPids == null || pids.some((pid) => stopPids.includes(pid)))
+        features.push({ type: "Feature", geometry: { type: "Point", coordinates: [lon, lat] }, properties: { i, name } });
+    });
+    return { type: "FeatureCollection", features };
+  }
+  function loadStops() {
+    if (stops.length || !map || map.getZoom() < STOPS_ZOOM - 0.5) return;
+    data.stops().then((s) => {
+      stops = s;
+    }).catch(() => {});
   }
 
   function draw(k: number) {
@@ -124,6 +158,11 @@
     }
   });
 
+  $effect(() => {
+    if (!ready || !map) return;
+    source("stops")?.setData(stopFeatures());
+  });
+
   // Route open: show only its buses; closed: everyone.
   $effect(() => {
     if (!ready || !map) return;
@@ -145,11 +184,14 @@
     if (!ready || !map) return;
     map.setFilter("selected", ["==", ["get", "vid"], selected ?? ""]);
     const b = selected ? positions.get(selected) : undefined;
-    if (!b) return;
-    const p = map.project(b.to), { clientWidth: w, clientHeight: h } = container, m = 24;
-    const hidden = p.x < padding.left + m || p.x > w - padding.right - m || p.y < padding.top + m || p.y > h - padding.bottom - m;
-    if (hidden) map.easeTo({ center: b.to, duration: 500 });
+    if (b) inView(b.to);
   });
+  /** Bring a point into view if the panel or the edge hides it. */
+  function inView(at: [number, number]) {
+    const p = map!.project(at), { clientWidth: w, clientHeight: h } = container, m = 24;
+    const hidden = p.x < padding.left + m || p.x > w - padding.right - m || p.y < padding.top + m || p.y > h - padding.bottom - m;
+    if (hidden) map!.easeTo({ center: at, duration: 500 });
+  }
 
   // The panel's padding, shrunk if it would leave less than ~120 px of map (small phones):
   // with padding larger than the canvas, MapLibre skips the fit entirely.
@@ -180,13 +222,23 @@
     map.setPadding(fitPadding());
   });
 
+  // The open stop, and in view if the sheet grew over it. After the padding effect above: its
+  // setPadding is a jump, which would cancel this ease.
+  $effect(() => {
+    if (!ready || !map) return;
+    source("stop")?.setData(stop
+      ? { type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [stop[0], stop[1]] } }
+      : empty);
+    if (stop) inView([stop[0], stop[1]]); // the sheet grew over it
+  });
+
   // Draw the open route and fit the map to it: to its buses at once, again when its shapes
   // arrive; back to the whole city when closed. Not on every feed (that would fight the user).
   let fitted = "";
   $effect(() => {
     if (!ready || !map) return;
     source("route")?.setData(shapes.length
-      ? { type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: shapes.map((p) => p.c) } }
+      ? { type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: shapes.map((p) => withoutSpurs(p.c)) } }
       : empty);
     const running = route != null && vehicles.some((v) => v.rt === route);
     const key = `${fitNonce}|${route}|${shapes.length}|${running}`;
@@ -223,7 +275,14 @@
       container.querySelector(".maplibregl-ctrl-attrib")?.classList.remove("maplibregl-compact-show");
       container.classList.add("ready");
     });
-    for (const layer of ["bus-dot", "bus-sym"]) {
+    map.on("zoomend", loadStops);
+    map.on("click", "stops-hit", (e) => {
+      // a bus under the finger wins (its own handler opens it)
+      if (map!.queryRenderedFeatures(e.point, { layers: ["bus-dot", "bus-sym"] }).length) return;
+      const i = e.features?.[0]?.properties?.i as number | undefined;
+      if (i != null && stops[i]) onStop(stops[i]);
+    });
+    for (const layer of ["bus-dot", "bus-sym", "stops-hit"]) {
       map.on("click", layer, (e) => {
         const vid = e.features?.[0]?.properties?.vid as string | undefined;
         if (vid) onSelect(vid);
