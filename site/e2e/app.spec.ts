@@ -792,7 +792,8 @@ test("bus card: a bus with only its last stop left says it's finishing, not \"ca
 
 test("bus card: the key names short turns, and a ring's colour follows its state (Sep 29)", async ({ page }) => {
   // The bus card's line draws short turns as rings, so its key says what a ring is; a ring is
-  // amber when that bus is together with another, blue otherwise; the key's ring is neutral
+  // amber when that bus is together with another, blue otherwise; the key's ring is the line's
+  // blue (a grey key ring didn't match the line: user, Sep 29)
   await setUp(page);
   const f = stopFeed();
   const s1 = f.vehicles.find((v: { vid: string }) => v.vid === "S1");
@@ -811,5 +812,6 @@ test("bus card: the key names short turns, and a ring's colour follows its state
   expect(await stroke("S1")).toBe(amber);
   expect(await stroke("S2")).toBe(blue);
   const keyRing = await page.locator(".sheet .key .dot.other").evaluate((i) => getComputedStyle(i).borderTopColor);
-  expect(keyRing).toBe(fog);
+  expect(keyRing).toBe(blue);
+  expect(keyRing).not.toBe(fog);
 });
