@@ -4,7 +4,7 @@
 
 <!-- What the colors on a route line mean. -->
 <p class="key">
-  <span><i class="dot"></i>Arriving together</span>
+  <span><i class="dot"></i>Together</span>
   <span><i class="bar"></i>Long wait, over twice the schedule</span>
   {#if partial}<span><i class="dot other"></i>Runs part of the route</span>{/if}
 </p>

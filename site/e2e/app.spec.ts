@@ -61,7 +61,7 @@ test("route: lines per direction, key, map shows only this route", async ({ page
   await page.goto("/route/66/");
   await expect(page.getByRole("heading", { name: "Chicago", exact: true })).toBeVisible();
   await expect(page.locator(".sheet svg")).toHaveCount(2);
-  await expect(page.getByText("Arriving together")).toBeVisible();
+  await expect(page.getByText("Together", { exact: true })).toBeVisible();
 
   await busesDrawn(page);
   expect(await page.evaluate(() => window.map!.getFilter("bus-dot"))).toEqual(["==", ["get", "rt"], "66"]);
@@ -78,7 +78,7 @@ test("bus: tap a bus on the line, see its gaps, go back", async ({ page }) => {
   await expect(page.getByRole("button", { name: "‹ 66 Chicago" })).toBeVisible();
   await expect(page.getByText(/since the last bus passed|its trip, at the|can't tell when the last bus/)).toBeVisible();
   await page.getByRole("button", { name: "‹ 66 Chicago" }).click();
-  await expect(page.getByText("Arriving together")).toBeVisible();
+  await expect(page.getByText("Together", { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -733,8 +733,8 @@ test("bus view: the map shows only the open bus's direction; the route view show
 
 test("right now: a bus far ahead isn't the wait after a bunch it saw on an earlier trip (#95, Sep 28)", async ({ page }) => {
   // Two buses bunched at the start of the line; the bus near the far end last saw one of them
-  // pass its stop 66 min ago, before that bus turned around. The bunch's wait after them is
-  // unknown, and the far bus's own long wait is its own claim, at its stop and schedule.
+  // pass its stop 66 min ago, before that bus turned around. The bunch carries no number (no
+  // long wait before it), and the far bus's own long wait is its own claim, at its stop.
   await setUp(page);
   const f = stopFeed();
   const wb = f.vehicles.filter((v: { pid: number }) => v.pid === 6665).sort((a: { pdist: number }, b: { pdist: number }) => a.pdist - b.pdist);
@@ -748,22 +748,44 @@ test("right now: a bus far ahead isn't the wait after a bunch it saw on an earli
   await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
   const bunch = page.locator(".sheet li").filter({ hasText: "2 buses together" }).filter({ hasText: "Chicago westbound" });
   await expect(bunch).toHaveCount(1);
-  await expect(bunch).toContainText("?");
+  await expect(bunch).not.toContainText("since the last bus");
   await expect(bunch).not.toContainText("66 min");
   const wait = page.locator(".sheet li").filter({ hasText: "Long wait at Kostner" });
   await expect(wait).toContainText("66 min");
   await expect(wait).toContainText("every 30 min");
 });
 
-test("bus card: the gap behind is an estimate, shown with a ~ (J14, Sep 28)", async ({ page }) => {
-  // The next bus can be miles back: the number is how long ago this bus passed that bus's next stop.
+test("bus card: the next bus is where it is, stops back, never a forecast (Sep 29)", async ({ page }) => {
+  // Minutes until the next bus were a forecast, wrong by 5+ min 1 time in 10: the card says
+  // where the poller found the nearest bus behind that stops here (behind_vid, behind_stops)
   await setUp(page);
   const f = stopFeed();
+  const bus = f.vehicles.find((v: { vid: string }) => v.vid === "8185");
+  const next = f.vehicles.find((v: { vid: string }) => v.vid === "8118");
+  Object.assign(bus, { behind_vid: "8118", behind_stops: 3 });
   await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: f }));
   await page.goto("/route/66/");
   await page.locator('[aria-label="Bus 8185"]').first().click();
   const behind = page.locator(".gap.behind");
-  // 8118, on the same pattern, is where 8185 was 651 s ago (gap_s): measured, then "~"
-  await expect(behind).toContainText("~11 min");
-  await expect(behind).toContainText("until the next bus gets here");
+  await expect(behind).toContainText("Next bus");
+  await expect(behind).toContainText("3 stops back");
+  await expect(behind).toContainText(`near ${next.near}`);
+  await expect(page.getByText(/until the next bus/)).toHaveCount(0);
+  // heading for the same stop (it can still be miles back on an express stretch: #147 Sep 29)
+  Object.assign(bus, { behind_stops: 0 });
+  await expect(behind).toContainText("Same next stop", { timeout: 40_000 });
+});
+
+test("bus card: a bus with only its last stop left says it's finishing, not \"can't tell\" (Sep 29)", async ({ page }) => {
+  await setUp(page);
+  const f = stopFeed();
+  const bus = f.vehicles.find((v: { vid: string }) => v.vid === "8185");
+  Object.assign(bus, { at_terminal: false, next_stop: null, next_stpid: null, stop_gap_s: null, last_by: null, trip: "finishing", behind_vid: "8118", behind_stops: 3 });
+  await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: f }));
+  await page.goto("/route/66/");
+  await page.locator('[aria-label="Bus 8185"]').first().click();
+  await expect(page.locator(".gap").first()).toContainText("Finishing");
+  await expect(page.locator(".gap").first()).toContainText("its trip");
+  await expect(page.getByText(/can't tell/)).toHaveCount(0);
+  await expect(page.locator(".gap.behind")).toHaveCount(0); // nobody waits on a finishing bus's stop
 });

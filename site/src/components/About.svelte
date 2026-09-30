@@ -14,7 +14,7 @@
   <dt>Tap a route or bus</dt>
   <dd>See the route live or its Report Card, and when the last bus passed</dd>
   <dt>Right now</dt>
-  <dd>Long waits and buses arriving together, judged against each route's schedule for this hour</dd>
+  <dd>Long waits and buses together, judged against the schedule at each stop</dd>
   <dt>Updates</dt>
   <dd>Every 30 seconds. A position can be up to a minute old</dd>
 </dl>

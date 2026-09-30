@@ -1,8 +1,6 @@
 <script lang="ts">
-  // Bus level: the gap in front of this bus and behind it, with the bus on its route line.
-  // Both are measured, never predicted: behind is how long ago this bus passed the stop the
-  // next bus is heading for: about how far the next bus is from here ("~": it may be miles
-  // back, J14 Sep 28, or cover the rest faster than this bus did).
+  // Bus level: the gap in front of this bus (minutes since the last bus passed its next stop)
+  // and where the next bus is (stops back: a position, never a forecast), on its route line.
   import { minutes } from "../lib/format";
   import type { LineBus } from "../lib/project";
   import type { Pattern, Vehicle } from "../lib/types";
@@ -12,7 +10,7 @@
 
   let { bus, behind, pattern, lineBuses, scheduled, routeName, age, onBack, onSelect }: {
     bus: Vehicle;
-    behind: { bus: Vehicle; s: number } | undefined; // the bus behind (lib/waits.ts behindOf)
+    behind: { bus: Vehicle; stops: number } | undefined; // the bus behind (lib/waits.ts behindOf)
     pattern: Pattern | undefined;
     lineBuses: LineBus[];
     scheduled: number | null;
@@ -22,10 +20,12 @@
     onSelect: (vid: string) => void;
   } = $props();
 
-  const starting = $derived((bus.pdist ?? 0) < 1000);
+  // At a terminal, or with no next stop: starting or finishing its trip (the poller says which;
+  // an older feed: by where it is on its pattern)
+  const ends = $derived(bus.at_terminal || (bus.trip != null && bus.stop_gap_s == null));
+  const starting = $derived(bus.trip ? bus.trip === "starting" : (bus.pdist ?? 0) < 1000);
   // Measured at its next stop (the "here" a rider on the corner ahead cares about)
   const wait = $derived(waitOf(bus, scheduled));
-  const behindWait = $derived(behind ? { s: behind.s } : null);
   // One stop on the card: the bus's next stop, where its wait is measured (not also the stop
   // it is nearest, which can be the one it just passed: #66 Sep 28 showed two names). A bus at
   // a terminal, or an older feed, shows where it is instead.
@@ -53,18 +53,20 @@
 
 <div class="gaps">
   <div class="gap">
-    {#if bus.at_terminal}
-      <strong>{starting ? "Starting" : "Finishing"}</strong><span>its trip, at the {starting ? "first" : "last"} stop</span>
+    {#if ends}
+      <strong>{starting ? "Starting" : "Finishing"}</strong><span>its trip{#if bus.at_terminal}, at the {starting ? "first" : "last"} stop{/if}</span>
     {:else if wait.s != null}
       <strong>{minutes(wait.s)}</strong><span>since the last bus passed {here}</span>
     {:else}
       <strong>–</strong><span>can't tell when the last bus passed {here}</span>
     {/if}
   </div>
-  {#if behindWait?.s != null && !bus.at_terminal}
-    <!-- "~": about. This bus passed the next bus's next stop that long ago and the next bus isn't
-         there yet; it may still cover the rest faster than this bus did, so it's an estimate. -->
-    <div class="gap behind"><strong>{behindWait.s >= 60 ? "~" : ""}{minutes(behindWait.s)}</strong><span>until the next bus gets here</span></div>
+  {#if behind && !ends}
+    <div class="gap behind">
+      <span>Next bus</span>
+      <strong>{behind.stops === 0 ? "Same next stop" : `${behind.stops} ${behind.stops === 1 ? "stop" : "stops"} back`}</strong>
+      {#if behind.bus.near}<span>near {behind.bus.near}</span>{/if}
+    </div>
   {/if}
 </div>
 

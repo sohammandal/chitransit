@@ -11,7 +11,8 @@
   } = $props();
 
   const together = $derived(problems.filter((p) => p.kind === "together").length);
-  const waits = $derived(problems.length - together);
+  // every long wait, including those a bunch arrived after (shown on the bunch's card)
+  const waits = $derived(problems.filter((p) => p.wait_s != null).length);
   const at = (p: Problem) => (p.where ? ` at ${placeName(p.where, names[p.rt])}` : "");
 </script>
 
@@ -19,9 +20,9 @@
 <header>
   <h2>Right now</h2>
   {#if problems.length}
-    <p class="tally"><b>{waits}</b> long waits <span aria-hidden="true">|</span> <b>{together}</b> places with buses arriving together</p>
+    <p class="tally"><b>{waits}</b> long waits <span aria-hidden="true">|</span> <b>{together}</b> places with buses together</p>
   {:else}
-    <p class="tally">No long waits or buses arriving together at the moment</p>
+    <p class="tally">No long waits or buses together at the moment</p>
   {/if}
 </header>
 </div>
@@ -35,7 +36,9 @@
           <b>{p.kind === "together" ? `${p.buses.length} buses together` : "Long wait"}{at(p)}</b>
           <span>{names[p.rt] ?? `Route ${p.rt}`} {p.dir.toLowerCase()}</span>
         </span>
-        <span class="wait">{p.wait_s != null ? minutes(p.wait_s) : "?"}<small>{p.kind === "together" ? "wait after them" : "since the last bus"}</small>{#if p.scheduled_s}<small class="vs">vs every {Math.round(p.scheduled_s / 60)} min</small>{/if}</span>
+        {#if p.wait_s != null}
+          <span class="wait">{minutes(p.wait_s)}<small>since the last bus</small>{#if p.scheduled_s}<small class="vs">vs every {Math.round(p.scheduled_s / 60)} min</small>{/if}</span>
+        {/if}
       </button>
     </li>
   {/each}

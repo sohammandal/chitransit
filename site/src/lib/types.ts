@@ -25,6 +25,13 @@ export type Vehicle = {
   next_stpid?: string | null;
   sched_s?: number | null; // scheduled gap at that stop now (null: nothing scheduled this hour)
   sched_due?: number | null; // scheduled departures there since the last bus passed
+  // The claims, decided by the poller (ghost_ledger.live docstring). Absent from an older feed.
+  long_wait?: boolean;
+  together_with?: string | null; // the bus just ahead at its last stop, when together
+  together_s?: number | null;
+  behind_vid?: string | null; // the nearest bus behind that stops at its next stop
+  behind_stops?: number | null; // how many of this bus's stops back it is (0: the same next stop)
+  trip?: "starting" | "finishing" | null; // why a bus has no next stop
 };
 
 export type Feed = { generated_at: string; build?: string; vehicles: Vehicle[] }; // build: the poller's commit
