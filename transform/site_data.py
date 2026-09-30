@@ -9,6 +9,10 @@ Writes, under --out:
                              "s": [[lon, lat, name, pdist, routes], ...]}; routes = how many
                              routes serve that intersection (major cross streets)
   v1/routes.json            {"49": "Western", ...}
+  v1/stops.json             [[lon, lat, name, [pid, ...]], ...]: every stop riders can board
+                             at, same-named stops within STOP_GROUP_M merged (both directions
+                             of a corner), with the patterns that serve it (not a pattern's
+                             last stop: nobody boards a bus there). The map's tappable stops.
   v1/headways.json          {"2026-09-27": {"49|North": {"14": 10.0, ...}}}: scheduled gap
                              (minutes) by Chicago hour, for today and tomorrow
   v1/summary.json           {"date": "2026-09-26", "routes": {"49": {"scheduled", "ran",
@@ -41,6 +45,44 @@ COUNTS = ["scheduled", "ran", "announced", "silent_proven", "silent_possible", "
 MAX_UNWATCHED = 0.10
 # The report card file keeps this many recent watched days (the site shows the last 30).
 REPORT_DAYS = 90
+# Same-named stops this close are one corner (a street's two sides, a route's two directions)
+STOP_GROUP_M = 150
+
+
+def corner(name: str) -> str:
+    """One key for both spellings of a corner: CTA names #9's stop "Ashland & Chicago" and #66's
+    "Chicago & Ashland" (site/src/lib/stops.ts matches the same way)."""
+    return " & ".join(sorted(name.split(" & ")))
+
+
+def stops_index(patterns: dict) -> list:
+    """[[lon, lat, name, [pid, ...]], ...]: see v1/stops.json above."""
+    groups: dict[str, list[dict]] = {}
+    for pid, doc in sorted(patterns.items()):
+        for lon, lat, name, *_ in doc["s"][:-1]:
+            near = [
+                g for g in groups.setdefault(corner(name), [])
+                if ((g["lon"] - lon) * 82_990) ** 2 + ((g["lat"] - lat) * 110_540) ** 2
+                < STOP_GROUP_M**2
+            ]  # fmt: skip
+            if near:
+                near[0]["pids"].add(pid)
+                near[0]["at"].append((lon, lat))
+            else:
+                groups[corner(name)].append(
+                    {"name": name, "lon": lon, "lat": lat, "pids": {pid}, "at": [(lon, lat)]}
+                )
+    # drawn at the middle of its stops: both curbs of a corner -> the middle of the street
+    return sorted(
+        [
+            round(sum(x for x, _ in g["at"]) / len(g["at"]), 5),
+            round(sum(y for _, y in g["at"]) / len(g["at"]), 5),
+            g["name"],
+            sorted(g["pids"]),
+        ]
+        for gs in groups.values()
+        for g in gs
+    )
 
 
 def check_report(report: dict) -> list[str]:
@@ -137,6 +179,7 @@ def main() -> None:
     for pid, doc in patterns.items():
         (out / "patterns" / f"{pid}.json").write_text(json.dumps(doc, **compact))
     (out / "routes.json").write_text(json.dumps(routes, **compact))
+    (out / "stops.json").write_text(json.dumps(stops_index(patterns), **compact))
     (out / "headways.json").write_text(json.dumps(headways, **compact))
     (out / "summary.json").write_text(json.dumps(summary, **compact))
     (out / "report.json").write_text(json.dumps(report, **compact))

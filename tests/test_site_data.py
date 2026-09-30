@@ -56,3 +56,28 @@ def test_report_card_contract():
     ]
     for report in broken:
         assert site_data.check_report(report), report
+
+
+def test_stops_index_groups_a_corner_and_skips_last_stops():
+    patterns = {
+        1: {
+            "s": [
+                [-87.65, 41.94, "Clark & Belmont", 0, 2],
+                [-87.65, 41.95, "Clark & Addison", 900, 1],
+            ]
+        },
+        2: {
+            "s": [
+                [-87.6502, 41.9401, "Clark & Belmont", 0, 2],
+                [-87.66, 41.94, "Belmont & X", 800, 1],
+            ]
+        },
+        3: {"s": [[-87.70, 41.94, "Clark & Belmont", 0, 1], [-87.71, 41.94, "End", 500, 1]]},
+        4: {"s": [[-87.6501, 41.9399, "Belmont & Clark", 0, 1], [-87.64, 41.94, "End", 900, 1]]},
+    }
+    stops = site_data.stops_index(patterns)
+    assert [s[2] for s in stops].count("Clark & Belmont") == 2  # 1+2 are one corner; 3 is 4 km away
+    # 1, 2 and 4 are one corner, though 4 spells it the other way round
+    corner = next(s for s in stops if s[2] == "Clark & Belmont" and s[3] == [1, 2, 4])
+    assert corner[:2] == [-87.6501, 41.94]  # the middle of its stops
+    assert not any(s[2] in ("Clark & Addison", "Belmont & X", "End") for s in stops)  # last stops
