@@ -227,6 +227,7 @@ class Poller:
                     board.dirs[pid] = rtdir
                     board.stops[pid] = live.pattern_stops(points)
                     board.stop_ids[pid] = live.pattern_stop_ids(points)
+                    board.stop_geo.update(live.pattern_stop_geo(points))
                     board.shapes[pid] = live.pattern_shape(points)
                     if length is not None:
                         board.lengths[pid] = float(length)
@@ -356,7 +357,9 @@ class Poller:
                 log.exception("database still unreachable")
             raise
         # Only a committed sweep reaches the public feed.
-        live.publish(self.live, self.live_sink, [p for _, p in positions], self.now())
+        live.publish(
+            self.live, self.live_sink, [p for _, p in positions], self.now(), polled_routes
+        )
         return summary
 
     def _fetch_patterns(self, positions, deadline: float) -> list[dict[str, Any]]:
@@ -428,6 +431,7 @@ class Poller:
             self.live.dirs[pid] = ptr["rtdir"]
             self.live.stops[pid] = live.pattern_stops(ptr.get("pt", []))
             self.live.stop_ids[pid] = live.pattern_stop_ids(ptr.get("pt", []))
+            self.live.stop_geo.update(live.pattern_stop_geo(ptr.get("pt", [])))
             self.live.shapes[pid] = live.pattern_shape(ptr.get("pt", []))
             if ptr.get("ln") is not None:
                 self.live.lengths[pid] = float(ptr["ln"])

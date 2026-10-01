@@ -9,10 +9,9 @@ schedule:
   truth     the last pass at the bus's next stop by any other bus of the route and direction,
             from the whole day's reports (the same pass rules, all information). Samples whose
             true last pass came under 60 s before are left out: live learns of it one sweep on.
-  old       gap_s (same pattern, at the bus's exact spot) vs truth at the next stop
-  new       stop_gap_s vs truth
-  flags     "long wait" (over twice the route's scheduled gap that hour, site_headways' rule):
-            wrong when truth at that stop isn't a long wait
+  accuracy  stop_gap_s vs truth (within 60 s)
+  flags     the feed's long_wait: wrong when truth at that stop isn't over twice its schedule
+            with 2+ buses due
   coverage  per stop, observed passes (hindsight) / scheduled departures in the window, with
             the nightly's current rule (int_stop_passes) and the live rule side by side: a stop
             far below its route's median loses passes (e.g. #146's first stops, Sep 28)
@@ -46,12 +45,14 @@ import duckdb
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import ghost_ledger.live as live_rules  # noqa: E402
 from ghost_ledger.live import (  # noqa: E402
+    HOLE,
     STALE,
     STEP,
     TRAIL,
     LiveBoard,
     Schedule,
     departed_at,
+    pattern_shape,
     runs,
     trip_passes,
 )
@@ -79,9 +80,10 @@ def at(day: date, hhmm: str) -> datetime:
 
 
 def extract(day: date, start: datetime, until: datetime, cache: Path) -> None:
-    """Positions (from TRAIL before start) and the last pattern version before `until`: its
-    stops, and its whole shape (stops and waypoints) for the live board's on-route check."""
-    files = ("pos.parquet", "stops.parquet", "shape.parquet")
+    """Positions (from TRAIL before start), the last pattern version before `until` (its stops,
+    and all its points for the live board's on-route check, built by live.pattern_shape as in
+    production), and every getvehicles call (which routes were seen when)."""
+    files = ("pos.parquet", "stops.parquet", "shape.parquet", "polls.parquet")
     if all((cache / f).exists() for f in files):
         return
     cache.mkdir(parents=True, exist_ok=True)
@@ -104,10 +106,18 @@ def extract(day: date, start: datetime, until: datetime, cache: Path) -> None:
         )"""  # noqa: S608
     if not (cache / "shape.parquet").exists():
         c.execute(f"""COPY ({patterns}
-            SELECT pid, (pt->>'pdist')::double AS pdist, (pt->>'lat')::double AS lat,
-                (pt->>'lon')::double AS lon
-            FROM pts ORDER BY pid, pdist
-        ) TO '{cache}/shape.parquet' (FORMAT parquet)""")  # noqa: S608
+            SELECT pid, (pt->>'seq')::int AS seq, pt->>'typ' AS typ, (pt->>'pdist')::double AS pdist,
+                (pt->>'lat')::double AS lat, (pt->>'lon')::double AS lon
+            FROM pts ORDER BY pid, seq
+        ) TO '{cache}/shape.parquet' (FORMAT parquet)""")  # noqa: S608, E501
+    if not (cache / "polls.parquet").exists():
+        c.execute(f"""COPY (
+            SELECT fetched_at, error IS NULL AS ok, request_params->>'rt' AS routes
+            FROM glue.ghost_ledger_ingress.ghost_ops_raw_polls
+            WHERE endpoint = 'getvehicles'
+                AND fetched_at >= '{lo}'::timestamptz AND fetched_at < '{hi}'::timestamptz
+            QUALIFY row_number() OVER (PARTITION BY poll_id ORDER BY __lsn) = 1
+        ) TO '{cache}/polls.parquet' (FORMAT parquet)""")  # noqa: S608
     if (cache / "pos.parquet").exists() and (cache / "stops.parquet").exists():
         return
     c.execute(f"""COPY (
@@ -124,11 +134,10 @@ def extract(day: date, start: datetime, until: datetime, cache: Path) -> None:
     ) TO '{cache}/stops.parquet' (FORMAT parquet)""")  # noqa: S608
 
 
-def schedule(day: date) -> tuple[dict, dict, Schedule]:
-    """(route headway s by (rt, dir word, hour), scheduled departures by (rt, stop_id), the
-    live schedule the poller would have) from the local GTFS Parquet. The route rule is
-    site_headways' (60 min / trips starting that hour); the live schedule is the nightly's
-    (transform/live_schedule.py: every departure but each trip's last stop)."""
+def schedule(day: date) -> tuple[dict, Schedule]:
+    """(scheduled departures by (rt, stop_id), the live schedule the poller would have) from
+    the local GTFS Parquet; the live schedule is the nightly's (transform/live_schedule.py:
+    every departure but each trip's last stop)."""
     c = duckdb.connect()
     ymd, dow = day.strftime("%Y%m%d"), day.strftime("%A").lower()
     feed = c.sql(f"""SELECT max(feed_id) FROM read_parquet('{GTFS}/calendar/**/*.parquet',
@@ -143,7 +152,7 @@ def schedule(day: date) -> tuple[dict, dict, Schedule]:
             WHERE date = '{ymd}' AND exception_type = '2'
     """)  # noqa: S608
     c.execute(f"""CREATE TABLE st AS
-        SELECT t.route_id AS rt, t.direction, t.trip_id, s.stop_id,
+        SELECT t.route_id AS rt, t.trip_id, s.stop_id,
             s.stop_sequence::int = max(s.stop_sequence::int)
                 OVER (PARTITION BY t.trip_id) AS is_last,
             split_part(s.departure_time, ':', 1)::int * 3600
@@ -152,13 +161,6 @@ def schedule(day: date) -> tuple[dict, dict, Schedule]:
         FROM {src("trips")} t JOIN active USING (service_id)
         JOIN {src("stop_times")} s USING (trip_id)
     """)  # noqa: S608
-    route = {
-        (rt, d, h): 3600 / n
-        for rt, d, h, n in c.sql("""
-            SELECT rt, direction, (dep_s // 3600) % 24 AS h, count(*)
-            FROM (SELECT rt, direction, trip_id, min(dep_s) AS dep_s FROM st GROUP BY ALL)
-            GROUP BY ALL""").fetchall()
-    }
     deps: dict[tuple[str, str], list[int]] = defaultdict(list)
     for rt, stop, dep in c.sql("SELECT rt, stop_id, dep_s FROM st").fetchall():
         deps[(rt, stop)].append(dep)
@@ -172,7 +174,7 @@ def schedule(day: date) -> tuple[dict, dict, Schedule]:
     )
     writer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(writer)
-    return route, deps, Schedule(writer.build(rows))
+    return deps, Schedule(writer.build(rows))
 
 
 def nightly_rule(points, stops):
@@ -192,7 +194,7 @@ def nightly_rule(points, stops):
 
 
 DUMPED = ("vid", "rt", "dir", "pid", "pdist", "at_terminal", "next_stop", "next_stpid",
-          "stop_gap_s", "last_by", "gap_s", "ahead", "sched_s", "sched_due", "long_wait",
+          "stop_gap_s", "last_by", "sched_s", "sched_due", "long_wait",
           "together_with", "together_s", "behind_vid", "behind_stops")  # fmt: skip
 
 
@@ -231,7 +233,8 @@ def main() -> int:
         " claim and the hindsight last pass, one JSON line each",
     )
     args = ap.parse_args()
-    day, cache = args.date, ROOT / "data" / "replay" / f"{args.date.isoformat()}-v2"
+    window = f"{args.start}-{args.until}".replace(":", "")
+    day, cache = args.date, ROOT / "data" / "replay" / f"{args.date.isoformat()}-{window}-v3"
     start, until = at(day, args.start), at(day, args.until)
     extract(day, start, until, cache)
     routes = set(filter(None, args.routes.split(",")))
@@ -245,13 +248,36 @@ def main() -> int:
     ).fetchall():
         stop_geo[(rt, rtdir, sid)].append((lat, lon))
         board.stop_ids.setdefault(int(pid), []).append((float(feet), sid, name or ""))
+        board.stop_geo[sid] = (float(lat), float(lon))
         board.stops.setdefault(int(pid), []).append((float(feet), name or ""))
         board.routes[int(pid)], board.dirs[int(pid)] = rt, rtdir
         if length:
             board.lengths[int(pid)] = float(length)
-    for pid, feet, lat, lon in duckdb.sql(f"SELECT * FROM '{cache}/shape.parquet'").fetchall():
-        if None not in (feet, lat, lon):
-            board.shapes.setdefault(int(pid), []).append((float(feet), float(lat), float(lon)))
+    points: dict[int, list[dict]] = defaultdict(list)
+    for pid, seq, typ, feet, lat, lon in duckdb.sql(
+        f"SELECT pid, seq, typ, pdist, lat, lon FROM '{cache}/shape.parquet'"  # noqa: S608
+    ).fetchall():
+        points[int(pid)].append({"seq": seq, "typ": typ, "pdist": feet, "lat": lat, "lon": lon})
+    for pid, pts in points.items():
+        board.shapes[pid] = pattern_shape(pts)  # as the poller builds it
+    # When each route was seen: every successful getvehicles call, and the holes between them
+    # longer than live's HOLE (the API down, or the poller): the live board is told the same.
+    seen_at: dict[str, list[datetime]] = defaultdict(list)
+    calls = duckdb.sql(
+        f"SELECT fetched_at, routes FROM '{cache}/polls.parquet' WHERE ok ORDER BY fetched_at"  # noqa: S608
+    ).fetchall()
+    for fetched_at, rts in calls:
+        for rt_ in (rts or "").split(","):
+            seen_at[rt_].append(fetched_at)
+    route_holes = {
+        rt_: [(a, b) for a, b in zip(ts, ts[1:], strict=False) if b - a > HOLE]
+        for rt_, ts in seen_at.items()
+    }
+
+    def unseen(rt_: str, a: datetime, b: datetime) -> bool:
+        """Whether route rt_ went unseen for longer than HOLE between a and b."""
+        return any(x < b and y > a for x, y in route_holes.get(rt_, ()))
+
     where = f"WHERE rt IN ({','.join(repr(r) for r in routes)})" if routes else ""
     rows = duckdb.sql(
         f"SELECT vid, observed_at, rt, pid, pdist, stsd, stst, lat, lon FROM '{cache}/pos.parquet' {where} ORDER BY observed_at"  # noqa: S608, E501
@@ -326,7 +352,7 @@ def main() -> int:
     for v in truth.values():
         v.sort()
 
-    route_hw, deps, live_schedule = schedule(day)
+    deps, live_schedule = schedule(day)
     board.schedule = live_schedule
     midnight = at(day, "00:00")
 
@@ -335,6 +361,8 @@ def main() -> int:
     # and the other buses' latest reports again, as the API repeats them.
     latest, i, t, snap_s = {}, 0, start - TRAIL, []
     samples = []
+    k_call, polled_until = 0, {}  # route -> time of its latest successful call so far
+    blind_samples = 0
     next_sample = start
     while t <= until:
         new = []
@@ -345,9 +373,18 @@ def main() -> int:
                            "lon": lon}  # fmt: skip
             new.append(latest[vid])
             i += 1
+        while k_call < len(calls) and calls[k_call][0] <= t:
+            for rt_ in (calls[k_call][1] or "").split(","):
+                polled_until[rt_] = calls[k_call][0]
+            k_call += 1
+        polled = {rt_ for rt_, when in polled_until.items() if t - when < SWEEP}
         fresh = {p["vid"] for p in new}
-        repeats = [p for v, p in latest.items() if v not in fresh and t - p["observed_at"] <= STALE]
-        board.update(repeats + new, t)
+        repeats = [
+            p
+            for v, p in latest.items()
+            if v not in fresh and t - p["observed_at"] <= STALE and p["rt"] in polled
+        ]  # the API repeats a route's buses only when its call succeeds
+        board.update(repeats + new, t, polled if calls else None)
         if t >= next_sample:
             t0 = time.perf_counter()
             snap = board.snapshot(t)
@@ -363,94 +400,40 @@ def main() -> int:
                 passes = truth.get(key, [])
                 k = bisect_right(passes, (t, "￿", t))
                 last = next(((w, kn) for w, o, kn in reversed(passes[:k]) if o != v["vid"]), None)
-                hour = ((t - midnight).seconds // 3600) % 24
-                hw = route_hw.get((v["rt"], (v["dir"] or "").replace("bound", ""), hour))
-                samples.append((t, v, last, hw))
+                if last is not None and unseen(v["rt"], last[0], t):
+                    # hindsight has the same hole: a bus that ended its trip in it passed
+                    # stops it never reports, so neither side can be scored here
+                    blind_samples += 1
+                    continue
+                samples.append((t, v, last))
             next_sample += timedelta(minutes=args.every)
         t += SWEEP
 
-    def score(field):
-        """Against hindsight. Skipped: samples whose last pass only became knowable in the next
-        sweep (live catches up within 30 s). Misses: real long waits (truth over twice the
-        schedule by more than a minute) that live leaves unflagged, as unknown or measured
-        under the line."""
-        n = within = over = unknown = flags = wrong = true_long = miss_unknown = miss_under = 0
-        beyond = late = 0
-        by_rt: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0])  # wrong, flags, missed
-        for t, v, last, hw in samples:
-            if last is None or t < last[1] <= t + LOOKAHEAD:
-                continue
-            n += 1
-            g, true_s = v[field], (t - last[0]).total_seconds()
-            if true_s > TRAIL.total_seconds():
-                beyond += 1  # longer than live keeps (first bus after a service gap): not scored
-                continue
-            if hw and true_s > 2 * hw + 60:
-                true_long += 1
-                if g is None or g <= 2 * hw:
-                    miss_unknown += g is None
-                    miss_under += g is not None
-                    by_rt[v["rt"]][2] += 1
-            if g is None:
-                unknown += 1
-                continue
-            within += abs(g - true_s) <= 60
-            over += g - true_s > 120
-            if hw and g > 2 * hw:
-                flags += 1
-                bad = true_s <= 2 * hw
-                wrong += bad
-                late += bad and last[1] > t  # the pass wasn't knowable yet (next report late)
-                by_rt[v["rt"]][0] += bad
-                by_rt[v["rt"]][1] += 1
-        known = n - unknown
-        return {
-            "samples": n, "unknown": unknown, "within60": within / known if known else 0,
-            "over2min": over / known if known else 0, "flags": flags, "wrong": wrong,
-            "true_long": true_long, "miss_unknown": miss_unknown, "miss_under": miss_under,
-            "beyond": beyond, "late": late,
-            "by_rt": sorted(by_rt.items(), key=lambda kv: -(kv[1][0] + kv[1][2]))[:8],
-        }  # fmt: skip
-
-    old, new = score("gap_s"), score("stop_gap_s")
-    shown = 0
-    for t, v, last, hw in samples:
-        g = v["stop_gap_s"]
-        if shown >= args.show_wrong or last is None or t < last[1] <= t + LOOKAHEAD or not hw:
+    # Accuracy of the displayed wait. Skipped: samples whose last pass only became knowable in
+    # the next sweep (live catches up within 30 s), and waits longer than live keeps.
+    n = within = unknown = 0
+    for t, v, last in samples:
+        if last is None or t < last[1] <= t + LOOKAHEAD or (t - last[0]) > TRAIL:
             continue
-        true_s = (t - last[0]).total_seconds()
-        wrong = g is not None and g > 2 * hw and true_s <= 2 * hw
-        missed = TRAIL.total_seconds() >= true_s > 2 * hw + 60 and (g is None or g <= 2 * hw)
-        if wrong or missed:
-            shown += 1
-            print(
-                f"  {'wrong' if wrong else 'missed'}: {t:%H:%M} rt {v['rt']} {v['dir']}"
-                f" vid {v['vid']} pid {v['pid']} at {v['pdist']} ft, next {v['next_stop']}"
-                f" ({v['next_stpid']}): live {g} s by {v['last_by']}, truth {true_s:.0f} s,"
-                f" scheduled {hw:.0f} s"
-            )
-    print(f"\nsamples every {args.every} min, {args.start}–{args.until} {day}: {len(samples):,}")
-    for name, s in (("old gap_s", old), ("new stop_gap_s", new)):
-        print(f"  {name:15} within 60 s {s['within60']:.1%}  overstated >2 min {s['over2min']:.2%}"
-              f"  unknown {s['unknown']:,}")  # fmt: skip
-        print(f"  {'':15} flags {s['flags']:,}, wrong {s['wrong']:,}"
-              f" ({s['wrong'] / max(1, s['flags']):.1%});  real long waits {s['true_long']:,},"
-              f" missed {s['miss_unknown'] + s['miss_under']:,} ({s['miss_unknown']:,} unknown,"
-              f" {s['miss_under']:,} measured under)")  # fmt: skip
-        print(f"  {'':15} longer than live keeps (not scored): {s['beyond']:,};"
-              f" wrong flags whose pass wasn't knowable yet: {s['late']:,}")  # fmt: skip
-        print("     worst routes (wrong/flags/missed):",
-              ", ".join(f"{rt} {w}/{f}/{m}" for rt, (w, f, m) in s["by_rt"]))  # fmt: skip
+        n += 1
+        if v["stop_gap_s"] is None:
+            unknown += 1
+            continue
+        within += abs(v["stop_gap_s"] - (t - last[0]).total_seconds()) <= 60
+    within60 = within / max(1, n - unknown)
+    print(f"\nsamples every {args.every} min, {args.start}–{args.until} {day}: {len(samples):,}"
+          f" (not scored: {blind_samples:,} spanning a hole in the route's coverage)")  # fmt: skip
+    print(f"  stop_gap_s within 60 s of hindsight {within60:.1%}; can't tell {unknown:,} of {n:,}")
 
-    # The proposed site rule: over twice the stop's scheduled gap (sched_s) AND at least two
-    # scheduled departures due since the last bus (sched_due): buses were due and didn't come.
-    n = flags = wrong = true_long = missed = no_sched = not_due = 0
+    # The site's rule, as the feed decides it (long_wait): over twice the stop's scheduled gap
+    # (sched_s, plus a margin) AND at least two departures due (sched_due).
+    n = flags = wrong = true_long = missed = no_sched = 0
     why: dict[str, int] = defaultdict(int)
     geo_hits: list[str] = []
     geo_now = 0
     miss_why: dict[str, int] = defaultdict(int)
     examples: list[str] = []
-    for t, v, last, _hw in samples:
+    for t, v, last in samples:
         if last is None or t < last[1] <= t + LOOKAHEAD or (t - last[0]) > TRAIL:
             continue
         s_, g, due = v["sched_s"], v["stop_gap_s"], v["sched_due"]
@@ -466,8 +449,7 @@ def main() -> int:
             true_s = true_due = 0  # a bus is standing at the stop now: no one is waiting
             if all(t - a < SAME_PASS for a in standing):
                 last = (standing[0], t + LOOKAHEAD * 2)  # just got there: live hears next sweep
-        flagged = g is not None and g > 2 * s_ and (due or 0) >= 2  # the site's rule
-        not_due += g is not None and g > 2 * s_ and (due or 0) < 2
+        flagged = bool(v["long_wait"])
         if flagged:
             # Independent of the pass logic: was any bus of the route and direction at the
             # stop (GPS within NEAR_M) during the claimed wait? A bus still lingering right
@@ -517,7 +499,7 @@ def main() -> int:
                     else "other"
                 )
                 why[kind] += 1
-                if kind == "other" and len(examples) < 8:
+                if kind == "other" and len(examples) < args.show_wrong:
                     examples.append(f"{t:%H:%M} rt {v['rt']} vid {v['vid']} next {v['next_stop']}"
                                     f" live {g}s due {due} / truth {true_s:.0f}s due {true_due},"
                                     f" sched {s_}s")  # fmt: skip
@@ -533,10 +515,9 @@ def main() -> int:
                     else "measured under the line"
                 ] += 1
     print(
-        f"  stop rule (> 2x sched_s and >= 2 due): flags {flags:,}, wrong {wrong:,}"
-        f" ({wrong / max(1, flags):.1%}); real long waits {true_long:,}, missed {missed:,}"
-        f" ({missed / max(1, true_long):.1%}); not judged (nothing scheduled) {no_sched:,};"
-        f" long but under 2 due {not_due:,}"
+        f"  long_wait: flags {flags:,}, wrong {wrong:,} ({wrong / max(1, flags):.1%});"
+        f" real long waits {true_long:,}, missed {missed:,} ({missed / max(1, true_long):.1%});"
+        f" not judged (nothing scheduled) {no_sched:,}"
     )
     print("     wrong, by cause:", dict(why))
     print(f"     GPS check: a bus at the stop within the last 90 s (arriving now) {geo_now:,};"
@@ -579,8 +560,7 @@ def main() -> int:
     p95 = sorted(snap_s)[int(0.95 * (len(snap_s) - 1))] if snap_s else 0
     print(f"  snapshot time: median {statistics.median(snap_s):.2f} s, p95 {p95:.2f} s")
     gates = {
-        "new within 60 s >= 98.5%": new["within60"] >= 0.985,
-        # the site's rule (the stop's own schedule, 2+ due), not the route-hour one above
+        "within 60 s >= 98.5%": within60 >= 0.985,
         "wrong flags <= 0.5%": wrong <= 0.005 * max(1, flags),
         "missed long waits <= 2%": missed <= 0.02 * max(1, true_long),
         "snapshot p95 <= 3 s": p95 <= 3,

@@ -1,7 +1,20 @@
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
-from ghost_ledger.live import CHICAGO, TRAIL, FileSink, LiveBoard, load_schedule, publish
+from ghost_ledger.live import (
+    CHICAGO,
+    STALE,
+    TRAIL,
+    FileSink,
+    LiveBoard,
+    load_schedule,
+    pattern_shape,
+    pattern_stop_geo,
+    pattern_stop_ids,
+    pattern_stops,
+    publish,
+)
 
 T0 = datetime(2026, 9, 26, 22, 0, tzinfo=UTC)
 
@@ -20,46 +33,6 @@ def run(board, sweeps):
 
 def by_vid(snapshot):
     return {b["vid"]: b for b in snapshot["vehicles"]}
-
-
-def test_gap_is_the_time_since_the_bus_ahead_passed_this_spot():
-    # A drives 1,000 ft/min from 0; B starts 8 minutes later behind it
-    sweeps = []
-    for m in range(0, 11):
-        buses = [pos("A", 2000 + 1000 * m, T0 + timedelta(minutes=m))]
-        if m >= 8:
-            buses.append(pos("B", 2000 + 1000 * (m - 8), T0 + timedelta(minutes=m)))
-        sweeps.append((m, buses))
-    snap = by_vid(run(LiveBoard(), sweeps))
-    assert snap["B"]["gap_s"] == 8 * 60 and snap["B"]["ahead"] == "A"
-    assert snap["A"]["gap_s"] is None  # nothing ahead of the leader
-
-
-def test_gap_interpolates_between_the_leaders_reports():
-    # A reported at 0 ft (t=0) and 2,000 ft (t=2); B is at 1,500 ft at t=5
-    board = LiveBoard()
-    board.update([pos("A", 1000, T0)], T0)
-    board.update([pos("A", 3000, T0 + timedelta(minutes=2))], T0 + timedelta(minutes=2))
-    now = T0 + timedelta(minutes=5)
-    board.update([pos("A", 6000, now), pos("B", 2500, now)], now)
-    assert by_vid(board.snapshot(now))["B"]["gap_s"] == round(5 * 60 - 1.5 * 60)
-
-
-def test_gap_is_unknown_when_the_leaders_trail_does_not_reach_back():
-    # A appeared already ahead of B (joined mid-route, or the poller restarted)
-    now = T0
-    board = LiveBoard()
-    board.update([pos("A", 9000, now), pos("B", 1000, now)], now)
-    assert by_vid(board.snapshot(now))["B"]["gap_s"] is None
-
-
-def test_buses_on_other_patterns_are_not_leaders():
-    board = LiveBoard()
-    for m in range(0, 5):
-        t = T0 + timedelta(minutes=m)
-        board.update([pos("A", 2000 + 1000 * m, t, pid=1), pos("B", 1500, t, pid=2)], t)
-    snap = by_vid(board.snapshot(T0 + timedelta(minutes=4)))
-    assert snap["B"]["gap_s"] is None and snap["B"]["ahead"] is None
 
 
 def test_buses_that_left_the_feed_drop_out_and_old_trail_is_forgotten():
@@ -86,24 +59,6 @@ def test_publish_writes_the_snapshot_and_never_raises(tmp_path):
     publish(board, Broken(), [pos("A", 10, T0)], T0)  # logged, not raised
 
 
-def test_seeded_trails_give_gaps_right_after_a_restart():
-    board = LiveBoard()
-    board.seed([("A", T0 + timedelta(minutes=m), 1599, 1000.0 * m) for m in range(10)])
-    now = T0 + timedelta(minutes=10)
-    board.update([pos("A", 10000, now), pos("B", 3000, now)], now)
-    assert by_vid(board.snapshot(now))["B"]["gap_s"] == 7 * 60  # A passed 3,000 ft at minute 3
-
-
-def test_buses_laying_over_at_a_terminal_get_no_gap_and_lead_nobody():
-    board = LiveBoard()
-    board.lengths = {1599: 50_000}
-    now = T0
-    board.update([pos("A", 200, now), pos("B", 50, now), pos("C", 49_500, now)], now)
-    snap = by_vid(board.snapshot(now))
-    assert all(snap[v]["at_terminal"] and snap[v]["gap_s"] is None for v in "ABC")
-    assert snap["B"]["ahead"] is None
-
-
 def test_buses_repeating_a_stale_report_are_left_off_the_map():
     board = LiveBoard()
     now = T0 + timedelta(minutes=10)
@@ -123,28 +78,6 @@ def drive(board, minutes, buses):
         ]
         board.update(reports, t)
     return by_vid(board.snapshot(T0 + timedelta(minutes=minutes)))
-
-
-def test_a_bus_whose_tracker_died_after_passing_here_still_counts():
-    # A leads; Z follows 5 min later and goes dark at minute 12 (at 9,000 ft), still driving;
-    # B follows Z by 5 min and is at 8,000 ft at minute 16, a spot Z passed before going dark.
-    snap = drive(LiveBoard(), 16, {"A": (0, 2000, None), "Z": (5, 2000, 12), "B": (10, 2000, None)})
-    # B is at 8,000 ft; A passed it at minute 6, Z (dark now) at minute 11: the wait is 5 min.
-    assert snap["B"]["gap_s"] == 5 * 60
-    assert "Z" not in snap  # dark buses stay off the map
-
-
-def test_gap_is_unknown_when_a_dark_bus_may_have_passed_since():
-    # Z went dark at minute 8 at 5,000 ft, before reaching B's spot (8,000 ft), after A passed
-    # it (minute 6): Z may well have passed since, so no wait is claimed.
-    snap = drive(LiveBoard(), 16, {"A": (0, 2000, None), "Z": (5, 2000, 8), "B": (10, 2000, None)})
-    assert snap["B"]["gap_s"] is None
-
-
-def test_a_dark_bus_behind_this_one_changes_nothing():
-    # Z went dark behind B (B was already past Z's last spot), so B's gap is to A as usual.
-    snap = drive(LiveBoard(), 16, {"A": (0, 2000, None), "B": (4, 2000, None), "Z": (8, 2000, 10)})
-    assert snap["B"]["gap_s"] == 4 * 60 and snap["B"]["ahead"] == "A"
 
 
 def test_snapshot_names_the_running_commit(monkeypatch):
@@ -218,7 +151,6 @@ def test_a_short_turn_bus_that_passed_the_next_stop_counts():
     b = by_vid(board.snapshot(T0 + timedelta(minutes=10)))["B"]
     assert (b["next_stpid"], b["next_stop"]) == ("s7", "Stop 7")
     assert b["stop_gap_s"] == 4 * 60 and b["last_by"] == "S"  # S passed s7 at m=6
-    assert b["ahead"] == "A"  # the old same-pattern fields are unchanged
 
 
 def test_the_opposite_direction_at_a_shared_terminal_stop_does_not_count():
@@ -420,18 +352,6 @@ def test_a_bus_that_creeps_past_its_first_stop_and_waits_passes_it_when_it_leave
         sweep(board, m, trip("L", d, m))
     passes = board.passes()
     assert passes[("79", "Eastbound", "s0")] == [(T0 + timedelta(minutes=7), "L")]  # not m=0
-
-
-def test_the_old_gap_keeps_its_75_minute_view_while_the_stop_wait_looks_back_further():
-    board = stop_board()
-    for m in range(0, 101, 1):
-        buses = [trip("A", 2000 + 1000 * m, m)] if m <= 10 else []  # passes s7 at m=5, then gone
-        if m >= 96:
-            buses.append(trip("B", 4600 + 500 * (m - 96), m))  # 6,600 ft at m=100
-        sweep(board, m, *buses)
-    b = by_vid(board.snapshot(T0 + timedelta(minutes=100)))["B"]
-    assert b["gap_s"] is None  # as before: A's pass is 95 minutes old
-    assert b["stop_gap_s"] == 95 * 60 and b["last_by"] == "A"
 
 
 # ---- the live schedule (sched_s, sched_due) ----
@@ -761,3 +681,221 @@ def test_a_sparse_stretch_of_the_pattern_allows_more_room():
     mid = 41.77  # halfway, 8,000 ft
     sweep(board, 0, trip("B", 8000, 0, lat=mid, lon=-87.65 + 0.005))  # ~415 m off the chord
     assert [d for _, _, d, _ in board.trails["B"]] == [8000]  # within 15% of 4.9 km
+
+
+# Real cases (tests/fixtures/live_<date>.json: the day's reports and CTA's own patterns, as
+# Ingress holds them)
+SEP30 = {
+    case: doc
+    for day in ("2026-09-28", "2026-09-29", "2026-09-30")
+    for case, doc in json.loads(
+        (Path(__file__).parent / "fixtures" / f"live_{day}.json").read_text()
+    ).items()
+    if case != "about"
+}
+
+
+def real_board(case):
+    board = LiveBoard()
+    for pid, pat in SEP30[case]["patterns"].items():
+        pid = int(pid)
+        board.routes[pid], board.dirs[pid], board.lengths[pid] = pat["rt"], pat["rtdir"], pat["ln"]
+        board.stops[pid] = pattern_stops(pat["pt"])
+        board.stop_ids[pid] = pattern_stop_ids(pat["pt"])
+        board.stop_geo.update(pattern_stop_geo(pat["pt"]))
+        board.shapes[pid] = pattern_shape(pat["pt"])
+    return board
+
+
+def real_sweeps(case, until, polled=lambda t: True, last_at_until=False):
+    """Feed the case's reports to a board as the poller would, a sweep every 30 s (the API
+    repeats each bus's latest report while its route's call succeeds). polled(t): whether the
+    route's call succeeded at t."""
+    board, rows = real_board(case), SEP30[case]["positions"]
+    rows = [(datetime.fromisoformat(r[1]), r) for r in rows]
+    t, latest, i = rows[0][0], {}, 0
+    rt = rows[0][1][2]
+    grid = []
+    while t < until:
+        grid.append(t)
+        t += timedelta(seconds=30)
+    for t in [*grid, *([until] if last_at_until else [])]:  # last_at_until: one more at `until`
+        new = []
+        while i < len(rows) and rows[i][0] <= t:
+            obs, (vid, _, r, pid, pdist, stsd, stst, lat, lon) = rows[i]
+            latest[vid] = {"vid": vid, "rt": r, "pid": pid, "pdist": pdist, "observed_at": obs,
+                           "stsd": stsd, "stst": stst, "lat": lat, "lon": lon}  # fmt: skip
+            new.append(latest[vid])
+            i += 1
+        ok = polled(t)
+        repeats = [p for v, p in latest.items() if p not in new and t - p["observed_at"] <= STALE]
+        board.update(repeats + new if ok else [], t, {rt} if ok else set())
+    return board
+
+
+def test_a_bus_starting_its_trip_is_on_route_though_cta_puts_every_waypoint_at_0():
+    # #147 4155, Sep 30: laying over 258 ft into its trip at Congress Plaza & Michigan. CTA sends
+    # every waypoint with pdist 0; kept, they all sat at the start and the report was checked
+    # against one far north: "off route", so the trip never passed its first stop.
+    pat = SEP30["rt147_start"]["patterns"]["4524"]
+    assert {p["pdist"] for p in pat["pt"] if p["typ"] == "W"} == {0.0}
+    board = real_sweeps("rt147_start", datetime(2026, 9, 30, 11, 2, tzinfo=UTC))
+    assert board.trails["4155"][0][2] == 258  # the layover reports count
+    passed = {board.stop_ids[4524][0][1]: None} | {
+        sid: t for (_, _, sid), ps in board.passes().items() for t, v in ps if v == "4155"
+    }
+    first = board.stop_ids[4524][0]
+    assert first[2] == "Congress Plaza & Michigan" and passed[first[1]] is not None
+
+
+def test_no_wait_is_claimed_across_minutes_the_route_went_unseen():
+    # #22 Southbound, Sep 30: CTA's API unreachable 12:41-13:02 CDT. 1522 was 1,142 ft short of
+    # Clark & Van Buren at 12:40:53 and came back at 13:01:33 on its return trip: it passed the
+    # stop in the dark and never reported it. At 13:05 the feed told riders ahead of 8303 "no
+    # bus since 12:35" (1780), a 30-min wait that wasn't.
+    lo, hi = (datetime.fromisoformat(x) for x in SEP30["rt22_blackout"]["unpolled_utc"])
+    at = datetime(2026, 9, 30, 18, 5, 7, tzinfo=UTC)
+    seen = lambda t: not lo <= t < hi  # noqa: E731
+    board = real_sweeps("rt22_blackout", at, seen)
+    b = by_vid(board.snapshot(at))["8303"]
+    assert b["next_stop"] == "Clark & Van Buren"
+    assert (b["stop_gap_s"], b["long_wait"]) == (None, False)  # can't tell
+    assert any(v == "1780" for _, v in board.passes()[("22", "Southbound", b["next_stpid"])])
+    # while nothing comes through, the feed says so instead of "0 buses on the road"
+    mid = datetime(2026, 9, 30, 17, 50, tzinfo=UTC)
+    snap = real_sweeps("rt22_blackout", mid, seen).snapshot(mid)
+    assert snap["no_data_since"] == "2026-09-30T17:40:35+00:00"  # the last sweep that got through
+    assert snap["vehicles"] == []  # nothing fresh by 12:50
+    assert board.snapshot(at)["no_data_since"] is None
+
+
+def test_no_headway_is_claimed_until_both_buses_have_left_the_stop():
+    # X49 8077, Sep 30: stood at one stop for 49 minutes (08:05-08:54 CDT). Its pass there kept
+    # moving to its latest report, so each bus that went by (1505, 1544) was "together" with it.
+    class EveryTen:
+        def judge(self, rt, stpid, now, last_pass):
+            return 600, 3
+
+    board = real_board("x49_standing")
+    board.schedule = EveryTen()
+    rows = [(datetime.fromisoformat(r[1]), r) for r in SEP30["x49_standing"]["positions"]]
+    t, latest, i, claims = rows[0][0], {}, 0, []
+    while t <= datetime(2026, 9, 30, 13, 15, tzinfo=UTC):
+        while i < len(rows) and rows[i][0] <= t:
+            obs, (vid, _, r, pid, pdist, stsd, stst, lat, lon) = rows[i]
+            latest[vid] = {"vid": vid, "rt": r, "pid": pid, "pdist": pdist, "observed_at": obs,
+                           "stsd": stsd, "stst": stst, "lat": lat, "lon": lon}  # fmt: skip
+            i += 1
+        board.update([p for p in latest.values() if t - p["observed_at"] <= STALE], t, {"X49"})
+        claims += [
+            (v["vid"], v["together_with"])
+            for v in board.snapshot(t)["vehicles"]
+            if v["together_with"]
+        ]
+        t += timedelta(seconds=30)
+    assert not [c for c in claims if "8077" in c]
+
+
+def test_a_bus_s_own_pass_on_its_last_lap_counts():
+    # #171 Sep 28: only 8935 served Hyde Park & 55th (1518) northbound, every 30 min on its
+    # loop. Its own passes were left out, so riders there were told 2.5 hours since another
+    # bus; the last bus there was 8935 itself at 13:07.
+    at = datetime(2026, 9, 28, 18, 46, tzinfo=UTC)
+    b = by_vid(real_sweeps("rt171_loop", at).snapshot(at))["8935"]
+    assert b["next_stpid"] == "1518"
+    assert b["last_by"] == "8935" and 2200 < b["stop_gap_s"] < 2400  # since 13:07
+
+
+def test_a_bus_moving_backwards_along_its_pattern_makes_the_other_direction_unknown():
+    # J14 Sep 28 morning: CTA labelled buses with the opposite direction. 4037 drove north up
+    # Lake Shore Drive past 1100 S Columbus at 07:38 reporting the southbound pattern, its pdist
+    # falling; with passes on forward progress only, northbound riders there were told at 07:40
+    # "2 hours since the last bus" (4329, 05:41) in a 6-minute rush.
+    at = datetime(2026, 9, 28, 12, 40, tzinfo=UTC)
+    snap = by_vid(real_sweeps("j14_backwards", at).snapshot(at))
+    b = snap["4309"]
+    assert b["next_stpid"] == "14483" and b["stop_gap_s"] is None  # can't tell, not 2 hours
+    assert snap["4307"]["next_stop"] is None  # running against its pattern: no claims about it
+
+
+def test_a_bus_waiting_just_past_a_stop_serves_it_when_it_leaves():
+    # #201 Sep 29: 8800 began its trip 1,056 ft into its pattern, eased back to 51 ft past
+    # Howard & Custer and left from there at 12:49 (its GPS at the stop). By pdist it was never
+    # short of the stop, so no pass: at 13:05 riders there were told 65 min since the last bus.
+    for s in range(0, 90, 10):  # 8789 heads for Howard & Custer from its 13:04:42 report
+        at = datetime(2026, 9, 29, 18, 4, 40, tzinfo=UTC) + timedelta(seconds=s)
+        b = by_vid(real_sweeps("rt201_layover", at, last_at_until=True).snapshot(at))["8789"]
+        if b["next_stpid"] == "3515":
+            break
+    assert b["next_stpid"] == "3515"
+    assert b["last_by"] == "8800" and b["stop_gap_s"] < 1000  # since 12:49, not 12:00
+
+
+def test_a_wait_just_over_twice_the_schedule_is_not_claimed_until_clearly_over(tmp_path):
+    # Pass times are known to tens of seconds; Sep 28-30, most wrong long waits were claims
+    # within 30 s of the line (the GPS referee). Every 5 min: the line is 10 min, claimed past 11.
+    board = stop_board()
+    every_5 = [("s7", T0 + timedelta(minutes=k)) for k in range(-60, 31, 5)]
+    board.schedule = load_schedule(str(schedule_file(tmp_path, every_5)))
+    for m in range(0, 16):
+        buses = [trip("A", 3000 + 1000 * m, m)]  # passed s7 at m=4
+        if m >= 13:
+            buses.append(trip("B", 6000 + 100 * (m - 13), m))
+        sweep(board, m, *buses)
+    at = lambda minute: by_vid(board.snapshot(T0 + timedelta(minutes=minute)))["B"]  # noqa: E731
+    assert (at(14.5)["stop_gap_s"], at(14.5)["long_wait"]) == (630, False)  # 10.5 min: too close
+    assert (at(15.2)["stop_gap_s"], at(15.2)["long_wait"]) == (672, True)  # 11.2 min: claimed
+
+
+def test_together_only_clearly_inside_a_quarter_of_the_schedule(tmp_path):
+    # every 10 min: a quarter is 150 s; pairs a few seconds either side of it flip (Sep 30)
+    def headway_claimed(offset_ft, at_minute):
+        board = stop_board()
+        every_10 = [
+            (s, T0 + timedelta(minutes=k)) for s in ("s7", "s8") for k in range(-60, 30, 10)
+        ]
+        board.schedule = load_schedule(str(schedule_file(tmp_path, every_10)))
+        for m in range(0, at_minute + 1):
+            buses = [trip("A", 1000 * m - offset_ft, m)]
+            if m >= 4:
+                buses.append(trip("S", 1000 * (m - 4), m, pid=SHORT))  # s8 at m=8
+            sweep(board, m, *buses)
+        return by_vid(board.snapshot(T0 + timedelta(minutes=at_minute)))["A"]["together_with"]
+
+    assert headway_claimed(1667, 10) == "S"  # A at s8 at m=9.67: 100 s after S
+    assert headway_claimed(2167, 11) is None  # A at s8 at m=10.17: 130 s, too close to 150
+
+
+def test_a_bus_running_backwards_casts_doubt_only_on_the_stops_it_drove_past():
+    # Buses driving back to start their next trip run against their pattern on dozens of routes
+    # a day: doubting the whole other direction hid ~370 real long waits (Sep 30)
+    board = stop_board()
+    board.stop_geo = {"near": (41.7501, -87.6501), "far": (41.80, -87.65)}
+    sweep(board, 0, trip("X", 5000, 0, lat=41.752))
+    sweep(board, 0.5, trip("X", 4000, 0.5, lat=41.748))  # 1,000 ft back, 440 m south
+    assert board.latest["X"].get("off_route")  # no passes or claims while running backwards
+    then, now = T0 - timedelta(minutes=5), T0 + timedelta(minutes=5)
+    assert board.against("79", "Westbound", "near", then, now)  # drove right past it
+    assert not board.against("79", "Westbound", "far", then, now)  # 5 km away
+    assert not board.against("79", "Eastbound", "near", then, now)  # its own direction
+
+
+def test_an_off_route_report_is_no_evidence_of_running_backwards():
+    # #96 8777, Sep 28: its first report put it 1,219 ft past McCormick & Pratt (off route: the
+    # GPS was at the stop); the next, on route, 334 ft past it. Read as running backwards, that
+    # report was dropped, and the stop never passed: riders were told 62 min.
+    board = real_sweeps("rt96_first_seen", datetime(2026, 9, 28, 20, 24, tzinfo=UTC))
+    passed = [v for (_, _, sid), ps in board.passes().items() if sid == "14998" for _, v in ps]
+    assert passed == ["8777"]
+
+
+def test_an_untrusted_report_at_a_stop_counts_as_a_pass():
+    # #147 4398, Sep 30: its pdist lagged its GPS by a kilometre (off route, untrusted), but its
+    # GPS was at Michigan & Ontario at 14:52; at 15:05 riders there were told nobody had come
+    # since 4361 at 14:41.
+    at = datetime(2026, 9, 30, 20, 5, tzinfo=UTC)
+    board = real_sweeps("rt147_lagging_pdist", at, last_at_until=True)
+    heading = [v for v in board.snapshot(at)["vehicles"] if v["next_stpid"] == "1124"]
+    assert heading and all(v["last_by"] == "4398" for v in heading)  # at 14:52:23
+    assert all(12 * 60 < v["stop_gap_s"] < 13 * 60 for v in heading)
+    assert any(v == "4361" for _, v in board.passes()[("147", "Northbound", "1124")])

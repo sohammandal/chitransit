@@ -1,25 +1,23 @@
-"""The live feed for the public site: where every bus is now, and the gap behind it.
+"""The live feed for the public site: where every bus is now, and the claims about it.
 
 After each committed sweep the poller hands this module the sweep's vehicle reports. It keeps
 each bus's recent trail in memory and writes one JSON snapshot (docs/SITE.md, "live feed"):
 
-  {"generated_at": ISO, "build": commit, "vehicles": [{vid, rt, pid, hdg, lat, lon, dly,
-                                      des, dir, t, pdist, gap_s, ahead, at_terminal}]}
+  {"generated_at": ISO, "build": commit, "no_data_since": ISO | None, "vehicles": [{vid, rt,
+   pid, hdg, lat, lon, dly, des, dir, t, pdist, at_terminal, near, ...the fields below}]}
   build  the commit the running poller was built from (CI waits for it after a deploy)
+  no_data_since  when the last call got through, once none has for over HOLE (CTA's API down
+         or unreachable): the site says so instead of "0 buses on the road"; else None
   t      the position's own time (epoch seconds); the site shows its age
 
-  gap_s  how long ago the last bus on this pattern passed the spot where this bus is now,
-         interpolated from the trails. It is a measured wait: a rider at this bus's position
-         has been waiting that long. The last bus may be one whose tracker has since died (it
-         left the feed but still passed here). None when no trail reaches back that far (a
-         bus joined recently, or the poller restarted), or when a bus went dark short of this
-         spot after the last recorded pass: it may have passed since, so no wait is claimed.
-  ahead  the nearest reporting bus ahead on the same pattern (None for the first).
   near   the name of the stop nearest the bus ("Clark & Belmont"), so the site can say where.
 
   Measured at the bus's next stop, counting every bus of the route in the same direction
   (short turns and branches too: a bus on another pattern that stopped here is service):
-  stop_gap_s   how long ago the last bus passed the next stop; None as for gap_s
+  stop_gap_s   how long ago the last bus passed the next stop (a measured wait: a rider there has
+               been waiting that long); None ("can't tell") when no trail reaches back that far,
+               when a bus went dark short of the stop since the last pass (it may have passed),
+               or across a hole in what the poller could see (HOLE, BACKWARD_FT)
   last_by      the bus that made that pass
   next_stop    the stop's name; next_stpid: its CTA stop id
   A pass is interpolated between two reports of one trip (pid, stsd, stst), forward progress
@@ -41,7 +39,7 @@ each bus's recent trail in memory and writes one JSON snapshot (docs/SITE.md, "l
              overnight break has waited hours, with nothing due)
 
   The claims the site shows, decided here once:
-  long_wait      stop_gap_s over twice sched_s with at least 2 departures due
+  long_wait      stop_gap_s over twice sched_s (by LONG_MARGIN_S) with at least 2 departures due
   together_with  the bus just ahead at this bus's last serving pass (any pattern), when it
                  passed that stop under a quarter of the scheduled gap before this one, within
                  the last TOGETHER_FRESH; together_s: that headway
@@ -62,6 +60,7 @@ import base64
 import gzip
 import json
 import logging
+import math
 import os
 import sys
 from array import array
@@ -78,18 +77,12 @@ CHICAGO = ZoneInfo("America/Chicago")
 # Longer than any realistic gap: Sep 28 morning, J14 riders past Lake Shore Drive waited 79+ min
 # in a jam, and a 75-min window could only call that unknown. ~0.7 s per snapshot at 150.
 TRAIL = timedelta(minutes=150)
-# gap_s (the same-pattern gap the site reads today) keeps its original 75-minute view, so this
-# change leaves it exactly as it was (replayed: 27,077 bus snapshots, 0 differences).
-GAP_WINDOW = timedelta(minutes=75)
 # A bus this close to either end of its pattern is laying over at a terminal, not serving
 # riders: it gets no gap and is nobody's leader (verified on #9, Sep 26: pairs at 0 ft and
 # at the far end showed "bunched" while parked).
 TERMINAL_FT = 1000
 # A bus still repeating a report older than this is left off the map (a frozen dot misleads).
 STALE = timedelta(minutes=3)
-# A bus with no fresh report for this long counts as dark when measuring gaps (it may be
-# driving with a dead tracker), even while it is still on the map.
-DARK = timedelta(minutes=2)
 # A dark bus only casts doubt on a stop it could have reached: buses dark for a while moved
 # at most ~1,700 ft/min in 95% of Sep 28's blackouts (~4,000 on Lake Shore Drive); 3,000 ft/min
 # (34 mph) is a generous ceiling. And only for so long: long blackouts are mostly parked buses
@@ -102,7 +95,7 @@ DARK_REACH_FT_PER_MIN = 3000
 DARK_REACH_FLOOR = 600
 DARK_DOUBT = timedelta(minutes=5)
 # A report this overdue (a sweep and a half) may hide a pass: a bus last seen just short of a
-# stop has likely gone past it by now, even before it counts as dark (DARK) on the map.
+# stop has likely gone past it by now.
 OVERDUE = timedelta(seconds=45)
 # A trip is under way once the bus is this far past the lowest point it reported on the trip:
 # a bus laying over creeps a few dozen feet at most, while a bus that left, even in downtown
@@ -126,9 +119,43 @@ OFF_ROUTE_M = 300
 OFF_ROUTE_SHARE = 0.15
 # "Together" is judged at the last stop a bus passed; an older pass says little about now.
 TOGETHER_FRESH = timedelta(minutes=10)
+# A long wait is claimed only this far past twice the schedule: pass times are known to tens of
+# seconds (the GPS referee's passes vs ours, Sep 28-30: median 4 s, 99th percentile 54 s), and
+# 566 of 680 wrong long waits were claims within 30 s of the line, flipping either way.
+LONG_MARGIN_S = 60
+# ...and "together" only this far inside a quarter of the schedule, for the same reason: on Sep 30
+# most wrong together claims were pairs a few seconds over the line; 30 s keeps 81% of claims
+# and leaves 0.27% more than 60 s over it (the GPS referee).
+TOGETHER_MARGIN_S = 30
 # Two reports further apart than this aren't interpolated (the bus dropped out of the feed in
 # between), as in the nightly's int_stop_passes.
 STEP = timedelta(minutes=5)
+# A route the poller couldn't see for longer than this (every call covering it failed, or the
+# poller was down) may have had buses pass stops unseen, and a bus that ends its trip in the
+# dark never passes the stops it drove by. Sep 30: CTA's API was unreachable 12:41-13:01, and in
+# the half hour after, about 30% of long waits claimed were wrong (#22 at Clark & Van Buren:
+# "no bus since 12:35" at 13:05, but 1522, 1,142 ft short of it at 12:40:53, came back at 13:01
+# on its return trip: it passed in the dark). So a claim whose time spans such a
+# hole is "can't tell" until a bus passes the stop again. A sweep and a half: one slow or failed
+# call (a 30-60 s gap) doesn't count.
+HOLE = timedelta(seconds=90)
+# A bus whose pdist falls this much between reports while its GPS really moves is running
+# against its pattern: its direction label is wrong (J14, Sep 28 morning: CTA tagged buses with
+# the opposite direction; 4037 drove north past 1100 S Columbus "southbound", so northbound
+# riders there were told 2 hours since the last bus in a 6-minute rush). It makes no passes and
+# no claims, and a stop of the route's other direction it drove past (within BACKWARD_NEAR_M of
+# its path) can't tell a wait that spans it. Only those stops: buses driving back to start
+# their next trip do this on dozens of routes a day, and doubting the whole direction hid ~370
+# real long waits a day (Sep 30).
+BACKWARD_FT = 300
+BACKWARD_MOVED_M = 80
+BACKWARD_NEAR_M = 150
+# An untrusted report (off route, or running backwards) whose GPS is this close to a stop of
+# its own pattern, away from its terminals, puts a bus at that stop: it counts as a pass then
+# (#147 4398, Sep 30: its pdist lagged its GPS by a kilometre, and its GPS was at Michigan &
+# Ontario at 14:52 while riders there were told nobody had come since 14:41). A pass, not
+# "can't tell": that hid ~120 real long waits a day for a few wrong ones avoided (Sep 28).
+AT_STOP_M = 50
 # Short and never stale: the file changes every 30 s and readers time their fetch to it.
 CACHE_CONTROL = "public, max-age=5"
 
@@ -206,23 +233,56 @@ class LiveBoard:
         self.routes: dict[int, str] = {}  # pid -> rt, from the poller and the reports
         self.schedule: Schedule | None = None  # the nightly's live schedule, if loaded
         self.shapes: dict[int, list[tuple[float, float, float]]] = {}  # pid -> [(feet, lat, lon)]
+        # When each route was last polled successfully, and the holes (HOLE) in between
+        self.polled_at: dict[str, datetime] = {}
+        self.holes: dict[str, list[tuple[datetime, datetime]]] = {}
+        self.seeded_to: datetime | None = None  # the newest stored report after a restart
+        self.stop_geo: dict[str, tuple[float, float]] = {}  # stpid -> (lat, lon)
+        # stpid -> [(time, vid)]: untrusted reports with the bus at that stop (AT_STOP_M)
+        self.untrusted_at: dict[str, list[tuple[datetime, str]]] = {}
+        # rt -> [(from, to, rtdir, GPS from, GPS to)]: a bus of rt ran against its rtdir pattern
+        self.backwards: dict[str, list[tuple[datetime, datetime, str, tuple, tuple]]] = {}
 
     def seed(self, rows) -> None:
         """Rebuild trails from stored positions (vid, observed_at, pid, pdist[, stsd, stst[, lat,
         lon]]), oldest first; reports off their route (OFF_ROUTE_M) are left out."""
         for vid, t, pid, pdist, *rest in rows:
             stsd, stst, lat, lon = (list(rest) + [None] * 4)[:4]
+            self.seeded_to = t if self.seeded_to is None else max(self.seeded_to, t)
             if not self.on_route({"pid": pid, "pdist": pdist, "lat": lat, "lon": lon}):
                 continue
             key = (stsd, stst) if None not in (stsd, stst) else None
             self.trails.setdefault(vid, deque()).append((t, int(pid), float(pdist), key))
 
-    def update(self, positions: list[dict[str, Any]], now: datetime) -> None:
-        """Record this sweep's reports (parsed vehicles, repeats included) and forget the rest."""
+    def update(
+        self, positions: list[dict[str, Any]], now: datetime, polled: set[str] | None = None
+    ) -> None:
+        """Record this sweep's reports (parsed vehicles, repeats included) and forget the rest.
+        polled: the routes whose call succeeded (None: all of them). A route not polled keeps
+        its buses' last reports (a failed call isn't an empty route), and a route unseen for
+        longer than HOLE is recorded as a hole."""
+        if polled is not None:
+            for rt in polled:
+                prev = self.polled_at.get(rt, self.seeded_to)
+                if prev is not None and now - prev > HOLE:
+                    self.holes.setdefault(rt, []).append((prev, now))
+                self.polled_at[rt] = now
+            for rt, holes in list(self.holes.items()):
+                self.holes[rt] = [h for h in holes if h[1] >= now - TRAIL]
         present = {}
+        if polled is not None:
+            present = {
+                v: p for v, p in self.latest.items()
+                if p.get("rt") not in polled and now - p["observed_at"] <= STALE
+            }  # fmt: skip
         for p in positions:
             if not self.on_route(p):
                 present[p["vid"]] = {**p, "off_route": True}  # on the map; no passes, no claims
+                self.note_untrusted(p)
+                continue
+            if self.went_backwards(self.latest.get(p["vid"]), p):
+                present[p["vid"]] = {**p, "off_route": True, "backwards": True}
+                self.note_untrusted(p)
                 continue
             present[p["vid"]] = p
             if p.get("pid") is None or p.get("pdist") is None:
@@ -236,12 +296,72 @@ class LiveBoard:
                 trail.append(point)
         self.latest = present
         cutoff = now - TRAIL
+        for rt, spans in list(self.backwards.items()):
+            self.backwards[rt] = [x for x in spans if x[1] >= cutoff]
+        for sid, times in list(self.untrusted_at.items()):
+            self.untrusted_at[sid] = [x for x in times if x[0] >= cutoff]
         for vid in list(self.trails):
             trail = self.trails[vid]
             while trail and trail[0][0] < cutoff:
                 trail.popleft()
             if not trail:
                 del self.trails[vid]
+
+    def went_backwards(self, prev: dict[str, Any] | None, p: dict[str, Any]) -> bool:
+        """Whether report p runs against its pattern since prev, the bus's previous report
+        (BACKWARD_FT); if so, records it in self.backwards."""
+        if not prev or prev.get("pid") != p.get("pid") or p["observed_at"] <= prev["observed_at"]:
+            return False
+        if prev.get("off_route") and not prev.get("backwards"):
+            return False  # an untrusted pdist proves nothing (#96 8777, Sep 28: its first report)
+        if None in (p.get("pdist"), prev.get("pdist"), p.get("lat"), prev.get("lat")):
+            return False
+        moved = math.hypot(
+            (float(p["lat"]) - float(prev["lat"])) * 110_540,
+            (float(p["lon"]) - float(prev["lon"])) * 82_990,
+        )
+        if float(p["pdist"]) >= float(prev["pdist"]) - BACKWARD_FT or moved <= BACKWARD_MOVED_M:
+            return False
+        rt, rtdir = self.routes.get(int(p["pid"])), self.dirs.get(int(p["pid"]))
+        if rt is not None and rtdir is not None:
+            gps = ((float(prev["lat"]), float(prev["lon"])), (float(p["lat"]), float(p["lon"])))
+            self.backwards.setdefault(rt, []).append(
+                (prev["observed_at"], p["observed_at"], rtdir, *gps)
+            )
+        return True
+
+    def note_untrusted(self, p: dict[str, Any]) -> None:
+        """Record an untrusted report whose GPS is at a stop of its own pattern (AT_STOP_M), away
+        from its terminals (buses lay over off their pattern's line there)."""
+        if None in (p.get("pid"), p.get("pdist"), p.get("lat"), p.get("lon")) or self.at_terminal(
+            p
+        ):
+            return
+        here = (float(p["lat"]), float(p["lon"]))
+        for _, sid, _ in self.stop_ids.get(int(p["pid"]), ()):
+            at = self.stop_geo.get(sid)
+            if at is not None and near_segment(at, here, here) <= AT_STOP_M:
+                self.untrusted_at.setdefault(sid, []).append((p["observed_at"], p["vid"]))
+
+    def against(self, rt: str, rtdir: str, stpid: str, start: datetime, end: datetime) -> bool:
+        """Whether a bus of rt ran against a pattern of another direction past stop stpid (of
+        rtdir) between start and end: it may have served the stop unseen. True for a stop whose
+        place is unknown."""
+        spans = [x for x in self.backwards.get(rt, ()) if x[0] < end and x[1] > start]
+        spans = [x for x in spans if x[2] != rtdir]
+        if not spans:
+            return False
+        at = self.stop_geo.get(stpid)
+        return at is None or any(near_segment(at, a, b) <= BACKWARD_NEAR_M for *_, a, b in spans)
+
+    def blind(self, rt: str, start: datetime, end: datetime, now: datetime) -> bool:
+        """Whether route rt went unseen for longer than HOLE at some time between start and end
+        (a hole still open now counts from the last successful poll)."""
+        holes = self.holes.get(rt, [])
+        last = self.polled_at.get(rt)
+        if last is not None and now - last > HOLE:
+            holes = [*holes, (last, now)]
+        return any(a < end and b > start for a, b in holes)
 
     def on_route(self, p: dict[str, Any]) -> bool:
         """Whether a report's GPS is within OFF_ROUTE_M (or OFF_ROUTE_SHARE of the gap between
@@ -259,23 +379,6 @@ class LiveBoard:
         dx = (float(lon) - (a[2] + f * (b[2] - a[2]))) * 82_990
         allowed = max(OFF_ROUTE_M, OFF_ROUTE_SHARE * (b[0] - a[0]) * 0.3048)
         return (dx * dx + dy * dy) ** 0.5 <= allowed
-
-    def crossed_at(
-        self, vid: str, pid: int, pdist: float, since: datetime | None = None
-    ) -> datetime | None:
-        """The latest time bus `vid` passed `pdist` on pattern `pid` (linear between two of its
-        reports since `since`), or None if its trail never crosses that spot. Scans back from
-        the newest report: the first crossing found is the latest."""
-        later = None
-        for t, p, d, _ in reversed(self.trails.get(vid, ())):
-            if since is not None and t < since:
-                break
-            if later is not None:
-                t1, p1, d1 = later
-                if p == pid == p1 and d <= pdist <= d1 and d1 > d:
-                    return t + (t1 - t) * ((pdist - d) / (d1 - d))
-            later = (t, p, d)
-        return None
 
     def position_at(
         self, vid: str, pid: int, when: datetime, since: datetime | None = None
@@ -360,9 +463,9 @@ class LiveBoard:
         stop_at: dict[int, dict[str, list[float]]],
         now: datetime,
     ) -> tuple[int | None, str | None, tuple[str, str] | None]:
-        """(seconds since any other bus of the route and direction passed this bus's next stop,
-        the bus that did, (next stpid, name)). dark: dark_buses(); stop_at: pid -> stpid ->
-        [feet along], for finding the stop on another bus's pattern."""
+        """(seconds since any bus of the route and direction passed this bus's next stop, the bus
+        that did, (next stpid, name)). dark: dark_buses(); stop_at: pid -> stpid -> [feet
+        along], for finding the stop on another bus's pattern."""
         stops, rt, rtdir = self.stop_ids.get(pid), self.routes.get(pid), self.dirs.get(pid)
         if not stops or rt is None or rtdir is None:
             return None, None, None
@@ -370,9 +473,16 @@ class LiveBoard:
         if i >= len(stops) - 1:
             return None, None, None  # only its last stop left: finishing, serves no one
         at, stpid, name = stops[i]
+        # Its own passes count from earlier trips: on a loop served by one bus, the last bus at
+        # the stop is this one, a lap ago (#171 Sep 28: 8935 passed Hyde Park & 55th every 30
+        # min, and riders were told 2.5 hours, since another bus). Not on this trip: standing
+        # at the stop, it hasn't left it yet.
+        trail = self.trails.get(vid)
+        this_trip = runs(trail)[-1][1][0][0] if trail else None
         last, last_by = None, None
-        for t, other in index.get((rt, rtdir, stpid), ()):
-            if other != vid and t <= now and (last is None or t > last):
+        for t, other in [*index.get((rt, rtdir, stpid), ()), *self.untrusted_at.get(stpid, ())]:
+            mine = other == vid and (this_trip is None or t >= this_trip)
+            if not mine and t <= now and (last is None or t > last):
                 last, last_by = t, other
         # A bus that went dark short of the stop, after the last pass and nearer the stop than
         # this bus was then, may have passed since: claim no wait.
@@ -388,42 +498,15 @@ class LiveBoard:
             mine = self.position_at(vid, pid, t_dark)
             if mine is None or at - mine >= min(ahead) - d_dark:
                 return None, None, (stpid, name)
-        if last is None:
+        if (
+            last is None
+            or self.blind(rt, last, now, now)
+            or self.against(rt, rtdir, stpid, last, now)
+        ):
+            # never seen, the route went unseen since (HOLE), or a bus of the route ran against
+            # its pattern since (BACKWARD_FT): one may have passed here unseen
             return None, None, (stpid, name)
         return max(0, round((now - last).total_seconds())), last_by, (stpid, name)
-
-    def gap(
-        self,
-        vid: str,
-        pid: int,
-        pdist: float,
-        live: dict[str, float],
-        seen: list[str],
-        now: datetime,
-    ) -> int | None:
-        """Seconds since the last bus passed this bus's spot (see the module docstring).
-        live: vid -> current pdist of the reporting buses on this pattern; seen: every bus with
-        trail on this pattern."""
-        last = None
-        since = now - GAP_WINDOW
-        for other in seen:
-            if other == vid or (other in live and live[other] < pdist):
-                continue  # itself, or a reporting bus that is behind it now
-            t = self.crossed_at(other, pid, pdist, since)
-            if t is not None and t <= now and (last is None or t > last):
-                last = t
-        for other in seen:
-            trail = self.trails[other]
-            if other == vid or other in live or trail[-1][1] != pid or trail[-1][0] < since:
-                continue
-            t_dark, _, d_dark, _ = trail[-1]
-            # Skip: never left the first stop, passed here while reporting, or went dark earlier.
-            if d_dark < TERMINAL_FT or d_dark >= pdist or (last is not None and t_dark <= last):
-                continue
-            mine = self.position_at(vid, pid, t_dark, since)
-            if mine is None or mine <= d_dark:
-                return None  # it went dark ahead of this bus, short of here: it may have passed
-        return None if last is None else max(0, round((now - last).total_seconds()))
 
     def trip_state(self, p: dict[str, Any]) -> str | None:
         """ "starting" or "finishing" for a bus with no next stop (see the module docstring)."""
@@ -527,9 +610,25 @@ class LiveBoard:
             if not before:
                 continue
             t_f, front = max(before)
+            if any(
+                (trail := self.trails.get(v)) and t >= trail[-1][0]
+                for v, t in ((p["vid"], t_b), (front, t_f))
+            ):
+                # One of them hasn't left that stop (a standing bus's pass is its latest report
+                # there), so there's no headway yet: X49 8077 stood 49 min at one stop, Sep 30,
+                # and was "together" with each bus that went by.
+                continue
+            if self.blind(rt, t_f - STEP, t_b + STEP, now) or self.against(
+                rt, rtdir, sid, t_f - STEP, t_b + STEP
+            ):
+                continue  # a pass timed across a hole (HOLE) is only a bound
             sched, _ = self.schedule.judge(rt, sid, t_b, None)
             headway = (t_b - t_f).total_seconds()
-            if sched and headway < 0.25 * sched and line.get(front) == (rt, rtdir):
+            if (
+                sched
+                and headway < 0.25 * sched - TOGETHER_MARGIN_S
+                and line.get(front) == (rt, rtdir)
+            ):
                 out[p["vid"]] = (front, round(headway))
         return out
 
@@ -549,7 +648,6 @@ class LiveBoard:
 
     def snapshot(self, now: datetime) -> dict[str, Any]:
         by_pid: dict[int, list[dict[str, Any]]] = {}
-        live: dict[int, dict[str, float]] = {}  # pid -> vid -> pdist, reporting buses only
         terminal = set()
         for p in self.latest.values():
             if p.get("pid") is None or p.get("pdist") is None:
@@ -557,23 +655,9 @@ class LiveBoard:
             if self.at_terminal(p):
                 terminal.add(p["vid"])
             if p.get("off_route"):
-                continue  # on the map, but no gaps or claims
-            if now - p["observed_at"] <= DARK:
-                live.setdefault(int(p["pid"]), {})[p["vid"]] = float(p["pdist"])
+                continue  # on the map, but no claims
             if p["vid"] not in terminal:
                 by_pid.setdefault(int(p["pid"]), []).append(p)
-        seen: dict[int, list[str]] = {}  # pid -> buses with trail on it
-        for vid, trail in self.trails.items():
-            for p in {point[1] for point in trail}:
-                seen.setdefault(p, []).append(vid)
-        gaps: dict[str, tuple[int | None, str | None]] = {}
-        for pid, buses in by_pid.items():
-            buses.sort(key=lambda p: p["pdist"], reverse=True)  # leader first
-            for i, bus in enumerate(buses):
-                gap = self.gap(
-                    bus["vid"], pid, float(bus["pdist"]), live.get(pid, {}), seen.get(pid, []), now
-                )
-                gaps[bus["vid"]] = (gap, buses[i - 1]["vid"] if i else None)
         index, current = self.pass_log()
         dark = self.dark_buses(now)
         stop_at: dict[int, dict[str, list[float]]] = {}
@@ -596,7 +680,6 @@ class LiveBoard:
 
         rows = []
         for p in sorted(fresh, key=lambda p: (p["rt"], p["vid"])):
-            gap, ahead = gaps.get(p["vid"], (None, None))
             stop_gap, last_by, next_stop = stop_gaps.get(p["vid"], (None, None, None))
             sched_s = sched_due = None
             if self.schedule is not None and next_stop is not None:
@@ -610,13 +693,14 @@ class LiveBoard:
                 "dly": bool(p.get("dly")), "des": p.get("des"), "dir": self.dirs.get(pid),
                 "t": int(p["observed_at"].timestamp()),
                 "pdist": None if p.get("pdist") is None else round(float(p["pdist"])),
-                "gap_s": gap, "ahead": ahead, "at_terminal": p["vid"] in terminal,
+                "at_terminal": p["vid"] in terminal,
                 "near": self.near(pid, p.get("pdist")),
                 "stop_gap_s": stop_gap, "last_by": last_by,
                 "next_stpid": next_stop[0] if next_stop else None,
                 "next_stop": next_stop[1] if next_stop else None,
                 "sched_s": sched_s, "sched_due": sched_due,
-                "long_wait": bool(stop_gap is not None and sched_s and stop_gap > 2 * sched_s
+                "long_wait": bool(stop_gap is not None and sched_s
+                                  and stop_gap > 2 * sched_s + LONG_MARGIN_S
                                   and (sched_due or 0) >= 2),
                 "together_with": together.get(p["vid"], (None, None))[0],
                 "together_s": together.get(p["vid"], (None, None))[1],
@@ -624,9 +708,14 @@ class LiveBoard:
                 "behind_stops": behind.get(p["vid"], (None, None))[1],
                 "trip": None if next_stop or p.get("off_route") else self.trip_state(p),
             })  # fmt: skip
+        # No route polled successfully for longer than HOLE: CTA's feed is down (or unreachable),
+        # which the site must say, rather than "0 buses on the road" (Sep 30, 12:41-13:01)
+        last_poll = max(self.polled_at.values(), default=None)
+        down = last_poll if last_poll is not None and now - last_poll > HOLE else None
         return {
             "generated_at": now.isoformat(timespec="seconds"),
             "build": os.environ.get("GIT_SHA", "unknown"),
+            "no_data_since": down.isoformat(timespec="seconds") if down else None,
             "vehicles": rows,
         }
 
@@ -711,6 +800,14 @@ def trip_passes(
     if k >= 0 and d_first - stops[k][0] <= FIRST_SEEN_FT and k not in running and k not in starting:
         running[k] = t_first
     passes = {**running, **starting}
+    # A bus that waits just past a stop (within DWELL_FT, the dwell rule's "at the stop") is at
+    # it, and serves it when it leaves (#201 Sep 29: 8800 began its trip 1,056 ft in, eased
+    # back to 51 ft past Howard & Custer and left from there; by pdist it was never short of the
+    # stop, and riders there were told 65 min since the last bus).
+    lowest = min(d for t, d in points if t <= left)
+    for k, (at, _, _) in enumerate(stops):
+        if lowest - DWELL_FT <= at <= lowest and k not in passes:
+            passes[k] = waited
     # A bus standing at a stop (within DWELL_FT either side) serves it until it leaves: the
     # pass is its last report there before it moves on (Sep 28: #79 stood at Spaulding 11
     # minutes while buses behind were told the last bus came 16-26 minutes ago).
@@ -736,12 +833,40 @@ def trip_passes(
 
 
 def pattern_shape(points: list[dict[str, Any]]) -> list[tuple[float, float, float]]:
-    """[(feet along, lat, lon)] for a Bus Tracker pattern's points (stops and waypoints)."""
+    """[(feet along, lat, lon)] for a Bus Tracker pattern: its stops and its first point, the
+    points whose pdist is real. CTA sends every waypoint with pdist 0 (all 115,965 of them,
+    Sep 30), so kept, they piled up at the start and a bus starting its trip was checked against
+    whichever of them sorted last: #147 4155, laying over 258 ft into its trip downtown, was
+    "off route" (against a waypoint miles north) and its trip never passed Congress Plaza &
+    Michigan; 4.55% of Sep 30's reports were rejected so. Past the first stop this is the shape
+    the on-route rule was measured with (the waypoints all sat at 0)."""
+    ordered = sorted(points or [], key=lambda p: int(p.get("seq") or 0))
     return sorted(
         (float(p["pdist"]), float(p["lat"]), float(p["lon"]))
-        for p in points or []
-        if p.get("pdist") is not None and p.get("lat") is not None and p.get("lon") is not None
+        for i, p in enumerate(ordered)
+        if (p.get("typ") == "S" or i == 0)
+        and p.get("pdist") is not None
+        and p.get("lat") is not None
+        and p.get("lon") is not None
     )
+
+
+def near_segment(p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Metres from point p to the segment a-b (lat, lon pairs; flat earth at city scale)."""
+    ax, ay = (a[1] - p[1]) * 82_990, (a[0] - p[0]) * 110_540
+    bx, by = (b[1] - p[1]) * 82_990, (b[0] - p[0]) * 110_540
+    dx, dy = bx - ax, by - ay
+    k = max(0.0, min(1.0, -(ax * dx + ay * dy) / (dx * dx + dy * dy))) if dx or dy else 0.0
+    return math.hypot(ax + k * dx, ay + k * dy)
+
+
+def pattern_stop_geo(points: list[dict[str, Any]]) -> dict[str, tuple[float, float]]:
+    """stpid -> (lat, lon) for a Bus Tracker pattern's stops."""
+    return {
+        str(p["stpid"]): (float(p["lat"]), float(p["lon"]))
+        for p in points or []
+        if p.get("typ") == "S" and p.get("stpid") and p.get("lat") is not None
+    }
 
 
 def pattern_stop_ids(points: list[dict[str, Any]]) -> list[tuple[float, str, str]]:
@@ -808,10 +933,17 @@ def make_sink(target: str | None) -> Sink | None:
     return S3Sink(target) if target.startswith("s3://") else FileSink(target)
 
 
-def publish(board: LiveBoard, sink: Sink | None, positions: list[dict], now: datetime) -> None:
-    """Best-effort: the feed is a disposable view; never let it fail the sweep."""
+def publish(
+    board: LiveBoard,
+    sink: Sink | None,
+    positions: list[dict],
+    now: datetime,
+    polled: set[str] | None = None,
+) -> None:
+    """Best-effort: the feed is a disposable view; never let it fail the sweep. polled: the
+    routes whose call succeeded (LiveBoard.update)."""
     try:
-        board.update(positions, now)
+        board.update(positions, now, polled)
         if sink is not None:
             sink.write(board.snapshot(now))
     except Exception:  # noqa: BLE001 - logged; the next sweep rewrites the whole snapshot

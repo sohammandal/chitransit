@@ -1,6 +1,6 @@
 """Audit the long waits the live site is claiming right now, against Ingress.
 
-For every bus the site would flag (lib/waits.ts: stop_gap_s > 2x sched_s and sched_due >= 2),
+For every long wait the feed claims (long_wait, decided by the poller: ghost_ledger.live),
 look for any sign in the raw reports that a bus of the route and direction was at that stop
 during the claimed wait, independently of the live pass logic (ghost_ledger.live):
 
@@ -47,12 +47,9 @@ def feed() -> dict:
 def claims(doc: dict, min_wait: int, routes: set[str]) -> list[dict]:
     out = []
     for v in doc["vehicles"]:
-        g, s, due = v.get("stop_gap_s"), v.get("sched_s"), v.get("sched_due")
         if routes and v["rt"] not in routes:
             continue
-        if v.get("at_terminal") or g is None or not s or due is None or due < 2 or g <= 2 * s:
-            continue
-        if g >= min_wait * 60:
+        if v.get("long_wait") and v["stop_gap_s"] >= min_wait * 60:
             out.append(v)
     return sorted(out, key=lambda v: -v["stop_gap_s"])
 
