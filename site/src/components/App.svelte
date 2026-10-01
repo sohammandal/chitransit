@@ -42,6 +42,10 @@
   let topH = $state(0);
 
   const vehicles = $derived(feed?.vehicles ?? []);
+  // CTA's feed hasn't come through for a while (the poller says since when): say so, not "0 buses"
+  const downSince = $derived(feed?.no_data_since
+    ? new Date(feed.no_data_since).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })
+    : null);
   const at = $derived(feed ? new Date(feed.generated_at) : new Date(now));
   const age = $derived(feed ? Math.max(0, Math.round((now - at.getTime()) / 1000)) : null);
   const gapFor = (v: Vehicle) => scheduledGap(hw, v.rt, v.dir, at);
@@ -197,7 +201,7 @@
 
 <div class="side panel-column" style:--top-h="{topH}px">
   <div bind:clientHeight={topH}>
-    <TopBar {route} count={feed ? vehicles.length : null} {age} {failed} {names} onOpen={(rt, replace) => go(rt, replace ? "replace" : "push")} aboutOpen={about} onAbout={() => { about = !about; if (about && size === "peek") size = "half"; }} />
+    <TopBar {route} count={feed ? vehicles.length : null} {age} {failed} {downSince} {names} onOpen={(rt, replace) => go(rt, replace ? "replace" : "push")} aboutOpen={about} onAbout={() => { about = !about; if (about && size === "peek") size = "half"; }} />
   </div>
   {#if feed || about}
     <Sheet {size} onSize={(s) => (size = s)}>

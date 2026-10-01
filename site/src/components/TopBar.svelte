@@ -6,10 +6,11 @@
   import { matchRoutes, toOpen } from "../lib/search";
   import Mark from "./Mark.svelte";
 
-  let { route, count, age, failed, names, onOpen, aboutOpen = false, onAbout }: {
+  let { route, count, age, failed, downSince = null, names, onOpen, aboutOpen = false, onAbout }: {
     count: number | null;
     age: number | null; // seconds since the feed was written
     failed: boolean;
+    downSince?: string | null; // CTA's feed down since (a time of day): the feed says so
     names: Record<string, string>;
     route: string | null; // the open route: leaving one this search opened clears the box
     onOpen: (rt: string, replace: boolean) => void; // replace: swap the history entry
@@ -69,10 +70,17 @@
       <span class="dot waiting" class:stale={failed}></span>
       <span>{failed ? "Can't reach the live feed" : "Connecting to the live feed…"}</span>
       <span class="updated">{failed ? "Retrying…" : "\u00a0"}</span>
+    {:else if downSince}
+      <span class="dot stale"></span>
+      <span>No live data from CTA since {downSince}</span>
+      <span class="updated">{failed ? "Reconnecting…" : "Their bus feed isn't responding. Retrying…"}</span>
     {:else}
-      <span class="dot" class:stale={failed}></span>
+      <!-- The poller writes every 30 s: a feed older than 90 s means it has stopped (box down,
+           poller crashed), and its buses and claims are not live any more -->
+      {@const old = (age ?? 0) > 90}
+      <span class="dot" class:stale={failed || old}></span>
       <span><strong>{count}</strong> buses on the road</span>
-      <span class="updated">{failed ? "Reconnecting…" : `Updated ${age ?? 0} s ago`}</span>
+      <span class="updated">{failed ? "Reconnecting…" : old ? `Not updated for ${Math.round((age ?? 0) / 60)} min` : `Updated ${age ?? 0} s ago`}</span>
     {/if}
   </p>
   <form onsubmit={submit} role="search">

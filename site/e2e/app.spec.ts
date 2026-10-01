@@ -974,3 +974,24 @@ test("stop: a long gap is said under the bus it's about, in a rider's words (Sep
   await expect.poll(order).toBe(true);
   expect(errors).toEqual([]);
 });
+
+test("when CTA's feed is down the header says so, not \"0 buses on the road\" (Sep 30)", async ({ page }) => {
+  // Sep 30, 12:41-13:01 CDT: CTA's API was unreachable and the site said "0 buses on the road"
+  const f = { ...feed, vehicles: [], no_data_since: "2026-09-30T17:40:35+00:00" };
+  const errors = await setUp(page, [], f);
+  await page.goto("/");
+  await expect(page.getByText("No live data from CTA since 12:40 PM")).toBeVisible();
+  await expect(page.getByText("buses on the road")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("a feed that has stopped updating is shown as not live (Sep 30)", async ({ page }) => {
+  // If the poller stops writing (box down), the file stays put: the header must not keep saying
+  // "Updated N s ago" with a live dot
+  const errors = await setUp(page);
+  await page.clock.setFixedTime(new Date(new Date(feed.generated_at).getTime() + 5 * 60_000));
+  await page.goto("/");
+  await expect(page.getByText("Not updated for 5 min")).toBeVisible();
+  await expect(page.locator(".status .dot.stale")).toHaveCount(1);
+  expect(errors).toEqual([]);
+});
