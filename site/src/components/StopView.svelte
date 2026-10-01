@@ -1,7 +1,7 @@
 <script lang="ts">
-  // Stop level: for each route and direction that stops here, the next two buses by where they
-  // are now (stops away, never a forecast), and whether the next one is in a long gap or the
-  // two are together (lib/stops.ts). Tap a bus to open it.
+  // Stop level: for each route and direction that stops here, how long since the last bus passed
+  // this stop (its own stamp), the next two buses by where they are now (stops away, never a
+  // forecast), and whether those two are together (lib/stops.ts). Tap a bus to open it.
   import { minutes } from "../lib/format";
   import type { StopRow } from "../lib/stops";
   import type { Stop } from "../lib/types";
@@ -38,16 +38,18 @@
     {#each coming as r (r.rt + r.dir)}
       <li>
         <p class="head"><span class="rt">{r.rt}</span><b>{r.dir}</b>{#if names[r.rt]}<span class="name">{names[r.rt]}</span>{/if}</p>
+        {#if r.wait}
+          <!-- measured at this stop (its own stamp): never a bus's wait at some other stop -->
+          {#if r.wait.s == null}<p class="last">Can't tell when the last bus came</p>
+          {:else if r.wait.long}<p class="last red">No bus here for {minutes(r.wait.s)}</p>
+          {:else}<p class="last">Last bus here {r.wait.s < 60 ? "just now" : `${minutes(r.wait.s)} ago`}</p>{/if}
+        {/if}
         {#each r.next as n, i (n.bus.vid)}
           <button class="bus" onclick={() => onSelect(n.bus.vid)}>
             <span class="lab">{i === 0 ? "Next" : "Then"}</span>
             <span class="where"><b>{away(n.away)}</b>{#if n.away > 0 && n.bus.near}<span class="near">near {n.bus.near}</span>{/if}</span>
             <svg class="go" viewBox="0 0 8 14" aria-hidden="true"><path d="M1.5 1.5 6.5 7l-5 5.5" /></svg>
           </button>
-          {#if i === 0 && r.longGap && n.bus.stop_gap_s != null}
-            <!-- measured at this bus's own next stop, which "before this one" stays true to -->
-            <p class="flag red under">Long gap: no bus for {minutes(n.bus.stop_gap_s)} before this one</p>
-          {/if}
         {/each}
         {#if r.together}<p class="flag amber">The next two buses are together</p>{/if}
       </li>
@@ -75,8 +77,8 @@
   .near { font-size: 13px; color: var(--fog); }
   .go { align-self: center; width: 8px; height: 14px; fill: none; stroke: var(--fog); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .none { margin: 12px 0 0; font-size: 13px; color: var(--fog); }
+  .last { margin: 0 0 6px; font-size: 13px; color: var(--fog); }
+  .last.red { color: var(--star-red); font-weight: 700; }
   .flag { margin: 4px 0 2px; font-size: 13px; font-weight: 700; }
-  .flag.red { color: var(--star-red); }
-  .flag.under { margin: 0 0 8px 54px; } /* under the bus it's about, in its text column */
   .flag.amber { color: var(--signal-amber); }
 </style>

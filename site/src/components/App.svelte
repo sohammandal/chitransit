@@ -7,12 +7,12 @@
   // The URL tracks the route, so a route page can be shared and Back works.
   import { onMount } from "svelte";
   import * as data from "../lib/data";
-  import { pollFeed } from "../lib/feed";
+  import { pollFeed, pollStopWaits } from "../lib/feed";
   import { findProblems, scheduledGap } from "../lib/problems";
   import { mainPid, onLine } from "../lib/project";
   import { stopRows } from "../lib/stops";
   import { behindOf } from "../lib/waits";
-  import type { Feed, Headways, Pattern, Report, Stop, Vehicle } from "../lib/types";
+  import type { Feed, Headways, Pattern, Report, Stop, StopWaits, Vehicle } from "../lib/types";
   import About from "./About.svelte";
   import BusCard from "./BusCard.svelte";
   import MapView from "./MapView.svelte";
@@ -25,6 +25,7 @@
   type Size = "peek" | "half" | "full";
 
   let feed = $state<Feed | null>(null);
+  let waits = $state<StopWaits | null>(null); // every stop's own wait: fetched only while a stop is open
   let failed = $state(false);
   let now = $state(Date.now());
   let names = $state<Record<string, string>>({});
@@ -57,7 +58,13 @@
   const direction = $derived(bus?.dir ?? null);
   const level = $derived(about ? "about" : bus ? "bus" : route ? "route" : stop ? "stop" : "city");
   const stopLoading = $derived(stop ? stop[3].some((pid) => !patterns.has(pid)) : false);
-  const rows = $derived(stop ? stopRows(stop, vehicles, patterns) : []);
+  const rows = $derived(stop ? stopRows(stop, vehicles, patterns, waits) : []);
+  const stopOpen = $derived(stop != null);
+  $effect(() => {
+    if (!stopOpen) return;
+    const stopPolling = pollStopWaits((w) => (waits = w));
+    return () => { stopPolling(); waits = null; }; // never an old wait on the next stop opened
+  });
   // A stop's map: only the buses on its card, and their lines
   const stopBuses = $derived(level !== "stop" ? null : stopLoading ? [] : rows.flatMap((r) => r.next.map((n) => n.bus)));
   const shapes = $derived(route ? [...patterns.values()].filter((p) => p.rt === route && (!direction || p.dir === direction))

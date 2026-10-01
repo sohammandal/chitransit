@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { feetOnPattern, stopRows } from "./stops";
+import { stopOnPattern, stopRows } from "./stops";
 import { bus as fake } from "./testing";
-import type { Pattern, Stop, Vehicle } from "./types";
+import type { Pattern, Stop, StopWaits, Vehicle } from "./types";
 
 // Northbound on a straight street, a stop every 1,000 ft; Belmont at 5,000 ft
 const pat = (rt: string, dir: string, names: string[]): Pattern => ({
   rt, dir, c: [],
-  s: names.map((n, i) => [-87.65, 41.9 + i * 0.0027, n, i * 1000]),
+  s: names.map((n, i) => [-87.65, 41.9 + i * 0.0027, n, i * 1000, 1, `${rt}-${n}`]),
 });
 const main = pat("22", "Northbound", ["A", "B", "C", "D", "E", "Belmont", "G", "H"]);
 const short = pat("22", "Northbound", ["A", "B", "C", "D", "E", "Belmont"]); // ends at Belmont
@@ -25,11 +25,11 @@ describe("stopRows", () => {
 
   it("finds a corner spelled the other way round on another route's pattern", () => {
     const cross = pat("9", "Southbound", ["X", "Clark & Belmont", "Y"]);
-    expect(feetOnPattern([-87.65, 41.9027, "Belmont & Clark", [3]], cross)).toBe(1000);
+    expect(stopOnPattern([-87.65, 41.9027, "Belmont & Clark", [3]], cross)).toBe(1);
   });
 
   it("skips a pattern whose last stop this is: nobody boards there", () => {
-    expect(feetOnPattern(belmont, short)).toBeNull();
+    expect(stopOnPattern(belmont, short)).toBeNull();
     expect(stopRows(belmont, [bus("S", 2, 3500)], patterns)[0].next).toEqual([]);
   });
 
@@ -43,9 +43,20 @@ describe("stopRows", () => {
     expect(rows[0].next.map((n) => n.away)).toEqual([5]);
   });
 
-  it("flags the next bus's long gap and the next two coming together (the poller's claims)", () => {
-    const rows = stopRows(belmont, [bus("a", 1, 3500, { long_wait: true }), bus("b", 1, 3000, { together_with: "a" })], patterns);
-    expect(rows[0]).toMatchObject({ longGap: true, together: true });
-    expect(stopRows(belmont, [bus("a", 1, 3500), bus("b", 1, 1000)], patterns)[0]).toMatchObject({ longGap: false, together: false });
+  it("flags the next two coming together (the poller's claim)", () => {
+    const rows = stopRows(belmont, [bus("a", 1, 3500), bus("b", 1, 3000, { together_with: "a" })], patterns);
+    expect(rows[0].together).toBe(true);
+    expect(stopRows(belmont, [bus("a", 1, 3500), bus("b", 1, 1000)], patterns)[0].together).toBe(false);
+  });
+
+  it("says how long since the last bus passed this stop: its own stamp, never a bus's wait at another stop (Oct 1)", () => {
+    // #151 Oct 1 00:20: 8847's wait (49 min, at its next stop) was shown at Adams & Canal, where
+    // 8894 had just passed. The stop's own stamp: 3 min there.
+    const next = bus("a", 1, 1500, { stop_gap_s: 2940, long_wait: true }); // its next stop is C
+    const waits: StopWaits = { generated_at: "", stops: { "22|Northbound": { "22-Belmont": [180, 0], "22-C": [2940, 1] } } };
+    expect(stopRows(belmont, [next], patterns, waits)[0].wait).toEqual({ s: 180, long: false });
+    expect(stopRows(belmont, [next], patterns, null)[0].wait).toBeNull(); // not loaded: say nothing
+    const unknown: StopWaits = { generated_at: "", stops: { "22|Northbound": { "22-Belmont": [null, 0] } } };
+    expect(stopRows(belmont, [next], patterns, unknown)[0].wait).toEqual({ s: null, long: false });
   });
 });

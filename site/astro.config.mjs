@@ -38,6 +38,12 @@ function liveFeedInDev() {
           res.end(String(e));
         }
       });
+      server.middlewares.use("/live/stops.json", async (_req, res) => {
+        const r = await fetch(`${PROD}/live/stops.json`, { cache: "no-store" }).catch(() => null);
+        res.statusCode = r?.status ?? 502; // until prod's poller writes it: none, and the stop view says nothing
+        res.setHeader("Content-Type", "application/json");
+        res.end(r ? await r.text() : "");
+      });
     },
   };
 }

@@ -909,10 +909,14 @@ test("stop: a stop tapped low on the map stays in view when the sheet rises over
   expect(errors).toEqual([]);
 });
 
-test("stop: a long gap is said under the bus it's about, in a rider's words (Sep 29)", async ({ page }) => {
-  // the poller's claim on 8185
+test("stop: the wait shown is this stop's own, never a bus's wait at another stop (Oct 1)", async ({ page }) => {
+  // #151 Oct 1 00:20: "no bus for 49 min" at Adams & Canal a minute after a bus passed there.
+  // It was the next bus's wait at its own next stop, 73 stops back. Here 8185 (heading for
+  // Chicago & Ashland) carries 25 min for its next stop; the stop's own stamp says 48 min.
   const f = { ...feed, vehicles: feed.vehicles.map((v: { vid: string }) => (v.vid === "8185" ? { ...v, long_wait: true, stop_gap_s: 1500 } : v)) };
   const errors = await setUp(page, [], f);
+  const waits = { generated_at: f.generated_at, stops: { "66|Westbound": { "622": [2880, 1] } } }; // 622: Chicago & Ashland westbound
+  await page.route("**/live/stops.json", (r) => r.fulfill({ json: waits }));
   await page.goto("/");
   await busesDrawn(page);
   const at: [number, number] = [-87.66733, 41.89608]; // Chicago & Ashland
@@ -924,13 +928,12 @@ test("stop: a long gap is said under the bus it's about, in a rider's words (Sep
   }, at);
   await page.mouse.click(pt.x, pt.y);
   const row = page.locator(".rows li").filter({ hasText: "Westbound" });
-  const flag = row.getByText("Long gap: no bus for 25 min before this one");
-  await expect(flag).toBeVisible();
-  // right under the Next bus (8185), above the Then bus (measured at once: the sheet may be moving)
+  await expect(row.getByText("No bus here for 48 min")).toBeVisible();
+  await expect(page.locator(".sheet").getByText("25 min")).toHaveCount(0); // the bus's wait, measured elsewhere
+  // under the route's name, above its buses: it's about the stop, not the next bus
   const order = () => row.evaluate((li) => {
-    const [next, then] = [...li.querySelectorAll(".bus")].map((e) => e.getBoundingClientRect());
-    const flag = li.querySelector(".flag.red")!.getBoundingClientRect();
-    return flag.top >= next.bottom - 1 && flag.bottom <= then.top + 1;
+    const [head, line, next] = [".head", ".last", ".bus"].map((q) => li.querySelector(q)!.getBoundingClientRect());
+    return line.top >= head.bottom - 1 && line.bottom <= next.top + 1;
   });
   await expect.poll(order).toBe(true);
   expect(errors).toEqual([]);

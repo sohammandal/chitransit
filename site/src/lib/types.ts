@@ -41,8 +41,12 @@ export type Pattern = {
   rt: string;
   dir: string;
   c: [number, number][]; // [lon, lat] along the route
-  s: [number, number, string, number, number?][]; // stops: [lon, lat, name, feet along, routes at that crossing]
+  s: [number, number, string, number, number?, string?][]; // stops: [lon, lat, name, feet along, routes at that crossing, CTA stop id]
 };
+
+/** live/stops.json: every stop's own wait, "rt|Northbound" -> stop id -> [seconds since the
+ *  last bus passed it (null: can't tell), 1 if that's a long wait]. */
+export type StopWaits = { generated_at: string; stops: Record<string, Record<string, [number | null, number]>> };
 
 /** date -> "rt|North" -> Chicago hour -> scheduled minutes between buses */
 export type Headways = Record<string, Record<string, Record<string, number>>>;
