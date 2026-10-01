@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { feetOnPattern, stopRows } from "./stops";
+import { bus as fake } from "./testing";
 import type { Pattern, Stop, Vehicle } from "./types";
 
 // Northbound on a straight street, a stop every 1,000 ft; Belmont at 5,000 ft
@@ -12,12 +13,8 @@ const short = pat("22", "Northbound", ["A", "B", "C", "D", "E", "Belmont"]); // 
 const belmont: Stop = [-87.65, 41.9 + 5 * 0.0027, "Belmont", [1, 2]];
 const patterns = new Map([[1, main], [2, short]]);
 
-function bus(vid: string, pid: number, pdist: number, extra: Partial<Vehicle> = {}): Vehicle {
-  return {
-    vid, rt: "22", pid, hdg: 0, lat: 41.9, lon: -87.65, dly: false, des: null, dir: "Northbound", t: 0, pdist,
-    gap_s: null, ahead: null, at_terminal: false, near: `near ${vid}`, next_stop: "x", ...extra,
-  };
-}
+const bus = (vid: string, pid: number, pdist: number, extra: Partial<Vehicle> = {}) =>
+  fake({ vid, rt: "22", pid, pdist, lat: 41.9, lon: -87.65, near: `near ${vid}`, next_stop: "x", ...extra });
 
 describe("stopRows", () => {
   it("lists the next two buses that stop here, by stops away", () => {

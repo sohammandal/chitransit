@@ -31,7 +31,7 @@
   const waitFor = (b: Vehicle) => waitOf(b, scheduled);
   // Together: a bus and the bus just ahead of it (lib/waits.ts togetherWith), when drawn.
   const together = $derived(new Set(ordered.flatMap((b) => {
-    const w = togetherWith(b, scheduled);
+    const w = togetherWith(b);
     return w && byVid.has(w) ? [b.vid, w] : [];
   })));
   // A long wait: red from the bus to the next bus drawn ahead of it (or the line's end), the

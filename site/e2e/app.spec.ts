@@ -49,7 +49,7 @@ async function noSideScroll(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
-test("city: live count, right-now list, buses on the map", async ({ page }) => {
+test("city: live count, right-now list, buses on the map @both", async ({ page }) => {
   const errors = await setUp(page);
   await page.goto("/");
   await expect(page.getByText(`${feed.vehicles.length} buses on the road`)).toBeVisible();
@@ -61,7 +61,7 @@ test("city: live count, right-now list, buses on the map", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("route: lines per direction, key, map shows only this route", async ({ page }) => {
+test("route: lines per direction, key, map shows only this route @both", async ({ page }) => {
   const errors = await setUp(page);
   await page.goto("/route/66/");
   await expect(page.getByRole("heading", { name: "Chicago", exact: true })).toBeVisible();
@@ -76,28 +76,6 @@ test("route: lines per direction, key, map shows only this route", async ({ page
   expect(errors).toEqual([]);
 });
 
-test("bus: tap a bus on the line, see its gaps, go back", async ({ page }) => {
-  const errors = await setUp(page);
-  await page.goto("/route/66/");
-  await page.locator(".sheet .bus").first().click();
-  await expect(page.getByRole("button", { name: "‹ 66 Chicago" })).toBeVisible();
-  await expect(page.getByText(/since the last bus passed|its trip, at the|can't tell when the last bus/)).toBeVisible();
-  await page.getByRole("button", { name: "‹ 66 Chicago" }).click();
-  await expect(page.getByText("Together", { exact: true })).toBeVisible();
-  expect(errors).toEqual([]);
-});
-
-test("navigation: list row opens its route; Back returns to the city", async ({ page }) => {
-  await setUp(page);
-  await page.goto("/");
-  await page.locator(".sheet li button").first().click();
-  await expect(page).toHaveURL(/\/route\/[^/]+\/$/);
-  await expect(page.getByLabel("Back to all routes")).toBeVisible();
-  await page.goBack();
-  await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
-});
-
 test("about: opens and closes", async ({ page }) => {
   await setUp(page);
   await page.goto("/");
@@ -107,7 +85,7 @@ test("about: opens and closes", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
 });
 
-test("report card: shares add up to 100%, split matches, definitions shown", async ({ page }) => {
+test("report card: shares add up to 100%, split matches, definitions shown @both", async ({ page }) => {
   const errors = await setUp(page);
   await page.goto("/route/66/");
   await page.getByRole("tab", { name: "Report Card" }).click();
@@ -253,23 +231,7 @@ test("search: a plain search field (no contact autofill on iOS)", async ({ page 
   for (const a of ["name", "id"]) expect((await input.getAttribute(a)) ?? "").not.toMatch(/name/i);
 });
 
-test("search: typing a route fits the map to its buses", async ({ page }) => {
-  await setUp(page);
-  await page.goto("/");
-  await busesDrawn(page);
-  await (await searchBox(page)).fill("79");
-  await (await searchBox(page)).press("Enter");
-  await expect(page).toHaveURL(/\/route\/79\/$/);
-  await page.waitForTimeout(1500); // the map eases to the route
-  const outside = await page.evaluate(() => {
-    const m = window.map as unknown as { getBounds(): { contains(p: [number, number]): boolean } };
-    const buses = (window as unknown as { __feed: { vehicles: { rt: string; lon: number; lat: number }[] } }).__feed;
-    return buses.vehicles.filter((v) => v.rt === "79" && !m.getBounds().contains([v.lon, v.lat])).length;
-  });
-  expect(outside).toBe(0);
-});
-
-test("my location button is on screen and not covered by the panel", async ({ page }) => {
+test("my location button is on screen and not covered by the panel @both", async ({ page }) => {
   await setUp(page);
   await page.goto("/route/66/");
   await busesDrawn(page);
@@ -280,7 +242,7 @@ test("my location button is on screen and not covered by the panel", async ({ pa
   expect(hit).toBe("Find my location");
 });
 
-test("map buttons: credits and my-location are the same size, on one edge", async ({ page }) => {
+test("map buttons: credits and my-location are the same size, on one edge @both", async ({ page }) => {
   await setUp(page);
   await page.goto("/");
   await busesDrawn(page);
@@ -344,7 +306,7 @@ async function offScreen(page: Page, rt: string) {
   }, rt);
 }
 
-test("map fits every route opened in a row: search, close, search again, then a list row", async ({ page }) => {
+test("map fits every route opened in a row: search, close, search again, then a list row @both", async ({ page }) => {
   await setUp(page);
   await page.goto("/");
   await busesDrawn(page);
@@ -367,9 +329,12 @@ test("map fits every route opened in a row: search, close, search again, then a 
   await row.click();
   await expect(page).toHaveURL(new RegExp(`/route/${rt}/$`));
   expect(await offScreen(page, rt)).toBe(0);
+  await page.goBack(); // Back returns to the city
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
 });
 
-test("map fits on route-to-route search, browser Back, and Forward", async ({ page }) => {
+test("map fits on route-to-route search, browser Back, and Forward @both", async ({ page }) => {
   await setUp(page);
   await page.goto("/");
   await busesDrawn(page);
@@ -388,7 +353,7 @@ test("map fits on route-to-route search, browser Back, and Forward", async ({ pa
   expect(await offScreen(page, "151")).toBe(0);
 });
 
-test("search suggestions float over the map: the top bar keeps its height", async ({ page }) => {
+test("search suggestions float over the map: the top bar keeps its height @both", async ({ page }) => {
   await setUp(page);
   await page.goto("/");
   const bar = page.locator("header.bar");
@@ -401,7 +366,7 @@ test("search suggestions float over the map: the top bar keeps its height", asyn
   expect((await bar.boundingBox())!.height).toBe(before);
 });
 
-test("tapping a bus on the map opens it without moving the map; the back link fits its route", async ({ page }) => {
+test("tapping a bus on the map opens it without moving the map; the back link fits its route @both", async ({ page }) => {
   await setUp(page);
   await page.goto("/");
   await busesDrawn(page);
@@ -428,7 +393,7 @@ test("tapping a bus on the map opens it without moving the map; the back link fi
   expect(await offScreen(page, "66")).toBe(0); // the route view fits the whole route
 });
 
-test("tapping a bus on the line zooms the map to it; the back link returns to the whole route", async ({ page }) => {
+test("tapping a bus on the line zooms the map to it; the back link returns to the whole route @both", async ({ page }) => {
   await setUp(page);
   await page.goto("/route/66/");
   await busesDrawn(page);
@@ -450,18 +415,6 @@ test("tapping a bus on the line zooms the map to it; the back link returns to th
   expect(await offScreen(page, "66")).toBe(0);
 });
 
-test("line view: no two bus dots overlap (close buses stack)", async ({ page }) => {
-  await setUp(page);
-  await page.goto("/route/66/");
-  await expect(page.locator(".sheet svg")).toHaveCount(2);
-  const overlaps = await page.locator(".sheet svg").evaluateAll((svgs) =>
-    svgs.flatMap((svg) => {
-      const dots = [...svg.querySelectorAll("circle.dot")].map((c) => [Number(c.getAttribute("cx")), Number(c.getAttribute("cy"))]);
-      return dots.flatMap((a, i) => dots.slice(i + 1).filter((b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 13).map(() => 1));
-    }));
-  expect(overlaps.length).toBe(0);
-});
-
 test("line view: a string of close buses isn't drawn as one tower (#66, Sep 28 16:35)", async ({ page }) => {
   // #66 westbound at rush hour, replayed from Ingress: 8 buses over 1.5 miles of crawling
   // traffic downtown (2,610 → 10,289 ft), each < 0.42 mi from the next. They chained into one
@@ -477,7 +430,9 @@ test("line view: a string of close buses isn't drawn as one tower (#66, Sep 28 1
   const base = feed.vehicles.find((v: { pid: number }) => v.pid === 6665);
   const rush = { ...feed, vehicles: [
     ...feed.vehicles.filter((v: { rt: string; pid: number }) => !(v.rt === "66" && v.pid === 6665)),
-    ...wb.map(([vid, pdist, gap_s, ahead]) => ({ ...base, vid, pdist, gap_s, ahead, at_terminal: false })),
+    // the poller's claims: long over twice the schedule, together under a quarter of it
+    ...wb.map(([vid, pdist, gap, by]) => ({ ...base, vid, pdist, at_terminal: false, stop_gap_s: gap, last_by: by, next_stpid: vid,
+      long_wait: gap != null && gap > 2 * base.sched_s, together_with: gap != null && gap < base.sched_s / 4 ? by : null })),
   ] };
   await setUp(page);
   await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: rush }));
@@ -500,13 +455,13 @@ function stopFeed() {
   const at = near(24000);
   const by8618 = near(29393); // a second short turn level with bus 8618: they stack
   const wb = feed.vehicles.filter((v: { pid: number }) => v.pid === 6665);
-  const base = { stop_gap_s: 300, sched_s: 600, sched_due: 0 };
+  const base = { stop_gap_s: 300, sched_s: 600, sched_due: 0, long_wait: false, together_with: null, together_s: null };
   const by: Record<string, object> = {
-    "8185": { stop_gap_s: 1800, last_by: "S1", next_stop: "Chicago & Ashland", sched_due: 3 }, // buses due, none came
-    "8118": { stop_gap_s: 5000, last_by: "8185", next_stop: "Chicago & Halsted", sched_due: 1 }, // after a break
+    "8185": { stop_gap_s: 1800, last_by: "S1", next_stop: "Chicago & Ashland", sched_due: 3, long_wait: true }, // buses due, none came
+    "8118": { stop_gap_s: 5000, last_by: "8185", next_stop: "Chicago & Halsted", sched_due: 1 }, // after a break: not long
     // two buses heading for the same stop: one hole, one claim, one bar
-    "8172": { stop_gap_s: 1500, last_by: "8185", next_stop: "Chicago & Racine", next_stpid: "R", sched_due: 2 },
-    "8601": { stop_gap_s: 1500, last_by: "8185", next_stop: "Chicago & Racine", next_stpid: "R", sched_due: 2 },
+    "8172": { stop_gap_s: 1500, last_by: "8185", next_stop: "Chicago & Racine", next_stpid: "R", sched_due: 2, long_wait: true },
+    "8601": { stop_gap_s: 1500, last_by: "8185", next_stop: "Chicago & Racine", next_stpid: "R", sched_due: 2, long_wait: true },
   };
   const shortTurn = { ...wb[0], vid: "S1", pid: 4357, lon: at[0], lat: at[1], pdist: 9000, at_terminal: false,
     ...base, last_by: "8618", next_stop: "Chicago & Damen", next_stpid: "D" };
@@ -572,8 +527,8 @@ test("bus card: a short turn you tap stays a ring on the same line, highlighted"
   await expect(page.locator(".sheet svg circle.ring")).toHaveCount(0);
 });
 
-test("bus card: the wait is measured at the bus's next stop", async ({ page }) => {
-  await setUp(page);
+test("bus card: the wait is measured at the bus's next stop; the back link returns to the route", async ({ page }) => {
+  const errors = await setUp(page);
   const f = stopFeed();
   await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: f }));
   await page.goto("/route/66/");
@@ -581,6 +536,9 @@ test("bus card: the wait is measured at the bus's next stop", async ({ page }) =
   await expect(page.locator(".near")).toContainText("Next stop Chicago & Ashland");
   await expect(page.getByText("since the last bus passed here")).toBeVisible();
   await expect(page.locator(".gap strong").first()).toHaveText("30 min");
+  await page.getByRole("button", { name: "‹ 66 Chicago" }).click();
+  await expect(page.getByText("Together", { exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
 });
 
 for (const rt of ["66", "J14"]) test(`line view: no two pieces of text overlap on #${rt}, at any size`, async ({ page }) => {
@@ -616,14 +574,17 @@ test("line view: tapping the line names the nearest stop; tapping again clears i
   await expect(line.locator(".picked-name")).toHaveCount(0);
 });
 
-test("where: the list and the bus card name the nearest stop", async ({ page }) => {
+test("where: the bus card names a terminal bus's stop and a moving bus's next stop; so does the list", async ({ page }) => {
   await setUp(page);
   await page.goto("/route/66/");
-  await page.locator(".sheet .bus").first().click();
-  await expect(page.locator(".near")).toContainText(/^\s*Near \S/); // the card names where the bus is
+  await page.locator('[aria-label="Bus 1542"]').first().click(); // at the Austin terminal
+  await expect(page.locator(".near")).toContainText("Near Chicago & Austin Terminal");
+  await page.getByRole("button", { name: "‹ 66 Chicago" }).click();
+  await page.locator('[aria-label="Bus 8185"]').first().click(); // on its way
+  await expect(page.locator(".near")).toContainText("Next stop Chicago & Ashland");
   // the home list: every bus given a stop name
   await page.route("**/live/vehicles.json", (r) =>
-    r.fulfill({ json: { ...feed, vehicles: feed.vehicles.map((v: object) => ({ ...v, near: "Test & Corner" })) } }));
+    r.fulfill({ json: { ...feed, vehicles: feed.vehicles.map((v: object) => ({ ...v, near: "Test & Corner", next_stop: "Test & Corner" })) } }));
   await page.goto("/");
   await expect(page.locator(".sheet li").first()).toContainText(/at (Test & Corner|Test|Corner)/);
 });
@@ -649,7 +610,7 @@ test("J14's express stretch is marked, and tapping it says there are no stops", 
   await expect(line.locator(".picked-name")).toHaveText(/Express: no stops for 7\.\d mi/);
 });
 
-test("the top bar doesn't move or change size from first paint to live", async ({ page, browser, viewport, isMobile }) => {
+test("the top bar doesn't move or change size from first paint to live @both", async ({ page, browser, viewport, isMobile }) => {
   // 1. First paint: the static shell, before any JavaScript (JS off shows exactly that).
   const noJs = await browser.newContext({ javaScriptEnabled: false, viewport: viewport!, isMobile });
   const shellPage = await noJs.newPage();
@@ -744,9 +705,9 @@ test("right now: a bus far ahead isn't the wait after a bunch it saw on an earli
   const f = stopFeed();
   const wb = f.vehicles.filter((v: { pid: number }) => v.pid === 6665).sort((a: { pdist: number }, b: { pdist: number }) => a.pdist - b.pdist);
   const [rear, lead] = wb, front = wb.at(-1);
-  for (const v of wb) Object.assign(v, { last_by: null, stop_gap_s: 300, sched_due: 0, gap_s: 300 });
-  Object.assign(rear, { last_by: lead.vid, stop_gap_s: 30, gap_s: 30, ahead: lead.vid }); // just behind the lead: together
-  Object.assign(front, { at_terminal: false, last_by: lead.vid, stop_gap_s: 3960, sched_s: 1800, sched_due: 3, next_stop: "Chicago & Kostner", next_stpid: "K" });
+  for (const v of wb) Object.assign(v, { last_by: null, stop_gap_s: 300, sched_due: 0, long_wait: false });
+  Object.assign(rear, { last_by: lead.vid, stop_gap_s: 30, together_with: lead.vid, together_s: 30 }); // just behind the lead: together
+  Object.assign(front, { at_terminal: false, last_by: lead.vid, stop_gap_s: 3960, sched_s: 1800, sched_due: 3, long_wait: true, next_stop: "Chicago & Kostner", next_stpid: "K" });
   f.vehicles = f.vehicles.filter((v: { vid: string }) => v.vid !== "S1" && v.vid !== "S2");
   await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: f }));
   await page.goto("/");
@@ -922,7 +883,7 @@ test("stop: click around like a rider: route, stop, bus, back link, Back/Forward
   expect(errors).toEqual([]);
 });
 
-test("stop: a stop tapped low on the map stays in view when the sheet rises over it (Sep 29)", async ({ page }) => {
+test("stop: a stop tapped low on the map stays in view when the sheet rises over it (Sep 29) @both", async ({ page }) => {
   const errors = await setUp(page);
   await page.goto("/");
   await busesDrawn(page);
@@ -949,7 +910,7 @@ test("stop: a stop tapped low on the map stays in view when the sheet rises over
 });
 
 test("stop: a long gap is said under the bus it's about, in a rider's words (Sep 29)", async ({ page }) => {
-  // the poller's claim on 8185 (the fixture feed predates long_wait)
+  // the poller's claim on 8185
   const f = { ...feed, vehicles: feed.vehicles.map((v: { vid: string }) => (v.vid === "8185" ? { ...v, long_wait: true, stop_gap_s: 1500 } : v)) };
   const errors = await setUp(page, [], f);
   await page.goto("/");

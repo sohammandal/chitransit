@@ -24,8 +24,8 @@ export function scheduledGap(h: Headways | null, rt: string, dir: string | null,
 
 /** Every problem on the road, worst first (the wait riders face relative to the schedule).
  *  Rules: lib/waits.ts. Buses laying over at a terminal aren't serving riders and are left
- *  out. Buses together are chained pairwise (lib/waits.ts togetherWith: measured where each
- *  bus is, against the bus ahead on its pattern). */
+ *  out. Buses together are chained pairwise (lib/waits.ts togetherWith: the poller's
+ *  together_with, the bus just ahead at this bus's last stop). */
 export function findProblems(vehicles: Vehicle[], gapFor: (v: Vehicle) => number | null): Problem[] {
   const live = vehicles.filter((v) => v.pid != null && v.pdist != null && !v.at_terminal);
   const byVid = new Map(live.map((v) => [v.vid, v]));
@@ -37,7 +37,7 @@ export function findProblems(vehicles: Vehicle[], gapFor: (v: Vehicle) => number
   const root = (x: string): string => (parent.get(x) === x ? x : root(parent.get(x)!));
   const together = new Set<string>();
   for (const v of live) {
-    const with_ = togetherWith(v, gapFor(v)), before = with_ ? byVid.get(with_) : undefined;
+    const with_ = togetherWith(v), before = with_ ? byVid.get(with_) : undefined;
     if (before && sameLine(v, before)) {
       parent.set(root(v.vid), root(before.vid));
       together.add(v.vid).add(before.vid);
@@ -55,13 +55,13 @@ export function findProblems(vehicles: Vehicle[], gapFor: (v: Vehicle) => number
   for (const group of groups.values()) {
     // The bus furthest along leads; a long wait in front of it is the bunch's number: the
     // classic story, a long gap and then buses together. Otherwise no number.
-    const lead = group.find((v) => !group.some((m) => togetherWith(v, gapFor(v)) === m.vid)) ?? group[0];
+    const lead = group.find((v) => !group.some((m) => togetherWith(v) === m.vid)) ?? group[0];
     group.sort((a, b) => (a === lead ? -1 : b === lead ? 1 : (b.pdist ?? 0) - (a.pdist ?? 0)));
     const w = waits.get(lead.vid)!;
     problems.push({
       kind: "together", rt: lead.rt, dir: lead.dir ?? "", pid: lead.pid!, buses: group,
       // the hole is one: shown here only if no bus further along heads for the same stop
-      wait_s: isLongWait(w) && first.has(lead.vid) ? w.s : null, scheduled_s: w.sched, where: lead.near ?? null,
+      wait_s: isLongWait(w) && first.has(lead.vid) ? w.s : null, scheduled_s: w.sched, where: lead.near,
     });
   }
   for (const v of live) {

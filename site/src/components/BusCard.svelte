@@ -22,15 +22,15 @@
   } = $props();
 
   // At a terminal, or with no next stop: starting or finishing its trip (the poller says which;
-  // an older feed: by where it is on its pattern)
-  const ends = $derived(bus.at_terminal || (bus.trip != null && bus.stop_gap_s == null));
+  // without that, by where it is on its pattern)
+  const ends = $derived(bus.at_terminal || bus.trip != null);
   const starting = $derived(bus.trip ? bus.trip === "starting" : (bus.pdist ?? 0) < 1000);
   // Measured at its next stop (the "here" a rider on the corner ahead cares about)
   const wait = $derived(waitOf(bus, scheduled));
   // One stop on the card: the bus's next stop, where its wait is measured (not also the stop
   // it is nearest, which can be the one it just passed: #66 Sep 28 showed two names). A bus at
-  // a terminal, or an older feed, shows where it is instead.
-  const nextStop = $derived(!bus.at_terminal && bus.stop_gap_s !== undefined ? bus.next_stop ?? null : null);
+  // a terminal shows where it is instead.
+  const nextStop = $derived(bus.at_terminal ? null : bus.next_stop);
   const here = $derived(nextStop ? "here" : wait.at ?? "here");
 </script>
 

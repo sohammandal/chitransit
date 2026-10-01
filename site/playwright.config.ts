@@ -1,7 +1,8 @@
 // Browser tests (e2e/). Two modes:
 //   npm run e2e          the production build (astro preview) with fixed sample data: every view
-//                        at desktop and phone size. Runs in CI before any publish.
-//   BASE_URL=... npm run e2e:prod   a short smoke test of a live site with real data. Runs
+//                        at phone size, and the tests tagged @both (layout, map) at desktop size
+//                        too. Runs in CI before any publish.
+//   BASE_URL=... npm run e2e:prod   a short smoke test of a live site with real data (phone size). Runs
 //                        right after a deploy; a failure rolls the deploy back (site.yml).
 import { defineConfig, devices } from "@playwright/test";
 
@@ -11,6 +12,8 @@ export default defineConfig({
   testDir: "e2e",
   testMatch: prod ? "smoke.spec.ts" : "app.spec.ts",
   timeout: 45_000,
+  fullyParallel: true, // the tests are independent: spread them over the workers
+  workers: process.env.CI ? 4 : undefined,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {
@@ -19,7 +22,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   projects: [
-    { name: "desktop", use: { ...devices["Desktop Chrome"], viewport: { width: 1400, height: 900 } } },
+    { name: "desktop", grep: /@both/, use: { ...devices["Desktop Chrome"], viewport: { width: 1400, height: 900 } } },
     { name: "phone", use: { ...devices["Desktop Chrome"], viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } },
   ],
   webServer: prod ? undefined : {

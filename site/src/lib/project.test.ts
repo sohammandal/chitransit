@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { onLine, project, withoutSpurs } from "./project";
-import type { Pattern, Vehicle } from "./types";
+import { bus } from "./testing";
+import type { Pattern } from "./types";
 
 // A straight line north along a street, stops every ~1,000 ft (0.00275° of latitude)
 const line: Pattern = {
@@ -21,10 +22,7 @@ describe("project", () => {
 });
 
 describe("onLine", () => {
-  const v = (vid: string, pid: number, lat: number, lon: number): Vehicle => ({
-    vid, rt: "9", pid, hdg: 0, lat, lon, dly: false, des: null, dir: "Northbound", t: 0, pdist: 1200,
-    gap_s: null, ahead: null, at_terminal: false,
-  });
+  const v = (vid: string, pid: number, lat: number, lon: number) => bus({ vid, pid, lat, lon, pdist: 1200 });
   it("draws the pattern's own buses as they are, others where they are on it, and counts the rest", () => {
     const { drawn, off } = onLine(line, 1, [v("A", 1, 0, 0), v("S", 2, 41.8055, -87.66), v("B", 3, 41.804, -87.655)]);
     expect(drawn.map((b) => [b.vid, b.other ?? false])).toEqual([["A", false], ["S", true]]);
