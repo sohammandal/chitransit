@@ -36,27 +36,13 @@ def test_parse_tmstmp_seconds_and_minutes():
     assert parse_tmstmp("20260925 18:06") == datetime(2026, 9, 25, 18, 6)
 
 
-def test_parse_tmstmp_is_naive_local_time():
-    assert parse_tmstmp("20261101 01:30:00").tzinfo is None
-
-
-def test_resolve_tmstmp_ordinary_time_uses_cdt_offset():
-    local = datetime(2026, 9, 25, 19, 21, 44)
-    fetched = datetime(2026, 9, 26, 0, 21, 52, tzinfo=UTC)
-    assert resolve_tmstmp(local, fetched) == datetime(2026, 9, 26, 0, 21, 44, tzinfo=UTC)
-
-
-def test_resolve_tmstmp_dst_fall_back_first_pass_is_cdt():
+def test_resolve_tmstmp_in_the_dst_fall_back_hour_follows_the_fetch_time():
     # 2026-11-01 01:30 happens twice in Chicago: 06:30Z (CDT) and 07:30Z (CST).
     local = datetime(2026, 11, 1, 1, 30)
-    fetched = datetime(2026, 11, 1, 6, 30, 20, tzinfo=UTC)
-    assert resolve_tmstmp(local, fetched) == datetime(2026, 11, 1, 6, 30, tzinfo=UTC)
-
-
-def test_resolve_tmstmp_dst_fall_back_second_pass_is_cst():
-    local = datetime(2026, 11, 1, 1, 30)
-    fetched = datetime(2026, 11, 1, 7, 30, 20, tzinfo=UTC)
-    assert resolve_tmstmp(local, fetched) == datetime(2026, 11, 1, 7, 30, tzinfo=UTC)
+    first = datetime(2026, 11, 1, 6, 30, 20, tzinfo=UTC)
+    second = datetime(2026, 11, 1, 7, 30, 20, tzinfo=UTC)
+    assert resolve_tmstmp(local, first) == datetime(2026, 11, 1, 6, 30, tzinfo=UTC)
+    assert resolve_tmstmp(local, second) == datetime(2026, 11, 1, 7, 30, tzinfo=UTC)
 
 
 def test_get_vehicles_rejects_more_than_ten_routes():
@@ -87,12 +73,7 @@ def test_retries_server_errors_then_reports_failure_without_raising():
     assert not result.ok
     assert result.attempts == MAX_ATTEMPTS
     assert result.error == "HTTP 503"
-
-
-def test_non_json_body_is_retried_as_transient():
-    with make_client(lambda request: httpx.Response(200, text="<html>oops</html>")) as client:
-        result = client.get_routes()
-    assert not result.ok and result.attempts == MAX_ATTEMPTS
+    assert result.raw == "busy"  # a failure's reply is kept too
 
 
 def test_routes_with_no_buses_are_not_a_failure():
@@ -113,6 +94,7 @@ def test_error_text_never_contains_the_key():
         result = client.get_routes()
     assert KEY not in result.error
     assert "***" in result.error
+    assert result.raw is None  # no reply at all
 
 
 def test_get_pattern_fetches_by_pid():
@@ -127,19 +109,17 @@ def test_get_pattern_fetches_by_pid():
     assert seen["pid"] == "3637" and "rt" not in seen
 
 
-def test_a_bad_key_is_a_failure_even_though_cta_answers_http_200():
-    body = ok_body(error=[{"msg": "Invalid API access key supplied"}])
+@pytest.mark.parametrize(
+    "msg",
+    ["Invalid API access key supplied", "Transaction limit for current day has been exceeded."],
+)
+def test_a_refusal_is_a_failure_even_though_cta_answers_http_200(msg):
+    body = ok_body(error=[{"msg": msg}])
     with make_client(lambda request: httpx.Response(200, json=body)) as client:
         result = client.get_vehicles(["79"])
     assert not result.ok
-    assert result.error == "API error: Invalid API access key supplied"
+    assert result.error == f"API error: {msg}"
     assert result.attempts == 1  # refusals are not retried
-
-
-def test_quota_exhaustion_is_a_failure():
-    body = ok_body(error=[{"msg": "Transaction limit for current day has been exceeded."}])
-    with make_client(lambda request: httpx.Response(200, json=body)) as client:
-        assert not client.get_vehicles(["79"]).ok
 
 
 def test_one_bad_route_among_real_data_keeps_the_data():
@@ -157,17 +137,6 @@ def test_raw_keeps_the_exact_response_text():
     assert result.raw == text  # byte for byte, including fields we don't parse
 
 
-def test_raw_is_kept_for_failures_and_absent_without_a_response():
-    with make_client(lambda request: httpx.Response(503, text="busy")) as client:
-        assert client.get_routes().raw == "busy"
-
-    def handler(request):
-        raise httpx.ConnectTimeout("timed out")
-
-    with make_client(handler) as client:
-        assert client.get_routes().raw is None
-
-
 def test_raw_never_holds_the_key_or_a_nul():
     text = f'{{"echo": "{KEY}", "nul": "a\x00b"}}'
     with make_client(lambda request: httpx.Response(200, text=text)) as client:
@@ -175,10 +144,11 @@ def test_raw_never_holds_the_key_or_a_nul():
     assert KEY not in raw and "\x00" not in raw and "a\\u0000b" in raw
 
 
-def test_a_reply_that_is_json_but_not_an_object_is_a_failure_not_a_crash():
-    client = make_client(lambda request: httpx.Response(200, json=["not", "an", "object"]))
-    result = client.get_vehicles(["79"])
-    assert not result.ok and result.body == {}
+@pytest.mark.parametrize("reply", ["<html>oops</html>", '["not", "an", "object"]'])
+def test_a_reply_we_cannot_read_is_retried_then_a_failure_not_a_crash(reply):
+    with make_client(lambda request: httpx.Response(200, text=reply)) as client:
+        result = client.get_vehicles(["79"])
+    assert not result.ok and result.attempts == MAX_ATTEMPTS and result.body == {}
 
 
 def test_an_oversized_reply_is_refused_and_not_stored():

@@ -380,15 +380,10 @@ class LiveBoard:
         allowed = max(OFF_ROUTE_M, OFF_ROUTE_SHARE * (b[0] - a[0]) * 0.3048)
         return (dx * dx + dy * dy) ** 0.5 <= allowed
 
-    def position_at(
-        self, vid: str, pid: int, when: datetime, since: datetime | None = None
-    ) -> float | None:
-        """Where bus `vid` was on pattern `pid` at its last report at or before `when` (and not
-        before `since`)."""
+    def position_at(self, vid: str, pid: int, when: datetime) -> float | None:
+        """Where bus `vid` was on pattern `pid` at its last report at or before `when`."""
         d = None
         for t, p, dist, _ in self.trails.get(vid, ()):
-            if since is not None and t < since:
-                continue
             if t > when:
                 break
             d = dist if p == pid else None

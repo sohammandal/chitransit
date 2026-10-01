@@ -26,6 +26,7 @@ def test_defaults_to_dev_with_no_files_and_no_flags(tmp_path):
     assert s.poll_interval_seconds == 30
     assert s.poll_routes is None
     assert s.assignment_grace_minutes == 10
+    assert s.vehicle_calls_per_day() == 13 * 2_880  # all routes at 30 s fit the budget
 
 
 def test_rejects_unknown_environment(tmp_path):
@@ -34,13 +35,9 @@ def test_rejects_unknown_environment(tmp_path):
 
 
 def test_prod_refuses_to_fall_back_to_the_dev_database(tmp_path):
+    # neither the committed .env.dev nor a laptop .env with the dev URL may make prod start
+    # against the dev database
     write(tmp_path, ".env.dev", f"DATABASE_URL={DEV_DATABASE_URL}\n")
-    with pytest.raises(ConfigError, match="Prod needs DATABASE_URL"):
-        get_settings({"GHOST_LEDGER_ENV": "prod"}, root=tmp_path)
-
-
-def test_prod_ignores_a_local_dotenv_even_if_it_sets_a_database(tmp_path):
-    # a laptop .env with the dev URL must not make prod start against the dev database
     write(tmp_path, ".env", f"DATABASE_URL={DEV_DATABASE_URL}\n")
     with pytest.raises(ConfigError, match="Prod needs DATABASE_URL"):
         get_settings({"GHOST_LEDGER_ENV": "prod"}, root=tmp_path)
@@ -79,10 +76,6 @@ def test_quota_guard_blocks_polling_all_routes_too_fast(tmp_path):
         get_settings({"POLL_INTERVAL_SECONDS": "10"}, root=tmp_path)
     # a two-route dev subset at 10 s is fine
     assert get_settings({"POLL_INTERVAL_SECONDS": "10", "POLL_ROUTES": "79,9"}, root=tmp_path)
-
-
-def test_all_routes_at_30_s_fits_the_budget(tmp_path):
-    assert get_settings({}, root=tmp_path).vehicle_calls_per_day() == 13 * 2_880
 
 
 def test_metrics_go_to_the_log_in_dev_and_cloudwatch_in_prod(tmp_path):

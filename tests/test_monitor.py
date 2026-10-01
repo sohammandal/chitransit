@@ -36,12 +36,9 @@ def test_healthy_poller():
     assert (v["ReplicationSlotLagMB"], v["ReplicationSlotsLost"]) == (0, 0)
 
 
-def test_stalled_poller_shows_as_minutes_since_last_sweep():
+def test_staleness_is_minutes_since_the_last_sweep_and_absent_with_none_ever():
     v = values(snap(last_sweep_finished_at=NOON - timedelta(minutes=7)))
     assert v["MinutesSinceLastSweep"] == 7.0
-
-
-def test_no_sweeps_ever_publishes_no_staleness_metric():
     # absent metric -> the alarm's missing-data rule fires, which is the point
     assert "MinutesSinceLastSweep" not in values(snap(last_sweep_finished_at=None))
 

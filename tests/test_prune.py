@@ -53,3 +53,33 @@ def test_gate_reads_dev_partitions_and_keeps_everything_without_a_manifest():
         verdicts = gate(conn, None, datetime.now(UTC).date())
     assert verdicts and not any(v.drop for v in verdicts)
     assert {v.table for v in verdicts} == {"bus_positions", "raw_responses"}
+
+
+def test_only_apply_drops_and_an_unreadable_manifest_keeps_everything(monkeypatch, tmp_path):
+    # The prune runs as a dry run unless told otherwise: it must never drop without --apply.
+    import ghost_ledger.prune as prune
+
+    passing = prune.Verdict("bus_positions", DAY, "bus_positions_20260925", True, "safe")
+    dropped = []
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(prune, "get_settings", lambda: type("S", (), {"database_url": "x"}))
+    monkeypatch.setattr(prune.psycopg, "connect", lambda *a, **k: Conn())
+    monkeypatch.setattr(prune, "gate", lambda conn, manifest, today: [passing])
+    monkeypatch.setattr(prune, "drop", lambda conn, v: dropped.append(v.partition))
+    monkeypatch.setattr("sys.argv", ["prune", "--manifest", str(tmp_path / "none.json")])
+    prune.main()
+    assert dropped == []
+    monkeypatch.setattr("sys.argv", ["prune", "--apply", "--manifest", str(tmp_path / "x")])
+    prune.main()
+    assert dropped == ["bus_positions_20260925"]
+    # a missing or broken manifest reads as None: the gate then keeps every partition
+    (tmp_path / "bad.json").write_text("{not json")
+    assert prune.load_manifest(str(tmp_path / "none.json")) is None
+    assert prune.load_manifest(str(tmp_path / "bad.json")) is None

@@ -23,11 +23,8 @@ def summary(**change):
     return {"date": "2026-09-26", "routes": {"66": COUNTS | change}}
 
 
-def test_good_files_pass():
+def test_good_files_pass_and_each_break_is_caught():
     assert site_data.check(ROUTES, HEADWAYS, summary(), TODAY) == []
-
-
-def test_each_break_is_caught():
     cases = [
         ({}, HEADWAYS, summary()),  # no routes
         (ROUTES, {"2026-09-26": HEADWAYS["2026-09-27"]}, summary()),  # no schedule for today

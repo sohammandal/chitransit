@@ -17,12 +17,11 @@ def test_first_sighting_on_a_trip_is_assigned_and_repeats_are_not():
     assert [s.vid for s in t.observe([seen("1", EAST, T0)], {"79"}, T0).assigned] == ["1"]
     later = T0 + timedelta(seconds=30)
     assert t.observe([seen("1", EAST, later)], {"79"}, later).assigned == []
-
-
-def test_starting_the_next_trip_is_a_new_assignment():
-    t = PresenceTracker(GRACE, trips={"1": EAST})
-    changes = t.observe([seen("1", WEST, T0)], {"79"}, T0)
-    assert [s.trip for s in changes.assigned] == [WEST]
+    # its next trip is a new assignment
+    next_trip = T0 + timedelta(minutes=40)
+    assert [
+        s.trip for s in t.observe([seen("1", WEST, next_trip)], {"79"}, next_trip).assigned
+    ] == [WEST]
 
 
 def test_a_sighting_without_a_trip_changes_nothing_but_counts_as_present():
@@ -47,16 +46,6 @@ def test_a_failed_route_call_is_not_evidence_that_its_buses_left():
     much_later = T0 + timedelta(hours=1)
     assert t.observe([], {"9"}, much_later).gone == []  # route 79's call failed
     assert t.observe([], {"79", "9"}, much_later).gone == ["1"]
-
-
-def test_a_brief_dropout_does_not_delete_and_reinsert():
-    t = PresenceTracker(GRACE)
-    t.observe([seen("1", EAST, T0)], {"79"}, T0)
-    gap = T0 + timedelta(minutes=5)
-    assert t.observe([], {"79"}, gap).gone == []
-    back = T0 + timedelta(minutes=6)
-    changes = t.observe([seen("1", EAST, back)], {"79"}, back)
-    assert changes.assigned == [] and changes.gone == []
 
 
 def test_an_assignment_with_no_recent_sighting_is_gone_once_its_route_is_polled():

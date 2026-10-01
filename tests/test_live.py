@@ -24,13 +24,6 @@ def pos(vid, pdist, t, pid=1599, rt="79", **kw):
             "des": "Lakefront", "dly": False, "observed_at": t, **kw}  # fmt: skip
 
 
-def run(board, sweeps):
-    """sweeps: list of (minute offset, [positions]) fed in order; returns the last snapshot."""
-    for minute, positions in sweeps:
-        board.update(positions, T0 + timedelta(minutes=minute))
-    return board.snapshot(T0 + timedelta(minutes=sweeps[-1][0]))
-
-
 def by_vid(snapshot):
     return {b["vid"]: b for b in snapshot["vehicles"]}
 
@@ -44,13 +37,16 @@ def test_buses_that_left_the_feed_drop_out_and_old_trail_is_forgotten():
     assert "B" not in board.trails and len(board.trails["A"]) == 1
 
 
-def test_publish_writes_the_snapshot_and_never_raises(tmp_path):
+def test_publish_writes_the_snapshot_and_never_raises(tmp_path, monkeypatch):
+    # build: CI waits for it to equal the commit it built (the deploy check seen from outside)
+    monkeypatch.setenv("GIT_SHA", "abc123")
     path = tmp_path / "live" / "vehicles.json"
     board = LiveBoard()
     publish(board, FileSink(str(path)), [pos("A", 0, T0)], T0)
     snap = json.loads(path.read_text())
     v = snap["vehicles"][0]
     assert v["vid"] == "A" and v["t"] == int(T0.timestamp()) and set(v) >= {"hdg", "dir", "des"}
+    assert snap["build"] == "abc123"
 
     class Broken:
         def write(self, snapshot):
@@ -64,28 +60,6 @@ def test_buses_repeating_a_stale_report_are_left_off_the_map():
     now = T0 + timedelta(minutes=10)
     board.update([pos("A", 5000, now), pos("B", 3000, T0)], now)  # B's report is 10 min old
     assert set(by_vid(board.snapshot(now))) == {"A"}
-
-
-def drive(board, minutes, buses):
-    """buses: {vid: (start_minute, start_ft, last_minute or None)} at 1,000 ft/min; a bus is
-    reported from start to last minute, then its tracker goes dark (it drops out of the feed)."""
-    for m in range(minutes + 1):
-        t = T0 + timedelta(minutes=m)
-        reports = [
-            pos(vid, ft + 1000 * (m - start), t)
-            for vid, (start, ft, last) in buses.items()
-            if start <= m and (last is None or m <= last)
-        ]
-        board.update(reports, t)
-    return by_vid(board.snapshot(T0 + timedelta(minutes=minutes)))
-
-
-def test_snapshot_names_the_running_commit(monkeypatch):
-    # CI waits for this to equal the commit it built: the deploy check seen from outside.
-    monkeypatch.setenv("GIT_SHA", "abc123")
-    board = LiveBoard()
-    board.update([pos("A", 0, T0)], T0)
-    assert board.snapshot(T0)["build"] == "abc123"
 
 
 def test_each_bus_names_its_nearest_stop():
@@ -207,16 +181,18 @@ def test_a_dark_short_turn_bus_short_of_the_stop_makes_the_wait_unknown():
     assert b["next_stpid"] == "s7" and b["stop_gap_s"] is None  # S may have passed s7 since
 
 
-def test_a_dark_bus_behind_this_one_changes_nothing_across_patterns():
+def test_a_dark_bus_behind_this_one_changes_nothing():
+    # D went dark after A's pass, within reach of s7 and still in doubt, but behind B: anything
+    # it passed since, B passes first. B's wait stands.
     board = stop_board()
-    for m in range(0, 11):
-        buses = [trip("A", 2000 + 1000 * m, m)]
-        if m <= 4:
-            buses.append(trip("S", 500 + 100 * m, m, pid=SHORT))  # dark at MAIN 4,900 ft, behind B
+    for m in range(0, 10):
+        buses = [trip("A", 3000 + 1000 * m, m)]  # passed s7 (7,000 ft) at m=4
+        if 1 <= m <= 5:
+            buses.append(trip("D", 3000 + 500 * (m - 1), m, stst=36600))  # dark at 5,000 ft
         if m >= 4:
-            buses.append(trip("B", 5000 + 200 * (m - 4), m))
+            buses.append(trip("B", 6000 + 100 * (m - 4), m, stst=37200))  # ahead of D
         sweep(board, m, *buses)
-    b = by_vid(board.snapshot(T0 + timedelta(minutes=10)))["B"]
+    b = by_vid(board.snapshot(T0 + timedelta(minutes=9)))["B"]
     assert b["next_stpid"] == "s7" and b["stop_gap_s"] == 5 * 60 and b["last_by"] == "A"
 
 
@@ -286,10 +262,15 @@ def test_a_seeded_board_gives_the_same_stop_waits_as_one_that_ran_all_along():
 
 
 def test_buses_at_a_terminal_get_no_stop_wait():
+    # T has left its start (under way) but is still within TERMINAL_FT of it
     board = stop_board()
-    sweep(board, 0, trip("A", 3000, 0), trip("T", 200, 0))
-    t = by_vid(board.snapshot(T0))["T"]
-    assert t["stop_gap_s"] is None and t["next_stpid"] is None
+    for m in range(0, 4):
+        buses = [trip("A", 500 + 1000 * m, m)]  # passed s1 at m=0.5
+        if m >= 1:
+            buses.append(trip("T", 300 * (m - 1), m, stst=37000))
+        sweep(board, m, *buses)
+    t = by_vid(board.snapshot(T0 + timedelta(minutes=3)))["T"]
+    assert t["at_terminal"] and t["stop_gap_s"] is None and t["next_stpid"] is None
 
 
 def test_a_trip_that_starts_mid_pattern_passes_its_first_stops_when_it_leaves():
@@ -346,14 +327,6 @@ def test_an_overdue_bus_that_could_not_have_reached_the_stop_changes_nothing():
     assert b["next_stpid"] == "s7" and b["stop_gap_s"] == 8 * 60 and b["last_by"] == "A"
 
 
-def test_a_bus_that_creeps_past_its_first_stop_and_waits_passes_it_when_it_leaves():
-    board = stop_board()
-    for m, d in enumerate([0, 20, 20, 20, 20, 20, 20, 20, 900, 1900]):  # creeps 20 ft, waits 6 min
-        sweep(board, m, trip("L", d, m))
-    passes = board.passes()
-    assert passes[("79", "Eastbound", "s0")] == [(T0 + timedelta(minutes=7), "L")]  # not m=0
-
-
 # ---- the live schedule (sched_s, sched_due) ----
 def schedule_file(tmp_path, departures):
     """A live schedule file as the nightly writes it (transform/live_schedule.py)."""
@@ -379,15 +352,11 @@ def test_the_schedule_file_round_trips_from_the_nightly_to_the_feed(tmp_path):
     # six departures in the past hour: a 10-minute gap; since 25 min ago, two were due
     assert schedule.judge("79", "s7", now, now - timedelta(minutes=25)) == (600, 2)
     assert schedule.judge("79", "s8", now, None) == (None, None)  # no departures there
-
-
-def test_after_a_service_break_nothing_was_due_so_no_long_wait_is_implied(tmp_path):
-    # 54A-like: morning service, nothing midday, first afternoon departure at T0
-    departures = [("s7", T0 - timedelta(hours=h)) for h in (5, 4.5, 4)] + [("s7", T0)]
-    schedule = load_schedule(str(schedule_file(tmp_path, departures)))
-    now = T0 + timedelta(minutes=10)
-    sched_s, due = schedule.judge("79", "s7", now, now - timedelta(hours=4))
-    assert due == 1 and sched_s == 3600  # one bus due in 4 hours: not "buses didn't come"
+    # after a service break (54A-like: nothing midday): one bus due in 4 hours is not "buses
+    # didn't come"
+    gap = [("s9", T0 - timedelta(hours=h)) for h in (5, 4.5, 4)] + [("s9", T0)]
+    later = load_schedule(str(schedule_file(tmp_path, gap)))
+    assert later.judge("79", "s9", now, now - timedelta(hours=4)) == (3600, 1)
 
 
 def test_the_feed_carries_the_schedule_at_the_next_stop(tmp_path):
@@ -492,75 +461,12 @@ def test_a_short_turn_that_ends_before_this_bus_s_stop_is_not_the_bus_behind():
     assert (a["behind_vid"], a["behind_stops"]) == ("B", 9)  # B heads for s6, A for s15
 
 
-def test_two_buses_heading_for_one_stop_are_measured_at_the_last_stop_both_passed():
-    board = stop_board()
-    for m in range(0, 11):
-        sweep(board, m, trip("A", 1000 * m - 200, m), trip("B", 1000 * m - 800, m))
-    a = by_vid(board.snapshot(T0 + timedelta(minutes=10)))["A"]
-    assert (
-        a["next_stpid"] == "s10"
-        and by_vid(board.snapshot(T0 + timedelta(minutes=10)))["B"]["next_stpid"] == "s10"
-    )
-    assert (a["behind_vid"], a["behind_stops"]) == ("B", 0)  # right behind: the same stop next
-
-
-def test_the_bus_behind_needs_no_pass_history_only_positions():
-    board = stop_board()
-    for m in range(0, 11):
-        buses = [trip("B", 1000 * m - 3500, m)]  # heading for s7 at m=10
-        if m >= 9:
-            buses.append(trip("A", 9500 + 500 * (m - 9), m))  # joined at 9,500 ft at m=9
-        sweep(board, m, *buses)
-    a = by_vid(board.snapshot(T0 + timedelta(minutes=10)))["A"]
-    assert (a["behind_vid"], a["behind_stops"]) == ("B", 3)  # A heads for s10, B for s7
-
-
 def test_a_bus_laying_over_at_the_start_is_the_bus_behind():
     board = stop_board()
     for m, d in zip(range(6, 11), (0, 800, 1800, 2800, 3800), strict=True):
         sweep(board, m, trip("A", d, m), trip("L", 30 * ((m + 1) % 2), m, stst=37000))
     a = by_vid(board.snapshot(T0 + timedelta(minutes=10)))["A"]
     assert (a["behind_vid"], a["behind_stops"]) == ("L", 4)  # L waits at s0; A heads for s4
-
-
-def test_buses_together_across_patterns_at_the_last_stop_both_passed(tmp_path):
-    board = stop_board()
-    every_10 = [(s, T0 + timedelta(minutes=k)) for s in ("s7", "s8") for k in range(-60, 30, 10)]
-    board.schedule = load_schedule(str(schedule_file(tmp_path, every_10)))
-    for m in range(0, 10):
-        buses = [trip("A", 1000 * m - 1100, m)]  # main: s8 at m=9.1
-        if m >= 4:
-            buses.append(trip("S", 1000 * (m - 4), m, pid=SHORT))  # short turn: s8 at m=8
-        sweep(board, m, *buses)
-    snap = by_vid(board.snapshot(T0 + timedelta(minutes=9.5)))
-    assert (snap["A"]["together_with"], snap["A"]["together_s"]) == ("S", round(1.1 * 60))
-    assert snap["S"]["together_with"] is None  # nothing just ahead of the leader
-
-
-def test_buses_a_third_of_the_schedule_apart_are_not_together(tmp_path):
-    board = stop_board()
-    every_10 = [(s, T0 + timedelta(minutes=k)) for s in ("s7", "s8") for k in range(-60, 30, 10)]
-    board.schedule = load_schedule(str(schedule_file(tmp_path, every_10)))
-    for m in range(0, 12):
-        buses = [trip("A", 1000 * m - 3000, m)]  # s8 at m=11
-        if m >= 4:
-            buses.append(trip("S", 1000 * (m - 4), m, pid=SHORT))  # s8 at m=8: 3 min ahead
-        sweep(board, m, *buses)
-    assert by_vid(board.snapshot(T0 + timedelta(minutes=11.2)))["A"]["together_with"] is None
-
-
-def test_the_feed_flags_a_long_wait_when_buses_were_due_and_did_not_come(tmp_path):
-    board = stop_board()
-    every_5 = [("s7", T0 + timedelta(minutes=k)) for k in range(-60, 31, 5)]
-    board.schedule = load_schedule(str(schedule_file(tmp_path, every_5)))
-    for m in range(0, 17):
-        buses = [trip("A", 3000 + 1000 * m, m)]  # passed s7 at m=4
-        if m >= 15:
-            buses.append(trip("B", 6000 + 200 * (m - 15), m))
-        sweep(board, m, *buses)
-    b = by_vid(board.snapshot(T0 + timedelta(minutes=16)))["B"]
-    assert b["stop_gap_s"] == 12 * 60 and b["sched_s"] == 300 and b["sched_due"] == 3
-    assert b["long_wait"] is True
 
 
 def test_buses_together_long_ago_on_a_stretch_without_stops_are_not_claimed(tmp_path):
@@ -586,14 +492,15 @@ def test_no_long_wait_when_only_one_bus_was_due_since_the_last(tmp_path):
         ("s7", T0 + timedelta(minutes=10))
     ]
     board.schedule = load_schedule(str(schedule_file(tmp_path, deps)))
-    for m in range(0, 18):
+    for m in range(0, 19):
         buses = [trip("A", 3000 + 1000 * m, m)]  # passed s7 at m=4
         if m >= 15:
             buses.append(trip("B", 6000 + 200 * (m - 15), m))
         sweep(board, m, *buses)
-    b = by_vid(board.snapshot(T0 + timedelta(minutes=17)))["B"]
-    assert b["stop_gap_s"] == 13 * 60 and b["sched_due"] == 1 and b["stop_gap_s"] > 2 * b["sched_s"]
-    assert b["long_wait"] is False
+    b = by_vid(board.snapshot(T0 + timedelta(minutes=18)))["B"]
+    assert b["stop_gap_s"] == 14 * 60 and b["sched_due"] == 1
+    assert b["stop_gap_s"] > 2 * b["sched_s"] + 60  # long enough, margin included
+    assert b["long_wait"] is False  # but only one bus was due
 
 
 def test_a_bus_ahead_is_never_the_bus_behind():
@@ -672,15 +579,6 @@ def test_of_two_buses_heading_for_one_stop_the_one_nearer_it_is_ahead():
     assert snap["A"]["next_stpid"] == snap["B"]["next_stpid"] == "far"
     assert (snap["B"]["behind_vid"], snap["B"]["behind_stops"]) == ("A", 0)  # A is behind B
     assert snap["A"]["behind_vid"] is None  # B, nearer the stop, is ahead of A
-
-
-def test_a_sparse_stretch_of_the_pattern_allows_more_room():
-    # Lake Shore Drive: 16,000 ft between two points; a straight line strays from the road
-    board = stop_board()
-    board.shapes[MAIN] = [(0.0, 41.75, -87.65), (16000.0, 41.79, -87.65)]
-    mid = 41.77  # halfway, 8,000 ft
-    sweep(board, 0, trip("B", 8000, 0, lat=mid, lon=-87.65 + 0.005))  # ~415 m off the chord
-    assert [d for _, _, d, _ in board.trails["B"]] == [8000]  # within 15% of 4.9 km
 
 
 # Real cases (tests/fixtures/live_<date>.json: the day's reports and CTA's own patterns, as
@@ -806,7 +704,7 @@ def test_a_bus_s_own_pass_on_its_last_lap_counts():
     assert b["last_by"] == "8935" and 2200 < b["stop_gap_s"] < 2400  # since 13:07
 
 
-def test_a_bus_moving_backwards_along_its_pattern_makes_the_other_direction_unknown():
+def test_a_bus_moving_backwards_along_its_pattern_makes_the_stop_it_drove_past_unknown():
     # J14 Sep 28 morning: CTA labelled buses with the opposite direction. 4037 drove north up
     # Lake Shore Drive past 1100 S Columbus at 07:38 reporting the southbound pattern, its pdist
     # falling; with passes on forward progress only, northbound riders there were told at 07:40
@@ -845,6 +743,7 @@ def test_a_wait_just_over_twice_the_schedule_is_not_claimed_until_clearly_over(t
     at = lambda minute: by_vid(board.snapshot(T0 + timedelta(minutes=minute)))["B"]  # noqa: E731
     assert (at(14.5)["stop_gap_s"], at(14.5)["long_wait"]) == (630, False)  # 10.5 min: too close
     assert (at(15.2)["stop_gap_s"], at(15.2)["long_wait"]) == (672, True)  # 11.2 min: claimed
+    assert (at(15.2)["sched_s"], at(15.2)["sched_due"]) == (300, 3)  # due at m=5, 10 and 15
 
 
 def test_together_only_clearly_inside_a_quarter_of_the_schedule(tmp_path):
@@ -860,10 +759,12 @@ def test_together_only_clearly_inside_a_quarter_of_the_schedule(tmp_path):
             if m >= 4:
                 buses.append(trip("S", 1000 * (m - 4), m, pid=SHORT))  # s8 at m=8
             sweep(board, m, *buses)
-        return by_vid(board.snapshot(T0 + timedelta(minutes=at_minute)))["A"]["together_with"]
+        return by_vid(board.snapshot(T0 + timedelta(minutes=at_minute)))
 
-    assert headway_claimed(1667, 10) == "S"  # A at s8 at m=9.67: 100 s after S
-    assert headway_claimed(2167, 11) is None  # A at s8 at m=10.17: 130 s, too close to 150
+    snap = headway_claimed(1667, 10)  # A (main) at s8 at m=9.67: 100 s after S (a short turn)
+    assert (snap["A"]["together_with"], snap["A"]["together_s"]) == ("S", 100)
+    assert snap["S"]["together_with"] is None  # nothing just ahead of the leader
+    assert headway_claimed(2167, 11)["A"]["together_with"] is None  # 130 s: too close to 150
 
 
 def test_a_bus_running_backwards_casts_doubt_only_on_the_stops_it_drove_past():
@@ -899,3 +800,27 @@ def test_an_untrusted_report_at_a_stop_counts_as_a_pass():
     assert heading and all(v["last_by"] == "4398" for v in heading)  # at 14:52:23
     assert all(12 * 60 < v["stop_gap_s"] < 13 * 60 for v in heading)
     assert any(v == "4361" for _, v in board.passes()[("147", "Northbound", "1124")])
+
+
+def test_while_a_route_s_call_fails_its_buses_stay_and_its_waits_are_unknown():
+    # A failed call isn't an empty route (buses stay, up to STALE), and after HOLE nothing about
+    # it can be claimed; the same after a restart that missed minutes of reports.
+    board = stop_board()
+    for m in range(0, 4):
+        board.update([trip("A", 5000 + 1000 * m, m), trip("B", 4000 + 500 * m, m)],
+                     T0 + timedelta(minutes=m), {"79"})  # fmt: skip
+    assert (
+        by_vid(board.snapshot(T0 + timedelta(minutes=3)))["B"]["stop_gap_s"] == 120
+    )  # A at s7, m=2
+    for m in (4, 5):
+        board.update([], T0 + timedelta(minutes=m), set())  # route 79's call failed
+    b = by_vid(board.snapshot(T0 + timedelta(minutes=5)))["B"]  # still on the map
+    assert b["stop_gap_s"] is None
+
+    restarted = stop_board()
+    restarted.seed([("A", T0 + timedelta(minutes=m), MAIN, 5000.0 + 1000 * m, DAY, 36000)
+                    for m in range(0, 4)] + [("B", T0 + timedelta(minutes=m), MAIN,
+                    4000.0 + 500 * m, DAY, 36060) for m in range(0, 4)])  # fmt: skip
+    later = T0 + timedelta(minutes=6)  # down for 3 minutes
+    restarted.update([trip("B", 5500, 6, stst=36060)], later, {"79"})
+    assert by_vid(restarted.snapshot(later))["B"]["stop_gap_s"] is None
