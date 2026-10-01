@@ -46,7 +46,9 @@ def test_publish_writes_the_snapshot_and_never_raises(tmp_path, monkeypatch):
     snap = json.loads(path.read_text())
     v = snap["vehicles"][0]
     assert v["vid"] == "A" and v["t"] == int(T0.timestamp()) and set(v) >= {"hdg", "dir", "des"}
-    assert snap["build"] == "abc123"
+    assert snap["build"] == "abc123" and "stops" not in snap  # every stop's own wait: beside it
+    stops = json.loads((path.parent / "stops.json").read_text())
+    assert stops["generated_at"] == snap["generated_at"] and "stops" in stops
 
     class Broken:
         def write(self, snapshot):
@@ -328,7 +330,7 @@ def test_an_overdue_bus_that_could_not_have_reached_the_stop_changes_nothing():
 
 
 # ---- the live schedule (sched_s, sched_due) ----
-def schedule_file(tmp_path, departures):
+def schedule_file(tmp_path, departures, rt="79"):
     """A live schedule file as the nightly writes it (transform/live_schedule.py)."""
     import gzip
     import importlib.util
@@ -337,9 +339,7 @@ def schedule_file(tmp_path, departures):
     spec = importlib.util.spec_from_file_location("live_schedule", "transform/live_schedule.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    rows = [
-        ("79", stop, T0.astimezone(CHICAGO).date(), int(t.timestamp())) for stop, t in departures
-    ]
+    rows = [(rt, stop, t.astimezone(CHICAGO).date(), int(t.timestamp())) for stop, t in departures]
     path = tmp_path / "stop_departures.json"
     path.write_bytes(gzip.compress(json_.dumps(mod.build(rows)).encode()))
     return path
@@ -583,9 +583,9 @@ def test_of_two_buses_heading_for_one_stop_the_one_nearer_it_is_ahead():
 
 # Real cases (tests/fixtures/live_<date>.json: the day's reports and CTA's own patterns, as
 # Ingress holds them)
-SEP30 = {
+REAL = {
     case: doc
-    for day in ("2026-09-28", "2026-09-29", "2026-09-30")
+    for day in ("2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01")
     for case, doc in json.loads(
         (Path(__file__).parent / "fixtures" / f"live_{day}.json").read_text()
     ).items()
@@ -595,7 +595,7 @@ SEP30 = {
 
 def real_board(case):
     board = LiveBoard()
-    for pid, pat in SEP30[case]["patterns"].items():
+    for pid, pat in REAL[case]["patterns"].items():
         pid = int(pid)
         board.routes[pid], board.dirs[pid], board.lengths[pid] = pat["rt"], pat["rtdir"], pat["ln"]
         board.stops[pid] = pattern_stops(pat["pt"])
@@ -609,7 +609,7 @@ def real_sweeps(case, until, polled=lambda t: True, last_at_until=False):
     """Feed the case's reports to a board as the poller would, a sweep every 30 s (the API
     repeats each bus's latest report while its route's call succeeds). polled(t): whether the
     route's call succeeded at t."""
-    board, rows = real_board(case), SEP30[case]["positions"]
+    board, rows = real_board(case), REAL[case]["positions"]
     rows = [(datetime.fromisoformat(r[1]), r) for r in rows]
     t, latest, i = rows[0][0], {}, 0
     rt = rows[0][1][2]
@@ -635,7 +635,7 @@ def test_a_bus_starting_its_trip_is_on_route_though_cta_puts_every_waypoint_at_0
     # #147 4155, Sep 30: laying over 258 ft into its trip at Congress Plaza & Michigan. CTA sends
     # every waypoint with pdist 0; kept, they all sat at the start and the report was checked
     # against one far north: "off route", so the trip never passed its first stop.
-    pat = SEP30["rt147_start"]["patterns"]["4524"]
+    pat = REAL["rt147_start"]["patterns"]["4524"]
     assert {p["pdist"] for p in pat["pt"] if p["typ"] == "W"} == {0.0}
     board = real_sweeps("rt147_start", datetime(2026, 9, 30, 11, 2, tzinfo=UTC))
     assert board.trails["4155"][0][2] == 258  # the layover reports count
@@ -651,7 +651,7 @@ def test_no_wait_is_claimed_across_minutes_the_route_went_unseen():
     # Clark & Van Buren at 12:40:53 and came back at 13:01:33 on its return trip: it passed the
     # stop in the dark and never reported it. At 13:05 the feed told riders ahead of 8303 "no
     # bus since 12:35" (1780), a 30-min wait that wasn't.
-    lo, hi = (datetime.fromisoformat(x) for x in SEP30["rt22_blackout"]["unpolled_utc"])
+    lo, hi = (datetime.fromisoformat(x) for x in REAL["rt22_blackout"]["unpolled_utc"])
     at = datetime(2026, 9, 30, 18, 5, 7, tzinfo=UTC)
     seen = lambda t: not lo <= t < hi  # noqa: E731
     board = real_sweeps("rt22_blackout", at, seen)
@@ -676,7 +676,7 @@ def test_no_headway_is_claimed_until_both_buses_have_left_the_stop():
 
     board = real_board("x49_standing")
     board.schedule = EveryTen()
-    rows = [(datetime.fromisoformat(r[1]), r) for r in SEP30["x49_standing"]["positions"]]
+    rows = [(datetime.fromisoformat(r[1]), r) for r in REAL["x49_standing"]["positions"]]
     t, latest, i, claims = rows[0][0], {}, 0, []
     while t <= datetime(2026, 9, 30, 13, 15, tzinfo=UTC):
         while i < len(rows) and rows[i][0] <= t:
@@ -824,3 +824,30 @@ def test_while_a_route_s_call_fails_its_buses_stay_and_its_waits_are_unknown():
     later = T0 + timedelta(minutes=6)  # down for 3 minutes
     restarted.update([trip("B", 5500, 6, stst=36060)], later, {"79"})
     assert by_vid(restarted.snapshot(later))["B"]["stop_gap_s"] is None
+
+
+def test_every_stop_reads_its_own_stamp_not_the_wait_of_the_bus_heading_for_it(tmp_path):
+    # #151 southbound, Oct 1 00:20: 8894 finishing at Union Station, 8847 at Foster 49 min behind
+    # it. The stop view showed 8847's wait under every stop it would reach: "no bus for 48 min"
+    # at Adams & Canal, a minute after 8894 had passed there. Each stop has its own stamp.
+    start = datetime(2026, 9, 30, 22, 0, tzinfo=CHICAGO)
+    every_20 = [
+        (s, start + timedelta(minutes=k))
+        for s in ("1044", "1101", "12713")
+        for k in range(0, 181, 20)
+    ]
+    # Foster: three departures just before 8894 passed (23:33) and one since: long by the clock,
+    # but only one bus was due, so not claimed (as at a bus's next stop)
+    foster = [("1042", start + timedelta(minutes=k)) for k in (82, 85, 88, 130)]
+    now = datetime(2026, 10, 1, 5, 20, 30, tzinfo=UTC)
+    board = real_sweeps("rt151_hole", now, last_at_until=True)
+    board.schedule = load_schedule(str(schedule_file(tmp_path, every_20 + foster, rt="151")))
+    snap = board.snapshot(now)
+    stops = snap["stops"]["151|Southbound"]
+    assert stops["1042"][0] > 2 * 900 + 60 and stops["1042"][1] == 0  # one due: not a long wait
+    argyle, ohio, canal = stops["1044"], stops["1101"], stops["12713"]
+    assert 40 * 60 < argyle[0] < 55 * 60 and argyle[1] == 1  # just ahead of 8847: the long wait
+    assert 10 * 60 < ohio[0] < 25 * 60 and ohio[1] == 0  # the same hole, 8894 passed later
+    assert canal[0] < 5 * 60 and canal[1] == 0  # 8894 just passed
+    bus = by_vid(snap)["8847"]  # a bus reads the stamp at its next stop: the same number
+    assert bus["next_stop"] == "Sheridan & Bryn Mawr" and bus["stop_gap_s"] == stops["1038"][0]

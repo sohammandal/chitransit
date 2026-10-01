@@ -6,8 +6,9 @@ Usage: uv run --group transform python transform/site_data.py
 Writes, under --out:
   v1/manifest.json          when and from which commit the data was built
   v1/patterns/{pid}.json    {"rt", "dir", "c": [[lon, lat], ...],
-                             "s": [[lon, lat, name, pdist, routes], ...]}; routes = how many
-                             routes serve that intersection (major cross streets)
+                             "s": [[lon, lat, name, pdist, routes, stop id], ...]};
+                             routes = how many routes serve that intersection (major cross
+                             streets); stop id = CTA's, to read the stop's own wait (stops.json)
   v1/routes.json            {"49": "Western", ...}
   v1/stops.json             [[lon, lat, name, [pid, ...]], ...]: every stop riders can board
                              at, same-named stops within STOP_GROUP_M merged (both directions
@@ -144,7 +145,10 @@ def main() -> None:
             "rt": rt,
             "dir": f"{direction}bound",
             "c": coords,
-            "s": [[s["lon"], s["lat"], s["name"], s["pdist"], s["routes"]] for s in stops or []],
+            "s": [
+                [s["lon"], s["lat"], s["name"], s["pdist"], s["routes"], s["stop_id"]]
+                for s in stops or []
+            ],
         }
         for pid, rt, direction, coords, stops in con.execute(
             "SELECT pid, rt, direction, coords, stops FROM site_patterns"

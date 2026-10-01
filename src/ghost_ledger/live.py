@@ -1,10 +1,16 @@
 """The live feed for the public site: where every bus is now, and the claims about it.
 
 After each committed sweep the poller hands this module the sweep's vehicle reports. It keeps
-each bus's recent trail in memory and writes one JSON snapshot (docs/SITE.md, "live feed"):
+each bus's recent trail in memory and writes two JSON snapshots (docs/SITE.md, "live feed"):
 
-  {"generated_at": ISO, "build": commit, "no_data_since": ISO | None, "vehicles": [{vid, rt,
-   pid, hdg, lat, lon, dly, des, dir, t, pdist, at_terminal, near, ...the fields below}]}
+  vehicles.json  {"generated_at": ISO, "build": commit, "no_data_since": ISO | None,
+                  "vehicles": [{vid, rt, pid, hdg, lat, lon, dly, des, dir, t, pdist,
+                  at_terminal, near, ...the fields below}]}
+  stops.json     {"generated_at": ISO, "stops": {"rt|rtdir": {stpid: [wait_s, long]}}}: every
+                 stop's own stamp, read where the claim is made (the site's stop view; Oct 1:
+                 a bus's wait shown under a stop 73 stops on, where a bus had just passed).
+                 wait_s: seconds since any bus of the route and direction passed it, None when
+                 we can't tell (as stop_gap_s); long: 1 by the long_wait rule at that stop.
   build  the commit the running poller was built from (CI waits for it after a deploy)
   no_data_since  when the last call got through, once none has for over HOLE (CTA's API down
          or unreachable): the site says so instead of "0 buses on the road"; else None
@@ -503,6 +509,59 @@ class LiveBoard:
             return None, None, (stpid, name)
         return max(0, round((now - last).total_seconds())), last_by, (stpid, name)
 
+    def stop_wait(
+        self,
+        rt: str,
+        rtdir: str,
+        stpid: str,
+        index: dict[tuple[str, str, str], list[tuple[datetime, str]]],
+        dark: dict[tuple[str, str], list[tuple[str, datetime, int, float, float]]],
+        stop_at: dict[int, dict[str, list[float]]],
+        now: datetime,
+    ) -> int | None:
+        """Seconds since any bus of the route and direction passed stop stpid (its stamp), or
+        None: never seen, or a bus may have passed it unseen since (as stop_gap, with no bus
+        of our own to measure from: any bus gone dark short of it within reach counts)."""
+        passes = [*index.get((rt, rtdir, stpid), ()), *self.untrusted_at.get(stpid, ())]
+        last = max((t for t, _ in passes if t <= now), default=None)
+        if last is None:
+            return None
+        for _, t_dark, p_dark, d_dark, rate in dark.get((rt, rtdir), ()):
+            if t_dark <= last or now - t_dark > DARK_DOUBT:
+                continue
+            ahead = [a for a in stop_at.get(p_dark, {}).get(stpid, ()) if a >= d_dark]
+            if ahead and min(ahead) - d_dark <= rate * (now - t_dark).total_seconds() / 60:
+                return None
+        if self.blind(rt, last, now, now) or self.against(rt, rtdir, stpid, last, now):
+            return None
+        return max(0, round((now - last).total_seconds()))
+
+    def stop_waits(
+        self,
+        index: dict[tuple[str, str, str], list[tuple[datetime, str]]],
+        dark: dict[tuple[str, str], list[tuple[str, datetime, int, float, float]]],
+        stop_at: dict[int, dict[str, list[float]]],
+        now: datetime,
+    ) -> dict[str, dict[str, list]]:
+        """Every boarding stop's own wait and long-wait flag, by "rt|rtdir" and stpid."""
+        out: dict[str, dict[str, list]] = {}
+        for pid, stops in self.stop_ids.items():
+            rt, rtdir = self.routes.get(pid), self.dirs.get(pid)
+            if rt is None or rtdir is None:
+                continue
+            line = out.setdefault(f"{rt}|{rtdir}", {})
+            for _, stpid, _ in stops[:-1]:  # nobody boards at a pattern's last stop
+                if stpid in line:
+                    continue
+                wait = self.stop_wait(rt, rtdir, stpid, index, dark, stop_at, now)
+                long = False
+                if wait is not None and self.schedule is not None:
+                    last = now - timedelta(seconds=wait)
+                    sched, due = self.schedule.judge(rt, stpid, now, last)
+                    long = bool(sched and wait > 2 * sched + LONG_MARGIN_S and (due or 0) >= 2)
+                line[stpid] = [wait, int(long)]
+        return out
+
     def trip_state(self, p: dict[str, Any]) -> str | None:
         """ "starting" or "finishing" for a bus with no next stop (see the module docstring)."""
         if p.get("pid") is None or p.get("pdist") is None:
@@ -712,6 +771,7 @@ class LiveBoard:
             "build": os.environ.get("GIT_SHA", "unknown"),
             "no_data_since": down.isoformat(timespec="seconds") if down else None,
             "vehicles": rows,
+            "stops": self.stop_waits(index, dark, stop_at, now),
         }
 
 
@@ -886,21 +946,33 @@ class Sink(Protocol):
     def write(self, snapshot: dict[str, Any]) -> None: ...
 
 
+def documents(snapshot: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """The snapshot as the two files the site reads: vehicles.json (fetched every sweep) and
+    stops.json (as big again; fetched only while a stop is open)."""
+    vehicles = {k: v for k, v in snapshot.items() if k != "stops"}
+    stops = {"generated_at": snapshot["generated_at"], "stops": snapshot.get("stops", {})}
+    return [("vehicles.json", vehicles), ("stops.json", stops)]
+
+
 class FileSink:
-    """Dev: write the snapshot where the site's dev server can read it."""
+    """Dev: write the snapshot where the site's dev server can read it (path: vehicles.json;
+    stops.json goes beside it)."""
 
     def __init__(self, path: str) -> None:
         self.path = Path(path)
 
     def write(self, snapshot: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(snapshot, separators=(",", ":")))
-        tmp.replace(self.path)  # readers never see a half-written file
+        for name, doc in documents(snapshot):
+            path = self.path if name == "vehicles.json" else self.path.with_name(name)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(doc, separators=(",", ":")))
+            tmp.replace(path)  # readers never see a half-written file
 
 
 class S3Sink:
-    """Prod: one object, gzip-encoded, short cache life (CloudFront serves it as is)."""
+    """Prod: two objects (vehicles.json at url, stops.json beside it), gzip-encoded, short
+    cache life (CloudFront serves them as they are)."""
 
     def __init__(self, url: str) -> None:
         import boto3  # only needed in prod
@@ -915,11 +987,13 @@ class S3Sink:
         )
 
     def write(self, snapshot: dict[str, Any]) -> None:
-        body = gzip.compress(json.dumps(snapshot, separators=(",", ":")).encode(), mtime=0)
-        self.client.put_object(
-            Bucket=self.bucket, Key=self.key, Body=body, ContentType="application/json",
-            ContentEncoding="gzip", CacheControl=CACHE_CONTROL,
-        )  # fmt: skip
+        for name, doc in documents(snapshot):
+            key = self.key if name == "vehicles.json" else f"{self.key.rsplit('/', 1)[0]}/{name}"
+            body = gzip.compress(json.dumps(doc, separators=(",", ":")).encode(), mtime=0)
+            self.client.put_object(
+                Bucket=self.bucket, Key=key, Body=body, ContentType="application/json",
+                ContentEncoding="gzip", CacheControl=CACHE_CONTROL,
+            )  # fmt: skip
 
 
 def make_sink(target: str | None) -> Sink | None:

@@ -223,13 +223,16 @@ resource "aws_s3_bucket_policy" "site" {
   policy = data.aws_iam_policy_document.site_read.json
 }
 
-# The poller writes the live feed and nothing else in the site bucket: one exact key, so a
+# The poller writes the live feed and nothing else in the site bucket: exact keys, so a
 # stolen box key can't plant pages (say live/login.html) on chitransit.fyi.
 data "aws_iam_policy_document" "box_live" {
   statement {
-    sid       = "LiveFeed"
-    actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.site.arn}/live/vehicles.json"]
+    sid     = "LiveFeed"
+    actions = ["s3:PutObject"]
+    resources = [
+      "${aws_s3_bucket.site.arn}/live/vehicles.json",
+      "${aws_s3_bucket.site.arn}/live/stops.json", # every stop's own wait (ghost_ledger.live)
+    ]
   }
 }
 
