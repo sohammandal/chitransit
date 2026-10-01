@@ -13,7 +13,7 @@ export default defineConfig({
   testMatch: prod ? "smoke.spec.ts" : "app.spec.ts",
   timeout: 45_000,
   fullyParallel: true, // the tests are independent: spread them over the workers
-  workers: process.env.CI ? 2 : undefined,
+  workers: process.env.CI ? 1 : undefined, // more starve CI's 2 CPUs: software WebGL map tests time out
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {

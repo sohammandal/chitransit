@@ -307,7 +307,6 @@ async function offScreen(page: Page, rt: string) {
 }
 
 test("map fits every route opened in a row: search, close, search again, then a list row @both", async ({ page }) => {
-  test.slow(); // three routes and Back: CI's software WebGL needs more than 45 s
   await setUp(page);
   await page.goto("/");
   await busesDrawn(page);
