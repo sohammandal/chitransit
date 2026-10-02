@@ -20,7 +20,7 @@ dev = [
 ]
 transform = [
     "dbt-duckdb>=1.11.0",
-    "pyiceberg[glue,pyarrow]>=0.10,<0.11",
+    "pyiceberg[glue,pyarrow,sql-sqlite]>=0.10,<0.11",
 ]
 
 [project.scripts]

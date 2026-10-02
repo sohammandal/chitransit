@@ -414,10 +414,12 @@ output "transform_role_arn" {
 }
 
 # ---------- lake maintenance role: the nightly's Ingress upkeep ----------
-# Separate from the transform role so dbt never gains write access to Ingress. It may lock
-# data files (10-year governance retention), write new Iceberg metadata (daily tags, trimmed
-# snapshot history) and update the Glue table pointers, and nothing else: every delete is
-# denied explicitly. Same trust as the transform role: workflows on main only.
+# Separate from the transform role so dbt never gains write access to Ingress. It may compact
+# finished days (write new data files: transform/compact_ingress.py, verified row for row
+# before any commit), lock data files (10-year governance retention), write new Iceberg
+# metadata (daily tags, trimmed snapshot history) and update the Glue table pointers, and
+# nothing else: every delete is denied explicitly. Same trust as the transform role:
+# workflows on main only.
 resource "aws_iam_role" "lake_maintenance" {
   name                 = "ghost-ledger-lake-maintenance"
   assume_role_policy   = data.aws_iam_policy_document.trust_transform.json
@@ -438,6 +440,13 @@ data "aws_iam_policy_document" "lake_maintenance" {
   statement {
     sid       = "LockIngressData"
     actions   = ["s3:PutObjectRetention"]
+    resources = ["${local.lake_arn}/warehouse/*/data/*"]
+  }
+  # Compaction writes each finished day as a few new files; the old ones stay on S3 (locked,
+  # still in the day tags). Writing only: deletes stay denied below.
+  statement {
+    sid       = "CompactIngressData"
+    actions   = ["s3:PutObject", "s3:AbortMultipartUpload"]
     resources = ["${local.lake_arn}/warehouse/*/data/*"]
   }
   statement {

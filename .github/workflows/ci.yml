@@ -28,7 +28,8 @@ jobs:
           enable-cache: true
 
       - name: Install
-        run: uv sync --frozen
+        # transform: pyiceberg, so the Ingress compaction tests run here, not skip
+        run: uv sync --frozen --group transform
 
       - name: Lint (pre-commit)
         run: uv run pre-commit run --all-files --show-diff-on-failure

@@ -153,8 +153,15 @@ jobs:
           role-to-assume: ${{ vars.AWS_LAKE_MAINTENANCE_ROLE_ARN }}
           aws-region: us-east-2
 
-      - name: Ingress upkeep (lock, tag, trim)
-        run: uv run --group transform python transform/lake_maintenance.py --apply
+      - name: Ingress upkeep (compact, lock, tag, trim)
+        run: |
+          # Compact finished days (one file a day instead of ~300; each verified row for row
+          # before its commit), then lock every data file written lately (the new ones too).
+          # A failed compaction commits nothing and never skips the locking; the run still fails.
+          status=0
+          uv run --group transform python transform/compact_ingress.py --apply || status=$?
+          uv run --group transform python transform/lake_maintenance.py --apply
+          exit $status
 
       - uses: actions/upload-artifact@v7
         with:
