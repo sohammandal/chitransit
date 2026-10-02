@@ -2,13 +2,8 @@
 -- response lists only stops with upcoming buses, so this comes from the request.)
 with polls as (
     select poll_id, fetched_at, request_params
-    from {{ source('ingress', 'ghost_ops_raw_polls') }}
-    where
-        endpoint = 'getpredictions'
-        and error is null
-        and fetched_at >= {{ service_ts(window_start() ~ " - 1", 0) }}
-        and fetched_at < {{ service_ts(window_end() ~ " + 2", 0) }}
-    qualify row_number() over (partition by poll_id order by __lsn) = 1
+    from {{ ref('stg_prediction_polls') }}
+    where error is null
 )
 
 select

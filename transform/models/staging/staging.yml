@@ -14,6 +14,11 @@ models:
     columns:
       - name: sweep_id
         data_tests: [unique, not_null]
+  - name: stg_prediction_polls
+    description: One row per getpredictions call. Grain poll_id; CDC duplicates removed.
+    columns:
+      - name: poll_id
+        data_tests: [unique, not_null]
   - name: stg_predictions
     description: One row per prediction in a sampled getpredictions response.
     columns:

@@ -34,7 +34,11 @@ passes as (
             p.pid = e.pid and p.passed_at >= e.valid_from
             and (e.valid_to is null or p.passed_at < e.valid_to)
     where p.seq not in (e.first_seq, e.last_seq)
-    window stop_line as (partition by p.service_date, p.rt, pt.direction, p.stop_id order by p.passed_at)
+    -- vid, pid break ties: two buses can pass a stop in the same second (#71, Sep 29), and an
+    -- unbroken tie made the hour's longest gap depend on thread timing (19.2 vs 21.4 min)
+    window stop_line as (
+        partition by p.service_date, p.rt, pt.direction, p.stop_id order by p.passed_at, p.vid, p.pid
+    )
 ),
 
 scheduled as (

@@ -1,6 +1,7 @@
 -- Every bus trip of every loaded GTFS feed, with its first and last departure. CTA's GTFS
 -- never starts a trip at or after 24:00 (trips after midnight are on the next date), and
 -- shape_id is a 3-digit prefix + the Bus Tracker pid.
+{{ config(materialized='table') }}  -- read GTFS stop_times once per run (models and tests reuse it)
 with stops as (
     select
         st.feed_id,

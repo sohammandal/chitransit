@@ -1,4 +1,5 @@
 -- One row per 30 s sweep (feed health: how many of its calls succeeded).
+{{ config(materialized='table') }}  -- read Ingress once per run (models and tests reuse it)
 with src as (
     select *
     from {{ source('ingress', 'ghost_ops_sweeps') }}

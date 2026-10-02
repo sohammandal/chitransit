@@ -41,6 +41,8 @@ def main() -> None:
     con.execute("INSTALL iceberg; LOAD iceberg; INSTALL httpfs; LOAD httpfs;")
     con.execute(f"CREATE SECRET (TYPE s3, PROVIDER credential_chain, REGION '{REGION}')")
     con.execute("SET TimeZone = 'UTC'")
+    # S3-bound (~300 small files per table per day): keep many requests in flight
+    con.execute("SET threads = 48")
 
     out: dict = {"computed_at": now.isoformat(timespec="seconds"), "tables": {}}
     for table, (key, part) in TABLES.items():

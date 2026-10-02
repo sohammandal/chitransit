@@ -12,11 +12,15 @@ sources:
       - name: ghost_ops_bus_positions
       - name: ghost_ops_sweeps
         description: One row per 30 s sweep; commits every 5 minutes, so it is the freshness probe.
-        loaded_at_field: finished_at
         config:
           freshness:
             warn_after: {count: 30, period: minute}
             error_after: {count: 3, period: hour}
+          # max(finished_at) over the last day only: file stats skip every older file (the
+          # unfiltered max read the whole table, 4 min on Oct 1)
+          loaded_at_query: >
+            select max(finished_at) from {{ this }}
+            where finished_at > now() - interval 1 day
       - name: ghost_ops_raw_polls
       - name: ghost_ops_raw_responses
       - name: ghost_ops_patterns

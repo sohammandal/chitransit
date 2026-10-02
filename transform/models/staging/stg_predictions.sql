@@ -4,19 +4,14 @@
 {{ config(materialized='table') }}
 with polls as (
     select poll_id, fetched_at
-    from {{ source('ingress', 'ghost_ops_raw_polls') }}
-    where
-        endpoint = 'getpredictions'
-        and fetched_at >= {{ service_ts(window_start() ~ " - 1", 0) }}
-        and fetched_at < {{ service_ts(window_end() ~ " + 2", 0) }}
-    qualify row_number() over (partition by poll_id order by __lsn) = 1
+    from {{ ref('stg_prediction_polls') }}
 ),
 
 responses as (
     -- Every copy, no window over the bodies: ranking them held all the JSON (several GB over
     -- the read window) in memory and ran the runner out on 2026-10-02. CDC copies of a poll
     -- are byte-identical, so they're dropped after parsing, on the narrow rows (below).
-    select poll_id, body
+    select poll_id, fetched_at, body
     from {{ source('ingress', 'ghost_ops_raw_responses') }}
     where
         fetched_at >= {{ service_ts(window_start() ~ " - 1", 0) }}
@@ -27,6 +22,8 @@ responses as (
 ),
 
 prd as (
+    -- straight from the responses (they carry the call's fetched_at): no join back to polls,
+    -- which DuckDB could build its hash table from the bodies for (out of memory, Oct 2)
     select
         poll_id,
         fetched_at,
@@ -34,15 +31,14 @@ prd as (
         x.p
     from (
         select
-            polls.poll_id,
-            polls.fetched_at,
+            poll_id,
+            fetched_at,
             -- each prediction with its place in the response, in one unnest
             unnest(list_transform(
-                from_json(json_extract(responses.body, '$."bustime-response".prd'), '["JSON"]'),
+                from_json(json_extract(body, '$."bustime-response".prd'), '["JSON"]'),
                 (p, i) -> {'i': i, 'p': p}
             )) as x
-        from polls
-        inner join responses using (poll_id)
+        from responses
     )
 ),
 

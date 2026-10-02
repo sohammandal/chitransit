@@ -19,8 +19,10 @@ select
     max(observed_at) as last_seen_at,
     count(*) as n_reports,
     count(distinct vid) as n_buses,
-    arg_min(vid, observed_at) as first_vid,
-    arg_max(vid, observed_at) as last_vid,
+    -- ties broken by vid: two buses can report a trip in the same second (#78, Oct 1), and
+    -- an unbroken tie picks whichever thread finished first
+    arg_min(vid, (observed_at, vid)) as first_vid,
+    arg_max(vid, (observed_at, vid)) as last_vid,
     min(pdist) as min_pdist,
     max(pdist) as max_pdist
 from keyed

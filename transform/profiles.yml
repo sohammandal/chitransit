@@ -6,13 +6,20 @@ ghost_ledger:
     dev:
       type: duckdb
       path: "{{ env_var('DBT_DUCKDB_PATH', 'target/ghost_ledger.duckdb') }}"
-      # Two at a time, capped below the GitHub runner's ~7 GB and allowed to spill to disk:
-      # 4 threads ran out of memory on 2026-09-28.
-      threads: 2
+      # One model at a time, each with all of DuckDB's threads and memory: reads wait on S3 and
+      # parallelize inside DuckDB, so two at once bought little and doubled peak memory (two
+      # heavy models together ran the 3 GB limit out, Oct 2; 4 at once did on Sep 28).
+      threads: 1
       extensions: [httpfs, aws, iceberg]
       settings:
         TimeZone: America/Chicago
-        memory_limit: "{{ env_var('DBT_DUCKDB_MEMORY', '5GB') }}"
+        # The process runs ~1.5-3 GB over memory_limit (HTTP buffers, JSON parsing): 3 GB keeps
+        # the full build near 5 GB on the runner's 7 GB (5 GB ran it out on Oct 2; 4 GB peaked at 6.2).
+        memory_limit: "{{ env_var('DBT_DUCKDB_MEMORY', '3GB') }}"
+        # Ingress reads wait on S3, not CPU (~300 small files per table per day): more threads
+        # keep more requests in flight (2 days of bus_positions: 4 threads 40.7 s, 48: 4.9 s).
+        # 24, not 48: each thread holds response bodies in flight; 48 ran stg_predictions out.
+        threads: "{{ env_var('DBT_DUCKDB_THREADS', '24') }}"
         # No temp_directory: dbt-duckdb re-runs every setting on each new cursor, and DuckDB
         # refuses SET temp_directory once it has spilled (Oct 2: every model after
         # stg_predictions failed). It spills to <path>.tmp beside the database by default.

@@ -3,6 +3,7 @@
 -- when the bus reported, like schedules against the feed in force that day.
 -- valid_from = the version's changed_at (the first version is open back to -infinity, since a
 -- bus is seen a moment before its pattern is first fetched); valid_to = the next version's.
+{{ config(materialized='table') }}  -- read Ingress once per run (models and tests reuse it)
 with changes as (
     select pid, rt, rtdir, content_hash, changed_at, pattern, __lsn
     from {{ source('ingress', 'ghost_ops_patterns') }}

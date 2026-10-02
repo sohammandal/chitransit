@@ -31,8 +31,8 @@ by_pattern as (
     qualify
         row_number() over (partition by s.service_date, s.trip_id order by s.start_s - o.start_s) = 1
         and row_number() over (
-            partition by o.service_date, o.rt, o.pid, o.start_s order by s.start_s - o.start_s
-        ) = 1
+            partition by o.service_date, o.rt, o.pid, o.start_s order by s.start_s - o.start_s, s.trip_id
+        ) = 1  -- trip_id breaks a tie between scheduled trips (same pattern, same start)
 ),
 
 by_route as (
