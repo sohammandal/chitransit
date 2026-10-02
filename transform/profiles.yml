@@ -13,7 +13,9 @@ ghost_ledger:
       settings:
         TimeZone: America/Chicago
         memory_limit: "{{ env_var('DBT_DUCKDB_MEMORY', '5GB') }}"
-        temp_directory: "{{ env_var('DBT_DUCKDB_TMP', 'target/duckdb_tmp') }}"
+        # No temp_directory: dbt-duckdb re-runs every setting on each new cursor, and DuckDB
+        # refuses SET temp_directory once it has spilled (Oct 2: every model after
+        # stg_predictions failed). It spills to <path>.tmp beside the database by default.
         preserve_insertion_order: false
       secrets:
         - type: s3
