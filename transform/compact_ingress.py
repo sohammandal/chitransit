@@ -45,6 +45,12 @@ TABLES = {
     "raw_responses": "fetched_at",
     "sweeps": "started_at",
 }
+# Rows per Parquet row group in the rewritten files. Readers parallelize by row group and hold
+# about one in flight per thread: raw_responses rows are ~22 KB of JSON, and a whole day as one
+# row group (600 MB, Oct 2) gave a reader one thread for the day and the most memory per
+# thread. ~22-30 MB a group there (stg_predictions also caps its threads: models/staging).
+ROW_GROUP_ROWS = {"raw_responses": 1024}
+DEFAULT_ROW_GROUP_ROWS = 131_072
 
 
 def compacted_paths(table: Table) -> set[str]:
@@ -56,10 +62,11 @@ def compacted_paths(table: Table) -> set[str]:
     return {e["data_file"]["file_path"] for e in entries if e["snapshot_id"] in marked}
 
 
-def plan(table: Table, column: str, cutoff: datetime) -> dict[date, list]:
-    """Candidate files grouped by the UTC day of their oldest row."""
+def plan(table: Table, column: str, cutoff: datetime, again: bool = False) -> dict[date, list]:
+    """Candidate files grouped by the UTC day of their oldest row. again: compacted files too
+    (to rewrite them with other row groups)."""
     field = table.schema().find_field(column)
-    done = compacted_paths(table)
+    done = set() if again else compacted_paths(table)
     groups: dict[date, list] = defaultdict(list)
     for task in table.scan().plan_files():
         f = task.file
@@ -76,7 +83,7 @@ def plan(table: Table, column: str, cutoff: datetime) -> dict[date, list]:
             continue
         groups[datetime.fromtimestamp(low / 1e6, UTC).date()].append(f)
     # A lone file already covering one day is as compact as it gets.
-    return {d: fs for d, fs in groups.items() if len(fs) > 1}
+    return {d: fs for d, fs in groups.items() if again or len(fs) > 1}
 
 
 def fingerprint(tables: Iterable[pa.Table], column: str) -> dict[str, tuple[int, str]]:
@@ -127,7 +134,14 @@ def read(table: Table, files: list) -> pa.Table:
     return pa.concat_tables(read_each(table, files))  # chunks, not copies
 
 
-def compact(table: Table, column: str, day: date, files: list, apply: bool) -> None:
+def compact(
+    table: Table,
+    column: str,
+    day: date,
+    files: list,
+    apply: bool,
+    row_group_rows: int = DEFAULT_ROW_GROUP_ROWS,
+) -> None:
     started = time.perf_counter()
     # In commit order (oldest rows first): the day's rows come out clustered by time without a
     # sorted copy, and a reader's row-group statistics still skip what it doesn't need
@@ -162,11 +176,12 @@ def compact(table: Table, column: str, day: date, files: list, apply: bool) -> N
     new_files = []
     counter = itertools.count(0)
     write_uuid = uuid.uuid4()
+    # the row-group size for this write only: the table's own properties (Debezium's) unchanged
+    props = {**table.metadata.properties, "write.parquet.row-group-limit": str(row_group_rows)}
+    meta = table.metadata.model_copy(update={"properties": props})
     for d in sorted(before):
         part = rows if len(before) == 1 else rows.filter(pc.equal(days, d))
-        new_files += list(
-            _dataframe_to_data_files(table.metadata, part, table.io, write_uuid, counter)
-        )
+        new_files += list(_dataframe_to_data_files(meta, part, table.io, write_uuid, counter))
         del part
     del rows, days
     pa.default_memory_pool().release_unused()
@@ -205,6 +220,7 @@ def main() -> None:
     p.add_argument("--cutoff", type=date.fromisoformat, help="UTC day; default two days ago")
     p.add_argument("--day", type=date.fromisoformat, help="only this batch (UTC day)")
     p.add_argument("--apply", action="store_true", help="rewrite and commit (default: plan only)")
+    p.add_argument("--again", action="store_true", help="rewrite compacted files too")
     p.add_argument("--catalog", default="glue", help=argparse.SUPPRESS)  # tests: a local catalog
     args = p.parse_args()
     cutoff_day = args.cutoff or datetime.now(UTC).date() - timedelta(days=2)
@@ -219,11 +235,12 @@ def main() -> None:
     print(f"files entirely before {cutoff:%Y-%m-%d} UTC; {'APPLY' if args.apply else 'dry run'}")
     for name in args.tables.split(","):
         table = catalog.load_table(f"{DATABASE}.ghost_ops_{name}")
-        groups = plan(table, TABLES[name], cutoff)
+        groups = plan(table, TABLES[name], cutoff, args.again)
         print(f"{name}: {sum(map(len, groups.values()))} files in {len(groups)} batches")
         for day in sorted(groups):
             if args.day is None or day == args.day:
-                compact(table, TABLES[name], day, groups[day], args.apply)
+                rows = ROW_GROUP_ROWS.get(name, DEFAULT_ROW_GROUP_ROWS)
+                compact(table, TABLES[name], day, groups[day], args.apply, rows)
 
 
 if __name__ == "__main__":

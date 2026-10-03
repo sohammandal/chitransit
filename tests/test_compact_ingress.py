@@ -184,3 +184,30 @@ def test_a_rewrite_that_does_not_read_back_identical_is_never_committed(table, m
         compact_all(table)
     table.refresh()
     assert table.current_snapshot().snapshot_id == snapshot
+
+
+def test_rewritten_files_have_small_row_groups_and_compacted_days_can_be_rewritten(table):
+    # Readers hold a row group in flight per thread: a day as one row group of raw_responses
+    # (600 MB) ran the nightly out of memory (Oct 3)
+    import pyarrow.parquet as pq
+
+    before = rows(table)
+    groups = ci.plan(table, "started_at", CUTOFF)
+    for day in sorted(groups):
+        ci.compact(table, "started_at", day, groups[day], True, row_group_rows=50)
+    table.refresh()
+
+    def largest_group():
+        sizes = []
+        for task in table.scan().plan_files():
+            md = pq.ParquetFile(table.io.new_input(task.file.file_path).open()).metadata
+            sizes += [md.row_group(i).num_rows for i in range(md.num_row_groups)]
+        return max(sizes)
+
+    assert largest_group() <= 50
+    assert ci.plan(table, "started_at", CUTOFF) == {}  # compacted: left alone by default
+    again = ci.plan(table, "started_at", CUTOFF, again=True)  # but can be rewritten
+    for day in sorted(again):
+        ci.compact(table, "started_at", day, again[day], True, row_group_rows=200)
+    table.refresh()
+    assert rows(table) == before and largest_group() == 200

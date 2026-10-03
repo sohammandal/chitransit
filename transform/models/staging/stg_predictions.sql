@@ -1,7 +1,14 @@
 -- One row per prediction in a sampled getpredictions response (raw_responses: the exact
 -- bytes CTA sent). dyn = 1 marks the trip as canceled at that stop, 4 as expressed.
 -- A table, built once: two models read it, and it parses JSON out of raw responses.
-{{ config(materialized='table') }}
+-- 8 DuckDB threads here (24 elsewhere): each thread parses a row group's worth of JSON bodies
+-- at once, and once the log was compacted (a row group ~1,000 responses, ~30 MB) 24 threads
+-- ran the 3 GB limit out (Oct 3); 8: 2.5 GB peak, ~55 s.
+{{ config(
+    materialized='table',
+    pre_hook="SET threads = 8",
+    post_hook="SET threads = {{ env_var('DBT_DUCKDB_THREADS', '24') }}",
+) }}
 with polls as (
     select poll_id, fetched_at
     from {{ ref('stg_prediction_polls') }}
