@@ -1006,25 +1006,25 @@ test("back from a stop, by Back or its ×, returns the map to the view the rider
   expect(errors).toEqual([]);
 });
 
-test("a route's × and Back return to the city view it was opened from, not the whole city (Oct 3) @both", async ({ page }) => {
-  const errors = await setUp(page);
-  await page.goto("/");
-  await busesDrawn(page);
-  await page.evaluate(() => window.map!.jumpTo({ center: [-87.70, 41.90], zoom: 13.2 }));
-  const before = await camera(page);
-  for (const leave of ["x", "back"]) {
+for (const leave of ["×", "Back"]) {
+  test(`a route's ${leave} returns to the city view it was opened from, not the whole city (Oct 3) @both`, async ({ page }) => {
+    const errors = await setUp(page);
+    await page.goto("/");
+    await busesDrawn(page);
+    await page.evaluate(() => window.map!.jumpTo({ center: [-87.70, 41.90], zoom: 13.2 }));
+    const before = await camera(page);
     const box = await searchBox(page);
     await box.fill("66");
     await box.press("Enter");
     await expect(page).toHaveURL(/\/route\/66\/$/);
     expect(await camera(page)).not.toEqual(before); // a new route is framed
-    if (leave === "x") await page.getByLabel("Back to all routes").click();
+    if (leave === "×") await page.getByLabel("Back to all routes").click();
     else await page.goBack();
     await expect(page).toHaveURL(/\/$/);
     expect(await camera(page)).toEqual(before);
-  }
-  expect(errors).toEqual([]);
-});
+    expect(errors).toEqual([]);
+  });
+}
 
 test("Back and Forward between routes return to each route as the rider left it (Oct 3)", async ({ page }) => {
   await setUp(page);
