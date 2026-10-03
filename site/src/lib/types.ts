@@ -66,3 +66,6 @@ export type Summary = { date: string; routes: Record<string, RouteDay> };
  *  [scheduled, ran (incl. likely ran), canceled with notice, proven no-show, couldn't tell] */
 export type ReportRow = [number, number, number, number, number];
 export type Report = { days: string[]; city: ReportRow[]; routes: Record<string, ReportRow[]> };
+
+/** Where the map's camera is: kept with each page of history, so Back returns to it. */
+export type Camera = { center: [number, number]; zoom: number };

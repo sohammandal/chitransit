@@ -11,8 +11,9 @@
   import { findProblems, scheduledGap } from "../lib/problems";
   import { mainPid, onLine } from "../lib/project";
   import { stopRows } from "../lib/stops";
+  import { feetBetween } from "../lib/distance";
   import { behindOf } from "../lib/waits";
-  import type { Feed, Headways, Pattern, Report, Stop, StopWaits, Vehicle } from "../lib/types";
+  import type { Camera, Feed, Headways, Pattern, Report, Stop, StopWaits, Vehicle } from "../lib/types";
   import About from "./About.svelte";
   import BusCard from "./BusCard.svelte";
   import MapView from "./MapView.svelte";
@@ -101,7 +102,7 @@
    *  camera stays where the rider put it. */
   function openStop(s: Stop) {
     go(null, "none", false);
-    history.pushState({ stop: s }, "", "/");
+    history.pushState({ stop: s, prev: here() }, "", "/");
     stop = s;
     size = "half";
   }
@@ -127,6 +128,20 @@
     if (on) fitNonce++;
   }
 
+  // Going back returns to the view the rider left, never a re-framed one: each page of history
+  // keeps its camera (cam, updated whenever the map comes to rest) and the camera it was opened
+  // from (prev, for a close that goes back without Back: a route's ×). Like scroll restoration.
+  let view = $state<{ cam: Camera | null; n: number }>({ cam: null, n: 0 });
+  const here = (): Camera | null => history.state?.cam ?? null;
+  function keepCamera(cam: Camera) {
+    history.replaceState({ ...(history.state ?? {}), cam }, "");
+  }
+  /** Glide back to a view; the page keeps where the glide ends (the glide itself isn't kept). */
+  function restore(cam: Camera) {
+    keepCamera(cam);
+    view = { cam, n: view.n + 1 };
+  }
+
   /** Open a route (or the city). history: "push" a new entry, "replace" the current one (while
    *  typing a search, so Back skips the in-between routes), or "none" (Back/Forward). */
   function go(rt: string | null, history_: "push" | "replace" | "none" = "push", fitMap = true) {
@@ -138,8 +153,8 @@
     about = false;
     size = rt ? "half" : "peek";
     const url = rt ? `/route/${encodeURIComponent(rt)}/` : "/";
-    if (history_ === "push") history.pushState(null, "", url);
-    else if (history_ === "replace") history.replaceState(null, "", url);
+    if (history_ === "push") history.pushState({ prev: here() }, "", url);
+    else if (history_ === "replace") history.replaceState({ prev: history.state?.prev ?? null }, "", url);
     document.title = rt ? `${rt} ${names[rt] ?? ""} bus, live | chitransit.fyi` : "Chicago buses, live | chitransit.fyi";
   }
   const fromPath = () => decodeURIComponent(location.pathname.match(/^\/route\/([^/]+)/)?.[1] ?? "") || null;
@@ -158,12 +173,18 @@
     about = false;
     if (size === "peek") size = "half";
   }
-  /** Bus → its route (fits the route), route → city (the city view only if we'd framed the route). */
+  /** Bus → its route: the card's back link names the route, so it shows the whole route. */
   function toRoute() {
     selected = null;
     frame(true);
   }
-  const close = () => go(null, "push", fit);
+  /** A route's ×: back to the view the route was opened from, else the camera stays put (an ×
+   *  never jumps somewhere new). */
+  function close() {
+    const prev: Camera | null = history.state?.prev ?? null;
+    go(null, "push", false);
+    if (prev) restore(prev);
+  }
   function back() {
     if (about) about = false;
     else if (stop) history.back();
@@ -182,8 +203,10 @@
     narrow.addEventListener("change", onWidth);
     const onPop = () => {
       const s: Stop | null = history.state?.stop ?? null;
-      go(fromPath(), "none", !s);
+      const cam = here(); // where the camera was when the rider left this page
+      go(fromPath(), "none", !s && !cam);
       if (s) { stop = s; size = "half"; }
+      if (cam) restore(cam);
     };
     window.addEventListener("popstate", onPop);
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") back(); };
@@ -204,7 +227,7 @@
   });
 </script>
 
-<MapView vehicles={stopBuses ?? vehicles} {route} {direction} {selected} {shapes} {stopPids} stop={level === "stop" ? stop : null} {padding} {fit} {fitNonce} {focusNonce} onSelect={(vid) => select(vid, "map")} onStop={openStop} />
+<MapView vehicles={stopBuses ?? vehicles} {route} {direction} {selected} {shapes} {stopPids} stop={level === "stop" ? stop : null} {padding} {fit} {fitNonce} {focusNonce} {view} onSelect={(vid) => select(vid, "map")} onStop={openStop} onCamera={keepCamera} />
 
 <div class="side panel-column" style:--top-h="{topH}px">
   <div bind:clientHeight={topH}>
@@ -223,9 +246,11 @@
         {@const onMain = main?.drawn.some((v) => v.vid === bus.vid) ?? false}
         {@const linePid = onMain ? mainP : bus.pid}
         {@const pattern = linePid != null ? patterns.get(linePid) : undefined}
+        {@const behind = behindOf(bus, vehicles)}
         <BusCard
           {bus}
-          behind={behindOf(bus, vehicles)}
+          {behind}
+          behindFeet={behind ? feetBetween(bus, behind.bus, patterns) : null}
           {pattern}
           lineBuses={onMain && main ? main.drawn
             : pattern && linePid != null ? onLine(pattern, linePid, sameDir).drawn

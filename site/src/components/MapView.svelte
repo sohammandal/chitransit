@@ -9,11 +9,11 @@
   import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
   import * as data from "../lib/data";
   import { withoutSpurs } from "../lib/project";
-  import type { Pattern, Stop, Vehicle } from "../lib/types";
+  import type { Camera, Pattern, Stop, Vehicle } from "../lib/types";
 
   maplibregl.setWorkerUrl(workerUrl);
 
-  let { vehicles, route, direction, selected, shapes, stopPids, stop, padding, fit, fitNonce, focusNonce, onSelect, onStop }: {
+  let { vehicles, route, direction, selected, shapes, stopPids, stop, padding, fit, fitNonce, focusNonce, view, onSelect, onStop, onCamera }: {
     vehicles: Vehicle[];
     route: string | null;
     direction: string | null; // a bus is open: show only its direction ("Eastbound")
@@ -25,14 +25,17 @@
     fit: boolean; // frame the route (or the city) at all; false keeps the camera (a tapped bus)
     fitNonce: number; // bumped on every request to frame again
     focusNonce: number; // bumped to zoom in on the selected bus
+    view: { cam: Camera | null; n: number }; // bumped to put the camera back where it was (Back)
     onSelect: (vid: string) => void;
     onStop: (stop: Stop) => void;
+    onCamera: (cam: Camera) => void; // where the camera came to rest (App keeps it with the page)
   } = $props();
   const STOPS_ZOOM = 14; // stops show from here (a neighbourhood): ~6,000 would clutter the city view
   let stops = $state.raw<Stop[]>([]);
 
   const STYLES = { light: "https://tiles.openfreemap.org/styles/positron", dark: "https://tiles.openfreemap.org/styles/dark" };
   const CITY = { center: [-87.66, 41.86] as [number, number], zoom: 10.6 };
+  const FRAMING = { framing: true }; // marks the app's own camera moves (moveend below)
   const TWEEN_MS = 2_000;
   const GLIDE_MIN_ZOOM = 12; // gliding only shows zoomed in; at ~20 fps to spare batteries
   const FRAME_MS = 50;
@@ -190,7 +193,16 @@
   function inView(at: [number, number]) {
     const p = map!.project(at), { clientWidth: w, clientHeight: h } = container, m = 24;
     const hidden = p.x < padding.left + m || p.x > w - padding.right - m || p.y < padding.top + m || p.y > h - padding.bottom - m;
-    if (hidden) map!.easeTo({ center: at, duration: 500 });
+    if (hidden) frameTo(() => map!.easeTo({ center: at, duration: 500 }, FRAMING));
+  }
+
+  // The app's own camera move in flight (a fit, a zoom to a bus, a glide back), so a padding
+  // change mid-flight (the sheet or the top bar settling) re-runs it instead of cancelling it:
+  // setPadding is a jump, and a Forward to a route once stayed on the last route's view (Oct 3).
+  let inFlight: (() => void) | null = null;
+  function frameTo(move: () => void) {
+    inFlight = move;
+    move();
   }
 
   // The panel's padding, shrunk if it would leave less than ~120 px of map (small phones):
@@ -210,7 +222,7 @@
     focused = focusNonce;
     untrack(() => {
       const b = selected ? positions.get(selected) : undefined;
-      if (b) map!.easeTo({ center: b.to, zoom: Math.max(map!.getZoom(), 15), duration: 700 });
+      if (b) frameTo(() => map!.easeTo({ center: b.to, zoom: Math.max(map!.getZoom(), 15), duration: 700 }, FRAMING));
     });
   });
 
@@ -219,7 +231,9 @@
   // it twice: routes opened after closing one were squeezed on phones.)
   $effect(() => {
     if (!ready || !map) return;
-    map.setPadding(fitPadding());
+    const again = map.isMoving() ? inFlight : null;
+    map.setPadding(fitPadding(), FRAMING);
+    if (again) frameTo(again);
   });
 
   // The open stop, and in view if the sheet grew over it. After the padding effect above: its
@@ -234,24 +248,39 @@
 
   // Draw the open route and fit the map to it: to its buses at once, again when its shapes
   // arrive; back to the whole city when closed. Not on every feed (that would fight the user).
-  let fitted = "";
+  let fitted = "", asked = "", riderMoved = false;
   $effect(() => {
     if (!ready || !map) return;
     source("route")?.setData(shapes.length
       ? { type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: shapes.map((p) => withoutSpurs(p.c)) } }
       : empty);
     const running = route != null && vehicles.some((v) => v.rt === route);
-    const key = `${fitNonce}|${route}|${shapes.length}|${running}`;
+    const ask = `${fitNonce}|${route}`, key = `${ask}|${shapes.length}|${running}`;
     if (key === fitted) return;
     fitted = key;
-    if (!fit) return;
+    if (ask !== asked) [asked, riderMoved] = [ask, false]; // a new request to frame
+    // re-framing the same request (its shapes arrived) never undoes the rider's own move:
+    // zooming in right after opening a route was yanked back out when its shapes loaded (Oct 3)
+    if (!fit || riderMoved) return;
     untrack(() => {
-      if (!route) return void map!.easeTo({ ...CITY, duration: 600 });
+      if (!route) return void frameTo(() => map!.easeTo({ ...CITY, duration: 600 }, FRAMING));
       const bounds = new maplibregl.LngLatBounds();
       for (const p of shapes) for (const c of p.c) bounds.extend(c);
       for (const v of vehicles) if (v.rt === route && v.lon != null && v.lat != null) bounds.extend([v.lon, v.lat]);
-      if (!bounds.isEmpty()) map!.fitBounds(bounds, { padding: 24, duration: 600, maxZoom: 14 });
+      if (!bounds.isEmpty()) frameTo(() => map!.fitBounds(bounds, { padding: 24, duration: 600, maxZoom: 14 }, FRAMING));
     });
+  });
+
+  // Back to a view the rider left: exactly where it was, not re-framed. After the padding and
+  // fit effects above (setPadding is a jump that would cancel a glide).
+  let restored = 0;
+  $effect(() => {
+    if (!ready || !map || view.n === restored) return;
+    restored = view.n;
+    const cam = view.cam;
+    // a short glide; not kept again (the page already has it), so a glide cut short by the next
+    // tap never leaves a half-way view behind
+    if (cam) untrack(() => frameTo(() => map!.easeTo({ center: cam.center, zoom: cam.zoom, duration: 500 }, FRAMING)));
   });
 
   onMount(() => {
@@ -276,6 +305,15 @@
       container.classList.add("ready");
     });
     map.on("zoomend", loadStops);
+    // Only views the rider chose (their own moves, and views put back by Back) are kept with the
+    // page: the app's own framing isn't, so a page left mid-flight (a second route searched
+    // before the first was framed) re-frames on Back instead of returning half-way (Oct 3)
+    map.on("moveend", (e) => {
+      inFlight = null; // done, or cut short by the rider (their move wins)
+      if ((e as { framing?: boolean }).framing) return;
+      riderMoved = true;
+      onCamera({ center: map!.getCenter().toArray() as [number, number], zoom: map!.getZoom() });
+    });
     map.on("click", "stops-hit", (e) => {
       // a bus under the finger wins (its own handler opens it)
       if (map!.queryRenderedFeatures(e.point, { layers: ["bus-dot", "bus-sym"] }).length) return;

@@ -565,12 +565,18 @@ test("line view: tapping the line names the nearest stop; tapping again clears i
   await setUp(page);
   await page.goto("/route/66/");
   const line = page.locator(".sheet svg").first();
-  await line.locator(".pickable").click({ position: { x: 150, y: 12 } });
+  // a stretch of line with no bus on it (a bus there takes the tap: it opened the bus, and its
+  // glide kept the spot moving until the click timed out)
+  const x = await line.evaluate((svg) => {
+    const buses = [...svg.querySelectorAll(".bus .hit")].map((c) => Number(c.getAttribute("cx")));
+    return [60, 100, 150, 200, 250, 290].find((x) => buses.every((b) => Math.abs(b - (x + 8)) > 24))!;
+  });
+  await line.locator(".pickable").click({ position: { x, y: 12 } });
   const name = await line.locator(".picked-name").textContent();
   const stops = JSON.parse(fixture("patterns/6662.json")!.toString()).s.map((s: unknown[]) => s[2]);
   const other = JSON.parse(fixture("patterns/6665.json")!.toString()).s.map((s: unknown[]) => s[2]);
   expect([...stops, ...other]).toContain(name);
-  await line.locator(".pickable").click({ position: { x: 150, y: 12 } });
+  await line.locator(".pickable").click({ position: { x, y: 12 } });
   await expect(line.locator(".picked-name")).toHaveCount(0);
 });
 
@@ -736,6 +742,8 @@ test("bus card: the next bus is where it is, stops back, never a forecast (Sep 2
   await expect(behind).toContainText("Next bus");
   await expect(behind).toContainText("3 stops back");
   await expect(behind).toContainText(`near ${next.near}`);
+  // how far back, along the route (same pattern: the difference of their positions), Oct 3
+  await expect(behind).toContainText(`${((bus.pdist - next.pdist) / 5280).toFixed(1)} mi back`);
   await expect(page.getByText(/until the next bus/)).toHaveCount(0);
   // heading for the same stop (it can still be miles back on an express stretch: #147 Sep 29)
   Object.assign(bus, { behind_stops: 0 });
@@ -957,5 +965,126 @@ test("a feed that has stopped updating is shown as not live (Sep 30)", async ({ 
   await page.goto("/");
   await expect(page.getByText("Not updated for 5 min")).toBeVisible();
   await expect(page.locator(".status .dot.stale")).toHaveCount(1);
+  expect(errors).toEqual([]);
+});
+
+/** The map's camera, to the precision a rider could notice (a few metres, a hundredth of a zoom) */
+async function camera(page: Page) {
+  await page.waitForTimeout(800); // let any ease finish
+  return page.evaluate(() => {
+    const m = window.map as unknown as { getCenter(): { lng: number; lat: number }; getZoom(): number };
+    return { lng: m.getCenter().lng.toFixed(4), lat: m.getCenter().lat.toFixed(4), zoom: m.getZoom().toFixed(2) };
+  });
+}
+
+async function tapStop(page: Page, at: [number, number]) {
+  await page.waitForFunction(() => window.map!.queryRenderedFeatures({ layers: ["stops"] }).length > 0);
+  const pt = await page.evaluate((at) => {
+    const p = window.map!.project(at), r = window.map!.getCanvas().getBoundingClientRect();
+    return { x: r.left + p.x, y: r.top + p.y };
+  }, at);
+  await page.mouse.click(pt.x, pt.y);
+}
+
+test("back from a stop, by Back or its ×, returns the map to the view the rider left (Oct 3) @both", async ({ page }) => {
+  // Zoomed in, a stop tapped, then Back: the map flew out to the whole city
+  const errors = await setUp(page);
+  await page.goto("/");
+  await busesDrawn(page);
+  const at: [number, number] = [-87.66733, 41.89608]; // Chicago & Ashland
+  // off-centre, so a re-frame around the stop would show; clear of the phone's sheet
+  await page.evaluate((at) => window.map!.jumpTo({ center: [at[0] + 0.0012, at[1] - 0.0006], zoom: 16.4 }), at);
+  const before = await camera(page);
+  for (const leave of ["back", "x"]) {
+    await tapStop(page, at);
+    await expect(page.locator(".sheet h2")).toHaveText("Chicago & Ashland");
+    if (leave === "back") await page.goBack();
+    else await page.getByLabel("Close stop").click();
+    await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
+    expect(await camera(page)).toEqual(before);
+  }
+  expect(errors).toEqual([]);
+});
+
+test("a route's × and Back return to the city view it was opened from, not the whole city (Oct 3) @both", async ({ page }) => {
+  const errors = await setUp(page);
+  await page.goto("/");
+  await busesDrawn(page);
+  await page.evaluate(() => window.map!.jumpTo({ center: [-87.70, 41.90], zoom: 13.2 }));
+  const before = await camera(page);
+  for (const leave of ["x", "back"]) {
+    const box = await searchBox(page);
+    await box.fill("66");
+    await box.press("Enter");
+    await expect(page).toHaveURL(/\/route\/66\/$/);
+    expect(await camera(page)).not.toEqual(before); // a new route is framed
+    if (leave === "x") await page.getByLabel("Back to all routes").click();
+    else await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+    expect(await camera(page)).toEqual(before);
+  }
+  expect(errors).toEqual([]);
+});
+
+test("Back and Forward between routes return to each route as the rider left it (Oct 3)", async ({ page }) => {
+  await setUp(page);
+  await page.goto("/");
+  await busesDrawn(page);
+  const box = await searchBox(page);
+  await box.fill("66");
+  await box.press("Enter");
+  await expect(page).toHaveURL(/\/route\/66\/$/);
+  await page.evaluate(() => window.map!.jumpTo({ center: [-87.6668, 41.8961], zoom: 15.3 })); // zoomed into part of #66
+  const on66 = await camera(page);
+  await box.fill("151");
+  await box.press("Enter");
+  await expect(page).toHaveURL(/\/route\/151\/$/);
+  const on151 = await camera(page);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/route\/66\/$/);
+  expect(await camera(page)).toEqual(on66);
+  await page.goForward();
+  await expect(page).toHaveURL(/\/route\/151\/$/);
+  expect(await camera(page)).toEqual(on151);
+});
+
+test("stop: how far along the route the buses are, never when they'll come (Oct 3)", async ({ page }) => {
+  await setUp(page);
+  await page.goto("/");
+  await busesDrawn(page);
+  await page.evaluate(() => window.map!.jumpTo({ center: [-87.66733, 41.89608], zoom: 17 }));
+  await tapStop(page, [-87.66733, 41.89608]);
+  const row = page.locator(".sheet .rows li").filter({ hasText: "Westbound" });
+  await expect(row.locator(".bus").nth(0)).toContainText(/1 stop away · (\d+\.\d|under 0\.1) mi/);
+  await expect(row.locator(".bus").nth(1)).toContainText(/12 stops away · \d+\.\d mi/);
+  await expect(page.getByText(/min(ute)? until|arrives in/i)).toHaveCount(0);
+});
+
+test("a stop opened inside a route view: Back returns to the route as the rider left it (Oct 3) @both", async ({ page }) => {
+  const errors = await setUp(page);
+  await page.goto("/route/66/");
+  await busesDrawn(page);
+  const at: [number, number] = [-87.66733, 41.89608]; // Chicago & Ashland, on #66
+  await page.evaluate((at) => window.map!.jumpTo({ center: [at[0] + 0.0012, at[1] - 0.0006], zoom: 16.2 }), at);
+  const before = await camera(page);
+  await tapStop(page, at);
+  await expect(page.locator(".sheet h2")).toHaveText("Chicago & Ashland");
+  await page.goBack();
+  await expect(page).toHaveURL(/\/route\/66\/$/);
+  await expect(page.getByRole("heading", { name: "Chicago", exact: true })).toBeVisible();
+  expect(await camera(page)).toEqual(before);
+  expect(errors).toEqual([]);
+});
+
+test("a route opened by its link: its × leaves the camera where it is (Oct 3) @both", async ({ page }) => {
+  // nothing to go back to: an × never jumps somewhere new
+  const errors = await setUp(page);
+  await page.goto("/route/66/");
+  await busesDrawn(page);
+  await page.evaluate(() => window.map!.jumpTo({ center: [-87.70, 41.896], zoom: 14.1 }));
+  const before = await camera(page);
+  await page.getByLabel("Back to all routes").click();
+  await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
+  expect(await camera(page)).toEqual(before);
   expect(errors).toEqual([]);
 });

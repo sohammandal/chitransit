@@ -2,6 +2,7 @@
   // Stop level: for each route and direction that stops here, how long since the last bus passed
   // this stop (its own stamp), the next two buses by where they are now (stops away, never a
   // forecast), and whether those two are together (lib/stops.ts). Tap a bus to open it.
+  import { milesText } from "../lib/distance";
   import { minutes } from "../lib/format";
   import type { StopRow } from "../lib/stops";
   import type { Stop } from "../lib/types";
@@ -47,7 +48,7 @@
         {#each r.next as n, i (n.bus.vid)}
           <button class="bus" onclick={() => onSelect(n.bus.vid)}>
             <span class="lab">{i === 0 ? "Next" : "Then"}</span>
-            <span class="where"><b>{away(n.away)}</b>{#if n.away > 0 && n.bus.near}<span class="near">near {n.bus.near}</span>{/if}</span>
+            <span class="where"><b>{away(n.away)}{#if n.away > 0}<span class="mi">{` · ${milesText(n.feet)}`}</span>{/if}</b>{#if n.away > 0 && n.bus.near}<span class="near">near {n.bus.near}</span>{/if}</span>
             <svg class="go" viewBox="0 0 8 14" aria-hidden="true"><path d="M1.5 1.5 6.5 7l-5 5.5" /></svg>
           </button>
         {/each}
@@ -75,6 +76,7 @@
   .lab { font-size: 13px; color: var(--fog); }
   .where { display: grid; gap: 1px; font-size: 15px; }
   .near { font-size: 13px; color: var(--fog); }
+  .mi { font-weight: 400; color: var(--fog); }
   .go { align-self: center; width: 8px; height: 14px; fill: none; stroke: var(--fog); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .none { margin: 12px 0 0; font-size: 13px; color: var(--fog); }
   .last { margin: 0 0 6px; font-size: 13px; color: var(--fog); }

@@ -1,6 +1,7 @@
 <script lang="ts">
   // Bus level: the gap in front of this bus (minutes since the last bus passed its next stop)
   // and where the next bus is (stops back: a position, never a forecast), on its route line.
+  import { milesText } from "../lib/distance";
   import { minutes } from "../lib/format";
   import type { LineBus } from "../lib/project";
   import type { Pattern, Vehicle } from "../lib/types";
@@ -8,9 +9,10 @@
   import Key from "./Key.svelte";
   import LineView from "./LineView.svelte";
 
-  let { bus, behind, pattern, lineBuses, scheduled, routeName, backTo = null, age, onBack, onSelect }: {
+  let { bus, behind, behindFeet = null, pattern, lineBuses, scheduled, routeName, backTo = null, age, onBack, onSelect }: {
     bus: Vehicle;
     behind: { bus: Vehicle; stops: number } | undefined; // the bus behind (lib/waits.ts behindOf)
+    behindFeet?: number | null; // how far back it is along the route (lib/distance.ts)
     pattern: Pattern | undefined;
     lineBuses: LineBus[];
     scheduled: number | null;
@@ -66,7 +68,9 @@
     <div class="gap behind">
       <span>Next bus</span>
       <strong>{behind.stops === 0 ? "Same next stop" : `${behind.stops} ${behind.stops === 1 ? "stop" : "stops"} back`}</strong>
-      {#if behind.bus.near}<span>near {behind.bus.near}</span>{/if}
+      {#if behindFeet != null || behind.bus.near}
+        <span>{[behindFeet != null ? `${milesText(behindFeet)} back` : null, behind.bus.near ? `near ${behind.bus.near}` : null].filter(Boolean).join(" · ")}</span>
+      {/if}
     </div>
   {/if}
 </div>

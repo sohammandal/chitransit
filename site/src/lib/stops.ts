@@ -8,7 +8,7 @@ const SAME_STOP_M = 150; // a pattern's stop of this name this close is this sto
 /** Both spellings of a corner ("Ashland & Chicago", "Chicago & Ashland"), as stops.json groups them */
 const corner = (name: string) => name.split(" & ").sort().join(" & ");
 
-export type StopBus = { bus: Vehicle; away: number }; // away: stops to go (0: at the stop)
+export type StopBus = { bus: Vehicle; away: number; feet: number }; // away: stops to go (0: at the stop); feet along the route
 /** Since the last bus passed this stop: s seconds (null: can't tell); long: a long wait here */
 export type StopWait = { s: number | null; long: boolean };
 export type StopRow = { rt: string; dir: string; next: StopBus[]; wait: StopWait | null; together: boolean };
@@ -41,7 +41,7 @@ export function stopRows(stop: Stop, vehicles: Vehicle[], patterns: Map<number, 
       if (v.pid !== pid || v.pdist == null || v.pdist > at) continue; // another pattern, or past it
       if (v.next_stop === null && v.trip !== "starting") continue; // off its route, or finishing
       const away = p.s.filter(([, , , feet]) => feet > v.pdist! && feet <= at).length;
-      lines.get(key)!.push({ bus: v, away });
+      lines.get(key)!.push({ bus: v, away, feet: at - v.pdist });
     }
   }
   return [...lines.entries()]

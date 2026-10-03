@@ -11,8 +11,10 @@
 </div>
 <p class="what">How Chicago's buses are really running, live and over time</p>
 <dl>
-  <dt>Search a route, or tap any bus</dt>
-  <dd>On the map or on its route</dd>
+  <dt>Search a route</dt>
+  <dd>Each direction as a line, with its gaps</dd>
+  <dt>Tap any bus</dt>
+  <dd>On the map or in its route view</dd>
   <dt>Zoom in for stops</dt>
   <dd>Tap one to see what's coming</dd>
   <dt>Right now</dt>

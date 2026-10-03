@@ -20,7 +20,7 @@ describe("stopRows", () => {
   it("lists the next two buses that stop here, by stops away", () => {
     const rows = stopRows(belmont, [bus("far", 1, 500), bus("near", 1, 3500), bus("mid", 1, 1500), bus("past", 1, 6500)], patterns);
     expect(rows).toHaveLength(1);
-    expect(rows[0].next.map((n) => [n.bus.vid, n.away])).toEqual([["near", 2], ["mid", 4]]); // "past" went by
+    expect(rows[0].next.map((n) => [n.bus.vid, n.away, n.feet])).toEqual([["near", 2, 1500], ["mid", 4, 3500]]); // "past" went by; feet to Belmont
   });
 
   it("finds a corner spelled the other way round on another route's pattern", () => {
