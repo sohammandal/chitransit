@@ -31,7 +31,8 @@
 <style>
   header { display: flex; align-items: center; gap: 10px; }
   h2 { margin: 0; font-size: 20px; line-height: 1.15; }
-  .tag { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border: 1px solid var(--rule); border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1; color: var(--fog); padding-top: 4px; /* Overpass sits high: nudge */ }
+  .tag { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border: 1px solid var(--rule); border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1; color: var(--fog); padding-top: 4px; /* Overpass sits high: nudge */
+    position: relative; top: -3px; /* centered on the heading's capitals, which sit 3 px above its line box's middle (measured Oct 4) */ }
   .x { margin-left: auto; width: 44px; height: 44px; flex: none; border: 0; border-radius: 50%; background: var(--concrete); color: var(--fog); font-size: 24px; line-height: 1; cursor: pointer; }
   dl { margin: 0; display: grid; gap: 2px; font-size: 15px; } /* each line under its heading */
   dt { font-weight: 700; }

@@ -20,7 +20,7 @@
   import MapView from "./MapView.svelte";
   import RightNow from "./RightNow.svelte";
   import RouteView from "./RouteView.svelte";
-  import Sheet from "./Sheet.svelte";
+  import Sheet, { HALF, PEEK } from "./Sheet.svelte";
   import StopView from "./StopView.svelte";
   import TopBar from "./TopBar.svelte";
 
@@ -80,7 +80,7 @@
 
   // Map padding keeps the route clear of the panel: beside it on wide screens, above it on phones.
   const padding = $derived(phone
-    ? { top: topH + 20, bottom: Math.round(window.innerHeight * (size === "peek" ? 0.38 : 0.56)) + 16, left: 40, right: 40 }
+    ? { top: topH + 20, bottom: Math.round(window.innerHeight * (size === "peek" ? PEEK : HALF)) + 16, left: 40, right: 40 }
     : { top: 40, bottom: 40, left: 400, right: 60 });
 
   // Load the open route's patterns (a route's buses can switch patterns mid-day).

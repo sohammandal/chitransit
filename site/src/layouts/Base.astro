@@ -26,6 +26,11 @@ const canonical = new URL(Astro.url.pathname, Astro.site).href;
     <meta name="theme-color" content="#f2f4f3" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#12181d" media="(prefers-color-scheme: dark)" />
     <meta name="apple-mobile-web-app-title" content="chitransit" />
+    <!-- Home-screen app: the map runs up behind the status bar (the panels keep clear of it with
+         --safe-top); a scrim keeps the status bar's white text readable on the light map. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2" />
     <!-- Start the slow handshakes early: the one font face, the basemap host. -->
@@ -37,5 +42,6 @@ const canonical = new URL(Astro.url.pathname, Astro.site).href;
   </head>
   <body>
     <slot />
+    <div class="status-scrim" aria-hidden="true"></div>
   </body>
 </html>

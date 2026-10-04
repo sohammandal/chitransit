@@ -64,3 +64,11 @@ a { color: var(--flag-blue); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Home-screen app on a phone with a notch: the status bar sits over the map (Base.astro); a
+   shade under it keeps its white text readable. Zero tall everywhere else (--safe-top is 0). */
+.status-scrim {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 4; height: calc(var(--safe-top) + 8px);
+  pointer-events: none; background: linear-gradient(rgb(0 0 0 / 0.38), rgb(0 0 0 / 0));
+}
+@media not all and (display-mode: standalone) { .status-scrim { display: none; } }

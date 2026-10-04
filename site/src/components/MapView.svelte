@@ -353,7 +353,7 @@
   }
   /* Phones: controls ride above the bottom sheet (Sheet sets --sheet); pinch replaces +/-. */
   @media (max-width: 640px) {
-    .map :global(.maplibregl-ctrl-bottom-right) { bottom: var(--sheet, 38dvh); transition: bottom 0.32s cubic-bezier(0.2, 0.8, 0.2, 1); }
+    .map :global(.maplibregl-ctrl-bottom-right) { bottom: var(--sheet, 30dvh); transition: bottom var(--settle, 0.32s) cubic-bezier(0.22, 1, 0.36, 1); }
     :global(html[data-sheet-drag]) .map :global(.maplibregl-ctrl-bottom-right) { transition: none; }
     .map :global(.maplibregl-ctrl-group:has(.maplibregl-ctrl-zoom-in)) { display: none; }
   }

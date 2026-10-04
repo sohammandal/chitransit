@@ -225,7 +225,9 @@ test("phone: a drag that starts on a tab resizes the sheet, a tap switches tabs"
 test("phone: a tap skips the full size when the content already fits", async ({ page, isMobile }) => {
   test.skip(!isMobile, "phone layout only");
   await setUp(page);
-  await page.goto("/route/66/"); // short in the fixtures: fits in half
+  // short in the fixtures: fits in half on a tall phone (half is 50% of the screen since Oct 4)
+  await page.setViewportSize({ width: 390, height: 1000 });
+  await page.goto("/route/66/");
   const grab = page.getByRole("button", { name: /Show more|Show less/ });
   const sheet = page.locator(".sheet");
   await expect(sheet).toHaveClass(/half/);
@@ -1133,4 +1135,26 @@ test("search engines may index every page, under one address each (Oct 4)", asyn
   await expect(page.locator('meta[http-equiv="content-security-policy"]')).toHaveCount(1);
   const robots = await (await page.request.get("/robots.txt")).text();
   expect(robots).not.toMatch(/Disallow: \/\s/);
+});
+
+test("about: the Unofficial pill is centered on the heading's capitals (Oct 4)", async ({ page }) => {
+  await setUp(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "About" }).click();
+  // Overpass capitals sit ~3 px above the middle of the 20 px heading's line box (4x screenshot).
+  // Polled: the sheet may still be growing when About opens.
+  const lift = async () => {
+    const h2 = (await page.locator(".sheet header h2").boundingBox())!;
+    const tag = (await page.locator(".sheet header .tag").boundingBox())!;
+    return h2.y + h2.height / 2 - (tag.y + tag.height / 2);
+  };
+  await expect.poll(lift).toBeGreaterThan(2);
+  await expect.poll(lift).toBeLessThan(4);
+});
+
+test("home-screen app: the map runs up behind the status bar; no shade in a browser tab (Oct 4)", async ({ page }) => {
+  await setUp(page);
+  await page.goto("/");
+  await expect(page.locator('meta[name="apple-mobile-web-app-status-bar-style"]')).toHaveAttribute("content", "black-translucent");
+  await expect(page.locator(".status-scrim")).toBeHidden(); // only in standalone display mode
 });
