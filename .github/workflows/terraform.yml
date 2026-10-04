@@ -9,7 +9,7 @@ name: terraform
 #
 # Repo variables used (Settings -> Secrets and variables -> Actions -> Variables):
 #   AWS_PLAN_ROLE_ARN, AWS_APPLY_ROLE_ARN, TF_STATE_BUCKET   (from bootstrap outputs)
-#   TF_ADMIN_CIDRS (JSON list), TF_ALERT_EMAIL, TF_SSH_PUBLIC_KEY
+# Secrets (masked in logs): TF_ADMIN_CIDRS (JSON list), TF_ALERT_EMAIL, TF_SSH_PUBLIC_KEY
 
 on:
   pull_request:
@@ -32,9 +32,9 @@ env:
   AWS_REGION: us-east-2
   TF_IN_AUTOMATION: "1"
   TF_INPUT: "0"
-  TF_VAR_admin_cidrs: ${{ vars.TF_ADMIN_CIDRS }}
-  TF_VAR_alert_email: ${{ vars.TF_ALERT_EMAIL }}
-  TF_VAR_ssh_public_key: ${{ vars.TF_SSH_PUBLIC_KEY }}
+  TF_VAR_admin_cidrs: ${{ secrets.TF_ADMIN_CIDRS }}
+  TF_VAR_alert_email: ${{ secrets.TF_ALERT_EMAIL }}
+  TF_VAR_ssh_public_key: ${{ secrets.TF_SSH_PUBLIC_KEY }}
 
 defaults:
   run:

@@ -5,7 +5,7 @@ One Lightsail box (us-east-2) runs Postgres, the poller, the monitor and Debeziu
 ## Setup
 
 1. `aws login --profile ghost-ledger` (admin user, us-east-2); `make ssh-key`; `make tf-bootstrap`.
-2. GitHub repo variables: `TF_STATE_BUCKET`, `AWS_PLAN_ROLE_ARN`, `AWS_APPLY_ROLE_ARN` (bootstrap outputs), `TF_ADMIN_CIDRS`, `TF_ALERT_EMAIL`, `TF_SSH_PUBLIC_KEY`. Environment `prod`, limited to `main`. The roles trust the repo's immutable OIDC subject (`gh api repos/<owner>/<repo>/actions/oidc/customization/sub`): see `github_sub_prefixes` in `terraform/bootstrap/main.tf`.
+2. GitHub repo variables `TF_STATE_BUCKET`, `AWS_PLAN_ROLE_ARN`, `AWS_APPLY_ROLE_ARN` (bootstrap outputs); repo secrets `TF_ADMIN_CIDRS`, `TF_ALERT_EMAIL`, `TF_SSH_PUBLIC_KEY`. Environment `prod`, limited to `main`. The roles trust the repo's immutable OIDC subject (`gh api repos/<owner>/<repo>/actions/oidc/customization/sub`): see `github_sub_prefixes` in `terraform/bootstrap/main.tf`.
 3. Push to `main` touching `infra/` for a plan; apply it with Actions → terraform → Run workflow → that run's ID (it applies the saved plan only). Confirm the SNS email.
 4. A `read:packages` token in `~/.config/ghost-ledger/ghcr.token`, then `make prod-secrets CONFIRM=prod` (writes the box's env files, never printed, and deploys).
 5. Check with `make prod-status` and `make prod-logs`.
