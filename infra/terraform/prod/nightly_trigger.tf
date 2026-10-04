@@ -27,7 +27,7 @@ resource "aws_cloudwatch_event_api_destination" "nightly" {
   name                             = "ghost-ledger-nightly-dispatch"
   description                      = "Start the nightly workflow (workflow_dispatch)"
   connection_arn                   = aws_cloudwatch_event_connection.github.arn
-  invocation_endpoint              = "https://api.github.com/repos/sohammandal/cta-ghost-ledger/actions/workflows/nightly.yml/dispatches"
+  invocation_endpoint              = "https://api.github.com/repos/sohammandal/chitransit/actions/workflows/nightly.yml/dispatches"
   http_method                      = "POST"
   invocation_rate_limit_per_second = 1
 }
