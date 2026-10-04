@@ -1,44 +1,136 @@
-# Prod runbook
+# Prod infrastructure runbook
 
-One Lightsail box (us-east-2) runs Postgres, the poller, the monitor and Debezium, pulling `ghcr.io/sohammandal/ghost-ledger:main`. Everything in AWS is Terraform: `terraform/bootstrap` (once, local state: state bucket, GitHub OIDC, CI roles), `terraform/prod` (box, lake, site, alarms). `box/` holds first-boot setup, `deploy.sh` and `push-secrets.sh`; `db/migrations/` the Postgres schema (dbmate); `cdc/debezium/` the Debezium configs.
+Prod is one Lightsail box (us-east-2) running Postgres, the poller, the monitor and Debezium
+(CDC to Iceberg on S3, Glue catalog), deployed by pulling `ghcr.io/sohammandal/ghost-ledger:main`.
+Everything in AWS is Terraform.
 
-## Setup
+```
+infra/
+├── terraform/bootstrap/   # once, from the laptop, local state: state bucket, GitHub OIDC, CI roles
+├── terraform/prod/        # the box, static IP, SSH firewall, box IAM user, SNS, alarms, lake bucket + Glue db
+└── box/                   # setup.sh.tftpl (first boot), deploy.sh (pull-based deploy), push-secrets.sh
+```
 
-1. `aws login --profile ghost-ledger` (admin user, us-east-2); `make ssh-key`; `make tf-bootstrap`.
-2. GitHub repo variables `TF_STATE_BUCKET`, `AWS_PLAN_ROLE_ARN`, `AWS_APPLY_ROLE_ARN` (bootstrap outputs); repo secrets `TF_ADMIN_CIDRS`, `TF_ALERT_EMAIL`, `TF_SSH_PUBLIC_KEY`. Environment `prod`, limited to `main`. The roles trust the repo's immutable OIDC subject (`gh api repos/<owner>/<repo>/actions/oidc/customization/sub`): see `github_sub_prefixes` in `terraform/bootstrap/main.tf`.
-3. Push to `main` touching `infra/` for a plan; apply it with Actions → terraform → Run workflow → that run's ID (it applies the saved plan only). Confirm the SNS email.
-4. A `read:packages` token in `~/.config/ghost-ledger/ghcr.token`, then `make prod-secrets CONFIRM=prod` (writes the box's env files, never printed, and deploys).
-5. Check with `make prod-status` and `make prod-logs`.
+## First-time setup (in order)
+
+1. **AWS CLI login** as an IAM admin user (not root) with `AdministratorAccess` +
+   `SignInLocalDevelopmentAccess`: `aws login --profile ghost-ledger`, region `us-east-2`. Check:
+   `aws sts get-caller-identity --profile ghost-ledger`. The Makefile exports these session
+   credentials for Terraform, because Terraform's S3 backend can't read `aws login` sessions.
+2. **SSH key** (once): `make ssh-key` → `~/.ssh/ghost_ledger`.
+3. **Bootstrap**: `make tf-bootstrap` (shows the plan, asks to approve). Note the outputs:
+   `state_bucket`, `ci_plan_role_arn`, `ci_apply_role_arn`.
+4. **GitHub repo variables and secrets** (Settings → Secrets and variables → Actions). The
+   last three are secrets, so run logs mask them:
+   | Name | Kind | Value |
+   |---|---|---|
+   | `TF_STATE_BUCKET` | variable | bootstrap `state_bucket` |
+   | `AWS_PLAN_ROLE_ARN` | variable | bootstrap `ci_plan_role_arn` |
+   | `AWS_APPLY_ROLE_ARN` | variable | bootstrap `ci_apply_role_arn` |
+   | `TF_ADMIN_CIDRS` | secret | `["<your IP>/32"]` (`curl -s https://checkip.amazonaws.com`) |
+   | `TF_ALERT_EMAIL` | secret | where alarms go |
+   | `TF_SSH_PUBLIC_KEY` | secret | contents of `~/.ssh/ghost_ledger.pub` |
+5. **GitHub environment** `prod`, deployments limited to the `main` branch (Settings →
+   Environments). The apply role only trusts jobs in this environment. The trust uses the repo's
+   immutable OIDC subject (`gh api repos/<owner>/<repo>/actions/oidc/customization/sub`); if it
+   ever changes, update `github_sub_prefixes` in `terraform/bootstrap/main.tf`.
+6. **Plan**: push to `main` touching `infra/` (or Actions → terraform → Run workflow with the
+   run ID left empty). Read the plan in that run's log; note the **run ID** (in its URL).
+   From the laptop instead: copy `prod/backend.hcl.example` → `backend.hcl` and
+   `prod/terraform.tfvars.example` → `terraform.tfvars`, then `make tf-plan`.
+7. **Apply exactly that plan**: Actions → terraform → Run workflow → paste the run ID. The job
+   checks it was a successful `main` run, shows the plan, and applies that saved file (never
+   a fresh plan; Terraform refuses it if state changed since). The box boots, installs Docker,
+   and its deploy timer waits for secrets.
+8. **Confirm the SNS email** AWS sends to `TF_ALERT_EMAIL`. No alarm is delivered until then.
+9. **GitHub token for the box**: a fine-grained or classic token with `read:packages`, saved to
+   `~/.config/ghost-ledger/ghcr.token` (mode 0600). The image is private.
+10. **Secrets + first deploy**: `make prod-secrets CONFIRM=prod`. Writes `/etc/ghost-ledger/prod.env`
+    and `ghcr.env` over SSH (never printed), creates the box's AWS key, and deploys.
+11. **Check**: `make prod-status`, `make prod-logs`, and the `GhostLedger/prod` metrics in CloudWatch.
+12. **Alarm drill**: `make prod-ssh`, then pause the deploy timer first (it would restart the
+    poller within 5 minutes, before the alarm fires):
+    `sudo systemctl stop ghost-ledger-deploy.timer && sudo docker stop ghost-ledger-poller-1`.
+    The `poller-stale` alarm emails within ~7 minutes. Then
+    `sudo systemctl start ghost-ledger-deploy.timer ghost-ledger-deploy` brings the poller back;
+    the OK email follows.
 
 ## Day to day
 
-- **Deploy:** merge to `main`; the box pulls the image within 5 minutes.
-- **Infra:** edit `terraform/prod`, push, read the plan, apply it by run ID.
-- **Secrets:** `make prod-secrets CONFIRM=prod`. Env changes: pause the deploy timer, then a `FORCE=1` deploy.
-- **Query prod:** `make prod-tunnel`, then `psql` on `localhost:15432`. CDC check: `scripts/check_ingress.py`.
-- **deploy.sh** never updates itself: `make box-deploy-script CONFIRM=prod`.
+- **Deploy**: merge to `main`. CI tests, pushes the image; the box picks it up within 5 minutes
+  and rolls back by itself if no sweep commits afterwards (see Deploy safety).
+- **Change infra**: edit `terraform/prod`, push, read the plan, then run the workflow with that
+  plan's run ID.
+- **Rotate secrets / fix the env file**: `make prod-secrets CONFIRM=prod` (keeps the Postgres
+  password and a still-active AWS key, then force-redeploys so containers read the new file).
+  It never deletes an active AWS key; after a rotation, delete the old one once prod is healthy.
+- **Query prod**: `make prod-tunnel`, then `psql postgresql://ghost:<pw>@localhost:15432/ghost_ledger`.
+- **Check CDC**: with the tunnel open, `scripts/check_ingress.py` (usage in its docstring) compares
+  Ingress (Iceberg via Glue, read with DuckDB) against Postgres and rebuilds `bus_assignments`
+  from the change log. Debezium runs under compose profile `cdc`, which `deploy.sh` enables; its
+  config is `infra/cdc/debezium/application.prod.properties`, and its offsets live in Iceberg, so a
+  restart resumes where it stopped.
+- **Stop CDC on purpose** (drill): pause the timer first, or deploy.sh restarts Debezium within
+  5 minutes: `sudo systemctl stop ghost-ledger-deploy.timer && sudo docker stop ghost-ledger-debezium-1`.
+  The slot keeps WAL (capped at 2 GB); `cdc-slot-inactive` emails after 10 minutes.
 
 ## Deploy safety
 
-- Images are built only after lint and every test pass, and must be signed by `ci.yml` on `main` (cosign).
-- After a deploy a sweep must commit within ~2 minutes, or the box rolls back to `ghost-ledger-deploy:last-good` and won't retry that image. Manual rollback: `sudo env IMAGE=ghcr.io/sohammandal/ghost-ledger:<sha> FORCE=1 /usr/local/bin/ghost-ledger-deploy`.
-- Migrations are never rolled back: expand, then contract; never rewrite or long-lock `bus_positions` or `raw_responses`; published tables change additively, and a new one ships in two deploys (Debezium include list first); never `TRUNCATE` or bulk `DELETE` a published table, drop partitions.
+- **CI gate:** the prod image is built only after lint and all tests pass (the tests run every
+  migration against Postgres 17). Each image is tagged `main` and with its commit SHA.
+- **Health gate + auto-rollback** (`deploy.sh`): after a deploy a sweep must commit within
+  ~2 minutes. If none does, the box redeploys its local `ghost-ledger-deploy:last-good` image
+  (with that image's compose files), remembers the bad image id in `/opt/ghost-ledger/.bad-image`
+  and won't redeploy it; the next CI image replaces it. The log line starts `deploy: UNHEALTHY`.
+- **Manual rollback:** `make prod-ssh`, then
+  `sudo env IMAGE=ghcr.io/sohammandal/ghost-ledger:<sha> FORCE=1 /usr/local/bin/ghost-ledger-deploy`
+  (the timer goes back to `:main` on its next run, so also revert on main).
+- **Migrations are never rolled back automatically.** A failed migration undoes itself (dbmate
+  runs each in a transaction); a successful one stays, so every migration must work with the
+  code already running:
+  - **Expand, then contract.** Add tables/columns first; drop or rename only in a later deploy,
+    once no running code uses the old shape.
+  - **Never rewrite or long-lock a big table** (`bus_positions`, `raw_responses`): no column type
+    changes, no non-concurrent index builds, no `ADD COLUMN ... DEFAULT <volatile>`.
+  - **Published tables change additively** (Debezium and Iceberg add columns; drops and renames
+    need a plan). A new published table ships in two deploys: the Debezium include list first,
+    then the migration that adds it to the publication.
+  - Never `TRUNCATE` or bulk `DELETE` a published table (both stream to Ingress); drop partitions.
 
-## Easy to break
+## Things that are easy to break
 
-- `user_data` runs only at first boot; changing it would replace the box and its database. It's appended to Lightsail's own `/bin/sh` script, and `${...}` is interpolated even in comments (`$${...}` for a literal).
-- The box and the lake bucket have `prevent_destroy`. Ingress data files are locked for 10 years; nothing may delete them.
-- Apply AWS changes before shipping code that needs them (a Debezium without its bucket crash-loops and holds WAL).
+- **Never change `user_data` expecting an effect**: it's ignored after first boot (changing it
+  would otherwise replace the instance and its database). `deploy.sh` updates itself from images.
+- **Lightsail user_data is a shell script, not cloud-config**: Lightsail appends it to its own
+  `#!/bin/sh` launch script. `setup.sh.tftpl` keeps the outer part POSIX sh with no `exit`, and
+  runs the real setup (bash) from a file; its log is `/var/log/ghost-ledger-setup.log`.
+- **Template escapes**: in `setup.sh.tftpl` any `${...}` is interpolated, even in comments.
+  Write `$${...}` for a literal; `tests/test_box_templates.py` enforces this.
+- **The instance and the lake bucket have `prevent_destroy`**. Destroying either means removing
+  that on purpose. The lake is versioned (old versions kept 30 days); the box can't delete tables.
+- **Deploy order for AWS-dependent services**: apply the Terraform first, then ship the compose
+  change. A Debezium that starts before its bucket/catalog exist creates a slot, crash-loops and
+  holds WAL.
+- **`docker logs` spans container restarts**: filter with `--since` when checking a restart.
 
 ## Nightly trigger token
 
-EventBridge starts the nightly at 06:23 CDT through GitHub's workflow_dispatch API; the token lives only in the EventBridge connection `ghost-ledger-github`. To rotate it: a fine-grained token for this repo only with **Actions: Read and write**, then
+AWS EventBridge starts the nightly at 06:23 CDT / 05:23 CST by calling GitHub's
+workflow_dispatch API (`infra/terraform/prod/nightly_trigger.tf`); GitHub's own schedule is only
+a backup (it's best effort: Sep 27 ran 4.5 h late, Sep 28 never started). The GitHub token lives
+only in the EventBridge connection `ghost-ledger-github`, never in Terraform or its state.
 
-```bash
-read -rs T && aws events update-connection --profile ghost-ledger --region us-east-2 \
-  --name ghost-ledger-github --authorization-type API_KEY \
-  --auth-parameters "{\"ApiKeyAuthParameters\":{\"ApiKeyName\":\"Authorization\",\"ApiKeyValue\":\"Bearer $T\"}}" \
-  --query ConnectionState --output text; unset T
-```
+To set or rotate it (yearly, when the token expires):
+1. GitHub → Settings → Developer settings → Fine-grained tokens → Generate: repository
+   `chitransit` only, Repository permissions → **Actions: Read and write**, nothing else.
+2. From your own terminal (the token is read without echo and never printed):
+   ```bash
+   read -rs T && aws events update-connection --profile ghost-ledger --region us-east-2 \
+     --name ghost-ledger-github --authorization-type API_KEY \
+     --auth-parameters "{\"ApiKeyAuthParameters\":{\"ApiKeyName\":\"Authorization\",\"ApiKeyValue\":\"Bearer $T\"}}" \
+     --query ConnectionState --output text; unset T
+   ```
+   It prints `AUTHORIZED`.
 
-If it fails, the `report-stale` alarm emails after 10:00 CT.
+If the token expires or every start fails, the `report-stale` alarm emails after 10:00 CT
+(the box monitor checks that the public report includes yesterday).
