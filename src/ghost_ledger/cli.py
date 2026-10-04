@@ -1,6 +1,5 @@
-"""Smoke-test CLI. Every command runs against GHOST_LEDGER_ENV (default dev); see config.py.
-
-The poller itself is week-1 step 3 (docs/PLAN.md).
+"""The command line (env, routes, vehicles, poll, monitor, check-db). Every command runs
+against GHOST_LEDGER_ENV (default dev); see config.py.
 """
 
 import argparse

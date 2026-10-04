@@ -45,7 +45,7 @@ class Settings:
     poll_interval_seconds: int
     # None = every route from getroutes; otherwise only these (dev, once prod runs)
     poll_routes: tuple[str, ...] | None
-    # A bus missing from the feed this long loses its assignment (docs/PLAN.md)
+    # A bus missing from the feed this long loses its assignment
     assignment_grace_minutes: int
     # Where `ghost-ledger monitor` sends metrics: CloudWatch in prod, the log in dev
     metrics_sink: Literal["log", "cloudwatch"] = "log"

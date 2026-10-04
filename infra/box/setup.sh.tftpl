@@ -15,7 +15,7 @@ apt-get update
 apt-get -y upgrade
 apt-get install -y ca-certificates curl unattended-upgrades
 
-# 2 GB swap: headroom for Postgres + the poller + Debezium's JVM (week 2) on 2 GB of RAM
+# 2 GB swap: headroom for Postgres + the poller + Debezium's JVM on 2 GB of RAM
 if [ ! -f /swapfile ]; then
   fallocate -l 2G /swapfile
   chmod 600 /swapfile

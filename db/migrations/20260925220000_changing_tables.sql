@@ -1,7 +1,7 @@
 -- migrate:up
 -- Changing tables: facts CTA tells us that get updated or go away. They give CDC
--- real UPDATEs and DELETEs with full before-images (DDIA ch. 12), at thousands of
--- rows a day instead of millions. Rules: docs/PLAN.md, "Rules for the changing tables".
+-- real UPDATEs and DELETEs with full before-images, at thousands of rows a day
+-- instead of millions.
 -- Write only on a real change (INSERT ... ON CONFLICT ... DO UPDATE ... WHERE
 -- row IS DISTINCT FROM), so a no-op sweep produces no WAL and no CDC event.
 

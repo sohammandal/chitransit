@@ -2,7 +2,7 @@
 # control: only this distribution can read it). Who writes what:
 #   live/*        the poller on the box, after each sweep (the box user can write nothing else)
 #   everything    the nightly / site workflows (transform role; IAM denies it live/*)
-# The lake is not an origin: nothing in it is public. docs/SITE.md has the layout.
+# The lake is not an origin: nothing in it is public.
 
 locals {
   domain = "chitransit.fyi"
@@ -110,7 +110,7 @@ resource "aws_cloudfront_origin_access_control" "site" {
   signing_protocol                  = "sigv4"
 }
 
-# Preview until the rules are validated (docs/PLAN.md): keep search engines out.
+# Preview until launch: keep search engines out.
 resource "aws_cloudfront_response_headers_policy" "site" {
   name = "ghost-ledger-site"
   custom_headers_config {

@@ -1,4 +1,4 @@
-# Timeliness alarms on the monitor's metrics (docs/PLAN.md, "Monitoring and alerts"), email
+# Timeliness alarms on the monitor's metrics, email
 # via SNS on ALARM and OK. Integrity checks live in Dagster instead. Cost: the account's
 # own AWS Budget ("My Monthly Cost Budget", $25, alerts at 85%/100%) covers this project.
 
@@ -44,7 +44,7 @@ locals {
       periods = 5, missing = "notBreaching",
       text    = "Box disk over 80% (WAL and positions share it)"
     }
-    # CDC (week 2). With no replication slot these metrics are 0, so the alarms stay OK.
+    # CDC. With no replication slot these metrics are 0, so the alarms stay OK.
     cdc-lag-warn = {
       metric  = "ReplicationSlotLagMB", op = "GreaterThanThreshold", threshold = 512,
       periods = 5, missing = "notBreaching",

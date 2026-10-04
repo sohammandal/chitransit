@@ -1,6 +1,6 @@
 # The lake: Ingress Iceberg tables on S3, tracked in the Glue catalog. Debezium on the box
 # writes them (cdc/debezium/application.prod.properties). Ingress is the full change log and
-# is never rebuilt (docs/PLAN.md). How it's protected (audit 2026-09-28):
+# is never rebuilt. How it's protected:
 #   - Versioned: a delete only hides an object; old versions stay recoverable.
 #   - Object Lock (governance, no bucket default): every Ingress data file (the rows) gets a
 #     10-year retention from the nightly maintenance job (transform/lake_maintenance.py).

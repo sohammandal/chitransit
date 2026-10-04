@@ -1,5 +1,5 @@
 # Local system of record for the poller. Logical replication is on so CDC
-# (Debezium Server) can read the WAL in week 2. The same setup runs 24/7 on a Lightsail box.
+# (Debezium Server) can read the WAL. The same setup runs 24/7 on a Lightsail box.
 services:
   postgres:
     image: postgres:17
@@ -15,7 +15,7 @@ services:
       - max_replication_slots=4
       - -c
       - max_wal_senders=4
-      # DDIA ch. 6 "log retention dilemma": cap WAL kept for a lagging CDC slot
+      # Cap the WAL kept for a lagging CDC slot
       - -c
       - max_slot_wal_keep_size=2GB
     ports:
@@ -44,7 +44,7 @@ services:
       postgres:
         condition: service_healthy
 
-  # Week-2 CDC spike (dev): `docker compose --profile cdc up -d debezium`.
+  # CDC in dev: `docker compose --profile cdc up -d debezium`.
   # Reads the dev Postgres change log and writes Iceberg tables to ./data/lake.
   debezium:
     image: ghcr.io/memiiso/debezium-server-iceberg:1.0.0.Final

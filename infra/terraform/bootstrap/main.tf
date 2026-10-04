@@ -26,13 +26,17 @@ variable "region" {
   default = "us-east-2"
 }
 
-# GitHub's OIDC `sub` claim for this repo uses the immutable format (owner and repo IDs), so a
-# renamed or recreated repo with the same name can never assume these roles. Check the prefix:
+# GitHub's OIDC `sub` claim for this repo uses the immutable format (owner and repo IDs), so
+# another repo, even one given the same name, can never assume these roles. Check the prefix:
 #   gh api repos/<owner>/<repo>/actions/oidc/customization/sub   -> sub_claim_prefix
-variable "github_sub_prefix" {
-  description = "The repo's OIDC sub claim prefix (sub_claim_prefix)"
-  type        = string
-  default     = "repo:sohammandal@18245872/cta-ghost-ledger@1388304114"
+# The name is part of it: during a rename both are listed (same IDs), then the old one goes.
+variable "github_sub_prefixes" {
+  description = "The repo's OIDC sub claim prefixes (sub_claim_prefix)"
+  type        = list(string)
+  default = [
+    "repo:sohammandal@18245872/cta-ghost-ledger@1388304114",
+    "repo:sohammandal@18245872/chitransit@1388304114",
+  ]
 }
 
 data "aws_caller_identity" "me" {}
@@ -110,10 +114,9 @@ data "aws_iam_policy_document" "trust_plan" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_host}:sub"
-      values = [
-        "${var.github_sub_prefix}:pull_request",
-        "${var.github_sub_prefix}:ref:refs/heads/main",
-      ]
+      values = flatten([
+        for p in var.github_sub_prefixes : ["${p}:pull_request", "${p}:ref:refs/heads/main"]
+      ])
     }
   }
 }
@@ -135,7 +138,7 @@ data "aws_iam_policy_document" "trust_apply" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_host}:sub"
-      values   = ["${var.github_sub_prefix}:environment:prod"]
+      values   = [for p in var.github_sub_prefixes : "${p}:environment:prod"]
     }
   }
 }
@@ -316,7 +319,7 @@ data "aws_iam_policy_document" "trust_transform" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_host}:sub"
-      values   = ["${var.github_sub_prefix}:ref:refs/heads/main"]
+      values   = [for p in var.github_sub_prefixes : "${p}:ref:refs/heads/main"]
     }
   }
 }

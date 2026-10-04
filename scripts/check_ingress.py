@@ -9,8 +9,7 @@ For the insert-only tables, rows older than the cutoff must appear in Ingress un
 distinct keys as in Postgres, and nothing may land twice (e.g. after a CDC restart): no
 repeated key, and no repeated `__lsn` among streamed changes (snapshot rows, `__op = 'r'`,
 all carry the snapshot's one LSN). Then rebuild `bus_assignments` from its change log alone
-and diff it against Postgres (DDIA ch. 12: state is the integral of the stream). Prototype of
-the Dagster integrity check (week 4) and the prune gate.
+and diff it against Postgres.
 """
 
 import argparse

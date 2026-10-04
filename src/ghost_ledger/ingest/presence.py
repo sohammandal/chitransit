@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta
 
 @dataclass(frozen=True)
 class TripKey:
-    """The trip a bus is running, matched to GTFS on its first departure (docs/PLAN.md)."""
+    """The trip a bus is running, matched to GTFS on its first departure."""
 
     rt: str
     direction: str

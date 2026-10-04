@@ -1,4 +1,4 @@
-"""Timeliness metrics for alarms (docs/PLAN.md, "Monitoring and alerts").
+"""Timeliness metrics for alarms.
 
 Every 60 s: read a few facts from Postgres, turn them into metrics, and send them to
 CloudWatch (prod) or the log (dev, `--dry-run`). Terraform owns the alarms. The monitor
@@ -6,7 +6,7 @@ never decides anything itself; if it dies, the metrics stop and the alarms treat
 data as breaching, so a dead box still pages you.
 
 Timeliness only (is data arriving?). Integrity (is it complete and correct?) is checked
-downstream in Dagster (DDIA ch. 13).
+nightly, by the dbt tests and checks.
 """
 
 import logging
@@ -76,7 +76,7 @@ def compute_metrics(s: Snapshot, poll_interval_seconds: int, disk_used_pct: floa
     empty = s.sweeps_last_10m > 0 and s.sweeps_with_buses_last_10m == 0
     m.append(Metric("ZeroBusesDaytime", 1.0 if (daytime and empty) else 0.0, "None"))
     m.append(Metric("DiskUsedPct", round(disk_used_pct, 1), "Percent"))
-    # CDC (week 2). With no slot yet these are all 0, which keeps the alarms quiet.
+    # CDC. With no slot these are all 0, which keeps the alarms quiet.
     lags = [lag for _, _, lag in s.slots if lag is not None]
     m.append(Metric("ReplicationSlotLagMB", round(max(lags, default=0) / 1_048_576, 1), "None"))
     lost = sum(1 for _, status, _ in s.slots if status in ("lost", "unreserved"))

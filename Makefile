@@ -8,7 +8,7 @@ $(error ENV must be dev or prod, got '$(ENV)')
 endif
 export GHOST_LEDGER_ENV := $(ENV)
 
-# Prod layers compose.prod.yml (week 2) over the shared base.
+# Prod layers compose.prod.yml over the shared base.
 COMPOSE = docker compose -f compose.yml $(if $(filter prod,$(ENV)),-f compose.prod.yml)
 PYTHON = uv run python
 CLI = uv run ghost-ledger
@@ -99,7 +99,7 @@ rehearse-down:      ## stop the rehearsal and delete its data
 	$(REHEARSAL_COMPOSE) down -v
 	rm -rf $(REHEARSAL)
 
-# ---------- prod infrastructure (step 4; docs/PLAN.md) ----------
+# ---------- prod infrastructure ----------
 # AWS access from the laptop: `aws login --profile ghost-ledger` (12 h sessions). Terraform's
 # S3 backend can't read `aws login` sessions yet, so export them as plain env credentials.
 AWS_PROFILE_NAME ?= ghost-ledger

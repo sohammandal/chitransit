@@ -1,5 +1,5 @@
 # The prod box: one Lightsail instance running Postgres, the poller and the monitor (and
-# Debezium from week 2), deployed by infra/box/deploy.sh pulling images from GHCR.
+# Debezium), deployed by infra/box/deploy.sh pulling images from GHCR.
 
 resource "aws_lightsail_key_pair" "admin" {
   name       = "ghost-ledger-admin"
@@ -20,7 +20,7 @@ resource "aws_lightsail_instance" "box" {
   })
 
   # Daily snapshot of the whole disk. Postgres keeps only ~2 days once the prune gate runs;
-  # Ingress on S3 holds the full log (DDIA ch. 6: replication is not backup).
+  # Ingress on S3 holds the full log.
   add_on {
     type          = "AutoSnapshot"
     snapshot_time = "10:00" # UTC = 05:00 Chicago (CDT), low service
@@ -29,7 +29,7 @@ resource "aws_lightsail_instance" "box" {
 
   lifecycle {
     # user_data only runs at first boot, and changing it would REPLACE the instance
-    # (and its database). deploy.sh keeps itself current from each new image instead.
+    # (and its database). deploy.sh is installed separately: make box-deploy-script.
     ignore_changes  = [user_data]
     prevent_destroy = true
   }

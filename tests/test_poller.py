@@ -264,7 +264,7 @@ POSITION_COLUMNS = (
 
 def assert_replayable(conn, sweep_id: int) -> None:
     """Every call of the sweep has its exact response stored, and re-parsing the stored
-    getvehicles text with parse_vehicle reproduces bus_positions (DDIA ch. 12: derived
+    getvehicles text with parse_vehicle reproduces bus_positions (derived
     data can be rebuilt from the immutable input)."""
     calls = conn.execute(
         "SELECT p.poll_id, p.endpoint, r.body FROM ops.raw_polls p "

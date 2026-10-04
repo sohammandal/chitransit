@@ -1,4 +1,4 @@
-"""Nightly upkeep of Ingress, the Iceberg change log on S3 (audit 2026-09-28, docs/PLAN.md).
+"""Nightly upkeep of Ingress, the Iceberg change log on S3.
 
 Ingress is append-only, so every row ever written is in the current snapshot; an old snapshot
 is only "the log up to LSN x". The rows live in the data files, which must never be lost; the

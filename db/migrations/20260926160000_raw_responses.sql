@@ -1,8 +1,8 @@
 -- migrate:up
 -- Every API response body exactly as received, one row per call (raw_polls holds the
 -- call's metadata under the same poll_id). This is the immutable input: every derived
--- table, bus_positions included, can be rebuilt by re-parsing it with fixed code
--- (DDIA ch. 12). CTA has no history endpoint, so a field we fail to parse today is
+-- table, bus_positions included, can be rebuilt by re-parsing it with fixed code.
+-- CTA has no history endpoint, so a field we fail to parse today is
 -- otherwise lost for good.
 -- Written in the sweep's transaction and published for CDC like everything else.
 -- Partitioned by UTC day of fetched_at so the prune gate can DROP old days.

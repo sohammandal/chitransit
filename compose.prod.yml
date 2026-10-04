@@ -20,7 +20,7 @@ services:
   postgres:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in the prod env file}
-    # Tuned for a 2 GB box shared with the poller, monitor and (week 2) Debezium
+    # Tuned for a 2 GB box shared with the poller, monitor and Debezium
     command:
       - postgres
       - -c

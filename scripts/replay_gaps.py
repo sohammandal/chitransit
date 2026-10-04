@@ -2,7 +2,7 @@
 to ghost_ledger.live's waits).
 
 Ingress keeps every bus report, so a past day can be fed, sweep by sweep, to the production
-LiveBoard exactly as the poller would (DDIA ch. 11: replay the log). Each sample of a bus is
+LiveBoard exactly as the poller would. Each sample of a bus is
 scored against what hindsight knows, and the pass definition itself is checked against the
 schedule:
 

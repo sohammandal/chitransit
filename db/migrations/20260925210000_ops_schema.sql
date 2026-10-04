@@ -1,6 +1,6 @@
 -- migrate:up
--- System of record for the pollers (DDIA ch. 12-13: one writer, everything
--- else derived from this database's change log via CDC).
+-- System of record for the pollers: one writer, everything else derived from
+-- this database's change log via CDC.
 -- Each 30 s sweep writes sweeps + raw_polls + bus_positions in ONE transaction.
 -- Postgres keeps about two days; the full log lives in Ingress (Iceberg on S3).
 
@@ -21,7 +21,7 @@ CREATE INDEX sweeps_started_at_idx ON ops.sweeps (started_at);
 
 -- One row per API call: metadata only. The full response is kept only when the
 -- call failed. request_params must never contain the API key.
--- Small (~37k rows/day), so it is not partitioned; retention is set in week 2.
+-- Small (~37k rows/day), so it is not partitioned.
 CREATE TABLE ops.raw_polls (
     poll_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     sweep_id BIGINT NOT NULL REFERENCES ops.sweeps (sweep_id),

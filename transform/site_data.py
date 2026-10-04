@@ -1,4 +1,4 @@
-"""Write the site's static data files from the built analytics tables (docs/SITE.md).
+"""Write the site's static data files from the built analytics tables.
 
 Usage: uv run --group transform python transform/site_data.py
     --db transform/target/ghost_ledger.duckdb --out site/public/data

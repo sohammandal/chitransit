@@ -60,7 +60,7 @@ class ApiResult:
 
     body: dict[str, Any] = field(default_factory=dict)
     # The response exactly as received (last attempt), kept so every derived row can be
-    # rebuilt by re-parsing it (DDIA ch. 12). None when no response arrived at all.
+    # rebuilt by re-parsing it. None when no response arrived at all.
     raw: str | None = None
     http_status: int | None = None
     attempts: int = 0

@@ -1,7 +1,7 @@
 """The live feed for the public site: where every bus is now, and the claims about it.
 
 After each committed sweep the poller hands this module the sweep's vehicle reports. It keeps
-each bus's recent trail in memory and writes two JSON snapshots (docs/SITE.md, "live feed"):
+each bus's recent trail in memory and writes two JSON snapshots:
 
   vehicles.json  {"generated_at": ISO, "build": commit, "no_data_since": ISO | None,
                   "vehicles": [{vid, rt, pid, hdg, lat, lon, dly, des, dir, t, pdist,
@@ -56,10 +56,8 @@ each bus's recent trail in memory and writes two JSON snapshots (docs/SITE.md, "
                  this bus's stops it is back (0: heading for the same stop). Positions only, no
                  forecast: minutes behind were a forecast, wrong by 5+ min 1 time in 10 (Sep 29).
 
-The snapshot is derived and disposable (DDIA ch. 12: a cache of the log, rebuilt from the next
-sweeps), so publishing is best-effort: a failed write is logged and never fails a sweep.
-Schedule-relative judgments (a gap "twice the scheduled headway") are made by the site, which
-joins this feed with the nightly schedule file; the poller only reports what it saw.
+The snapshot is derived and disposable (rebuilt from the next sweeps), so publishing is
+best-effort: a failed write is logged and never fails a sweep.
 """
 
 import base64

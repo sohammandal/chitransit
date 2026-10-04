@@ -30,9 +30,10 @@ export IMAGE ENV_FILE COMPOSE_PROFILES
 
 log() { echo "$(date -u +%FT%TZ) deploy: $*"; }
 
-# Only images signed by the main-branch image job may run here.
+# Only images signed by the main-branch image job may run here (the repo was renamed from
+# cta-ghost-ledger to chitransit: images signed under either name).
 VERIFY="${VERIFY:-1}"
-SIGNER="https://github.com/sohammandal/cta-ghost-ledger/.github/workflows/ci.yml@refs/heads/main"
+SIGNER='^https://github\.com/sohammandal/(chitransit|cta-ghost-ledger)/\.github/workflows/ci\.yml@refs/heads/main$'
 ISSUER="https://token.actions.githubusercontent.com"
 COSIGN_VERSION="v3.1.3"
 COSIGN_SHA256="4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
@@ -63,7 +64,7 @@ signed_by_main() {
   [ -n "$digest" ] || { log "no registry digest for $IMAGE"; return 1; }
   ensure_cosign || { log "cannot install cosign"; return 1; }
   local out
-  if ! out=$("$COSIGN" verify --certificate-identity "$SIGNER" --certificate-oidc-issuer "$ISSUER" \
+  if ! out=$("$COSIGN" verify --certificate-identity-regexp "$SIGNER" --certificate-oidc-issuer "$ISSUER" \
     "$digest" 2>&1 >/dev/null); then
     log "cosign: $(printf '%s' "$out" | tail -1 | cut -c1-200)"  # why, not just "refused"
     return 1

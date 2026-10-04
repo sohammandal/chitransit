@@ -535,7 +535,7 @@ test("bus card: the wait is measured at the bus's next stop; the back link retur
   await page.locator('[aria-label="Bus 8185"]').first().click();
   await expect(page.locator(".near")).toContainText("Next stop Chicago & Ashland");
   await expect(page.getByText("since the last bus passed here")).toBeVisible();
-  await expect(page.locator(".gap strong").first()).toHaveText("30 min");
+  await expect(page.locator(".gap:not(.behind) strong")).toHaveText("30 min");
   await page.getByRole("button", { name: "‹ 66 Chicago" }).click();
   await expect(page.getByText("Together", { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
@@ -741,6 +741,10 @@ test("bus card: the next bus is where it is, stops back, never a forecast (Sep 2
   const behind = page.locator(".gap.behind");
   await expect(behind).toContainText("Next bus");
   await expect(behind).toContainText("3 stops back");
+  // the next bus on the left, the wait in front of this one on the right (Oct 3)
+  const [b, w] = [await behind.boundingBox(), await page.locator(".gap:not(.behind)").boundingBox()];
+  expect(b!.x).toBeLessThan(w!.x);
+  expect(Math.abs(b!.y - w!.y)).toBeLessThan(1); // side by side
   await expect(behind).toContainText(`near ${next.near}`);
   // how far back, along the route (same pattern: the difference of their positions), Oct 3
   await expect(behind).toContainText(`${((bus.pdist - next.pdist) / 5280).toFixed(1)} mi back`);
@@ -815,7 +819,7 @@ test("stop: tap a stop on the map (zoomed in) to see the next buses there, by st
 });
 
 test("stop: click around like a rider: route, stop, bus, back link, Back/Forward, close (Sep 29)", async ({ page }) => {
-  test.slow(); // a whole journey: ~47 s on CI's runner, over the 45 s default (Sep 29)
+  test.slow(); // a long click-through: ~47 s on CI's runner, over the 45 s default (Sep 29)
   const errors = await setUp(page);
   const stops = JSON.parse(fixture("stops.json")!.toString()) as [number, number, string, number[]][];
   // The stops on the map (all of them, not just the ones in view) are exactly those the pids serve
@@ -1055,8 +1059,28 @@ test("stop: how far along the route the buses are, never when they'll come (Oct 
   await page.evaluate(() => window.map!.jumpTo({ center: [-87.66733, 41.89608], zoom: 17 }));
   await tapStop(page, [-87.66733, 41.89608]);
   const row = page.locator(".sheet .rows li").filter({ hasText: "Westbound" });
-  await expect(row.locator(".bus").nth(0)).toContainText(/1 stop away · (\d+\.\d|under 0\.1) mi/);
-  await expect(row.locator(".bus").nth(1)).toContainText(/12 stops away · \d+\.\d mi/);
+  await expect(row.locator(".bus").nth(0)).toContainText(/1 stop away\s*(\d+\.\d|under 0\.1) mi/);
+  await expect(row.locator(".bus").nth(1)).toContainText(/12 stops away\s*\d+\.\d mi/);
+  // the dot between them sits midway (the font's own middle dot has no width: it touched the
+  // distance, Oct 3)
+  const gaps = await row.locator(".bus").nth(1).locator(".sep").evaluate((dot) => {
+    const box = dot.getBoundingClientRect();
+    const text = (n: Node, end: boolean) => {
+      const r = document.createRange();
+      r.selectNodeContents(n);
+      const rects = [...r.getClientRects()];
+      return end ? rects.at(-1)!.right : rects[0].left;
+    };
+    // the nearest words on each side ("12 stops away", "1.4 mi")
+    const walk = document.createTreeWalker(dot.closest("b")!, NodeFilter.SHOW_TEXT);
+    const words: Text[] = [];
+    while (walk.nextNode()) if ((walk.currentNode as Text).data.trim()) words.push(walk.currentNode as Text);
+    const before = words.filter((n) => dot.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_PRECEDING).at(-1)!;
+    const after = words.find((n) => dot.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING)!;
+    return { before: box.left - text(before, true), after: text(after, false) - box.right, w: box.width };
+  });
+  expect(gaps.w).toBeGreaterThan(1);
+  expect(Math.abs(gaps.before - gaps.after)).toBeLessThan(1.5);
   await expect(page.getByText(/min(ute)? until|arrives in/i)).toHaveCount(0);
 });
 

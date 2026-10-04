@@ -55,6 +55,15 @@
 {/if}
 
 <div class="gaps">
+  <!-- the next bus first (left), then the wait in front of this one -->
+  {#if behind && !ends}
+    <div class="gap behind">
+      <span>Next bus</span>
+      <strong>{behind.stops === 0 ? "Same next stop" : `${behind.stops} ${behind.stops === 1 ? "stop" : "stops"} back`}</strong>
+      {#if behindFeet != null}<span>{milesText(behindFeet)} back</span>{/if}
+      {#if behind.bus.near}<span>near {behind.bus.near}</span>{/if}
+    </div>
+  {/if}
   <div class="gap">
     {#if ends}
       <strong>{starting ? "Starting" : "Finishing"}</strong><span>its trip{#if bus.at_terminal}, at the {starting ? "first" : "last"} stop{/if}</span>
@@ -64,15 +73,6 @@
       <strong>–</strong><span>can't tell when the last bus passed {here}</span>
     {/if}
   </div>
-  {#if behind && !ends}
-    <div class="gap behind">
-      <span>Next bus</span>
-      <strong>{behind.stops === 0 ? "Same next stop" : `${behind.stops} ${behind.stops === 1 ? "stop" : "stops"} back`}</strong>
-      {#if behindFeet != null || behind.bus.near}
-        <span>{[behindFeet != null ? `${milesText(behindFeet)} back` : null, behind.bus.near ? `near ${behind.bus.near}` : null].filter(Boolean).join(" · ")}</span>
-      {/if}
-    </div>
-  {/if}
 </div>
 
 {#if pattern}

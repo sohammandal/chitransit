@@ -4,9 +4,9 @@ One sweep = up to 13 getvehicles calls (10 routes each), plus any pattern fetche
 API calls happen first; then everything the sweep learned is written in ONE transaction
 (sweeps, raw_polls, raw_responses, bus_positions, live board, patterns, assignments), so
 every parsed row sits next to the exact response it came from, and CDC sees each
-sweep atomically, in commit order (DDIA ch. 12-13: one system of record, no dual writes).
+sweep atomically, in commit order: one system of record, no dual writes.
 
-Run with `ghost-ledger poll` (or `make poll`). Rules: docs/PLAN.md.
+Run with `ghost-ledger poll` (or `make poll`).
 """
 
 import hashlib
@@ -48,7 +48,7 @@ SCHEDULE_LOAD_EVERY = timedelta(hours=1)
 SCHEDULE_RETRY_EVERY = timedelta(minutes=10)
 ROUTES_REFRESH_EVERY = timedelta(hours=24)
 # Each sample stop gets one getpredictions call per cycle, spread over the cycle's sweeps.
-# ~730 stops -> ~73 calls per 5 min -> ~21k calls/day (docs/PLAN.md, quota). 5 min, not 10:
+# ~730 stops -> ~73 calls per 5 min -> ~21k calls/day. 5 min, not 10:
 # a canceled trip is missing from ~27% of looks at its stops (Sep 26), so each trip needs
 # several looks before "never announced" is believable.
 PREDICTION_SAMPLE_EVERY = timedelta(minutes=5)

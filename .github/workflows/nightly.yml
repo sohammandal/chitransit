@@ -1,6 +1,6 @@
 name: nightly
 
-# The batch layer (DDIA ch. 11): load a new GTFS feed if CTA published one, rebuild the
+# The batch layer: load a new GTFS feed if CTA published one, rebuild the
 # Intermediate and analytics models from Ingress for a window of service dates, test them,
 # and publish the analytics tables to the lake. Everything is derived and idempotent: a rerun
 # of the same window rewrites the same partitions. Run it by hand with a date range to
