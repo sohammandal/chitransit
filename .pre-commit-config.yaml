@@ -23,7 +23,7 @@ repos:
   - repo: https://github.com/sqlfluff/sqlfluff
     rev: 4.3.0
     hooks:
-      # Postgres SQL (db/migrations). dbt models are DuckDB + Jinja: CI validates them with
+      # Postgres SQL (infra/db/migrations). dbt models are DuckDB + Jinja: CI validates them with
       # dbt parse and unit tests instead.
       - id: sqlfluff-fix
         args: [--show-lint-violations]

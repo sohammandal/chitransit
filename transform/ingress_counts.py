@@ -19,7 +19,7 @@ import duckdb
 
 GLUE_DATABASE = "ghost_ledger_ingress"
 REGION = "us-east-2"
-# table -> (key columns, partition column); must match db/migrations and ghost_ledger.prune
+# table -> (key columns, partition column); must match infra/db/migrations and ghost_ledger.prune
 TABLES = {
     "bus_positions": ("vid, observed_at", "observed_at"),
     "raw_responses": ("poll_id, fetched_at", "fetched_at"),

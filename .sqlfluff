@@ -1,5 +1,5 @@
 [sqlfluff]
-# Postgres is the system of record (db/migrations). The dbt project (transform/) is
+# Postgres is the system of record (infra/db/migrations). The dbt project (transform/) is
 # excluded in .pre-commit-config.yaml; dbt parse and unit tests validate it in CI.
 dialect = postgres
 templater = raw

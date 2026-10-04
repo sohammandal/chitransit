@@ -40,7 +40,7 @@ down: guard
 psql: guard
 	$(COMPOSE) exec postgres psql -U ghost -d ghost_ledger
 
-migrate: guard      ## apply pending db/migrations (dbmate)
+migrate: guard      ## apply pending infra/db/migrations (dbmate)
 	$(COMPOSE) run --rm dbmate up
 
 migrate-status: guard

@@ -52,7 +52,7 @@ services:
     restart: always
     logging: *logging
 
-  # One-shot: apply db/migrations (baked into the image) before the poller starts
+  # One-shot: apply the migrations (baked into the image) before the poller starts
   migrate:
     <<: *app
     entrypoint: ["dbmate", "up"]

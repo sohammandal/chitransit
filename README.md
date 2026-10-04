@@ -39,7 +39,7 @@ make transform   # dbt, reading prod Ingress read-only
 cd site && npm install && npx astro dev
 ```
 
-Settings: `.env.example`. Schema changes go in a new migration under `db/migrations/`.
+Settings: `.env.example`. Schema changes go in a new migration under `infra/db/migrations/`.
 
 ## Prior art
 

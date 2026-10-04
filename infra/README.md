@@ -1,6 +1,6 @@
 # Prod runbook
 
-One Lightsail box (us-east-2) runs Postgres, the poller, the monitor and Debezium, pulling `ghcr.io/sohammandal/ghost-ledger:main`. Everything in AWS is Terraform: `terraform/bootstrap` (once, local state: state bucket, GitHub OIDC, CI roles), `terraform/prod` (box, lake, site, alarms). `box/` holds first-boot setup, `deploy.sh` and `push-secrets.sh`.
+One Lightsail box (us-east-2) runs Postgres, the poller, the monitor and Debezium, pulling `ghcr.io/sohammandal/ghost-ledger:main`. Everything in AWS is Terraform: `terraform/bootstrap` (once, local state: state bucket, GitHub OIDC, CI roles), `terraform/prod` (box, lake, site, alarms). `box/` holds first-boot setup, `deploy.sh` and `push-secrets.sh`; `db/migrations/` the Postgres schema (dbmate); `cdc/debezium/` the Debezium configs.
 
 ## Setup
 

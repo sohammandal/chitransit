@@ -28,7 +28,7 @@ services:
       timeout: 3s
       retries: 10
 
-  # Schema migrations (db/migrations). On demand only: `make migrate`.
+  # Schema migrations (infra/db/migrations). On demand only: `make migrate`.
   # Runs the same way on the laptop and on the Lightsail box, nothing to install.
   dbmate:
     image: ghcr.io/amacneil/dbmate:2
@@ -39,7 +39,7 @@ services:
       DBMATE_NO_DUMP_SCHEMA: "true"
       DBMATE_WAIT: "true"
     volumes:
-      - ./db:/db
+      - ./infra/db:/db
     depends_on:
       postgres:
         condition: service_healthy
@@ -50,7 +50,7 @@ services:
     image: ghcr.io/memiiso/debezium-server-iceberg:1.0.0.Final
     profiles: ["cdc"]
     volumes:
-      - ./cdc/debezium/application.dev.properties:/debezium/config/application.properties:ro
+      - ./infra/cdc/debezium/application.dev.properties:/debezium/config/application.properties:ro
       - ./data/lake:/data/warehouse
     depends_on:
       postgres:

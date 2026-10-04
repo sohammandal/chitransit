@@ -1,5 +1,5 @@
 # The lake: Ingress Iceberg tables on S3, tracked in the Glue catalog. Debezium on the box
-# writes them (cdc/debezium/application.prod.properties). Ingress is the full change log and
+# writes them (infra/cdc/debezium/application.prod.properties). Ingress is the full change log and
 # is never rebuilt. How it's protected:
 #   - Versioned: a delete only hides an object; old versions stay recoverable.
 #   - Object Lock (governance, no bucket default): every Ingress data file (the rows) gets a

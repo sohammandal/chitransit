@@ -16,9 +16,9 @@ COPY --from=ghcr.io/amacneil/dbmate:2 /usr/local/bin/dbmate /usr/local/bin/dbmat
 RUN useradd --create-home --uid 10001 app
 WORKDIR /app
 COPY --from=build --chown=app:app /app/.venv /app/.venv
-COPY db ./db
+COPY infra/db ./db
 COPY compose.yml compose.prod.yml infra/box/deploy.sh ./deploy/
-COPY cdc/debezium/application.prod.properties ./deploy/cdc/
+COPY infra/cdc/debezium/application.prod.properties ./deploy/cdc/
 ARG GIT_SHA=unknown
 ENV PATH="/app/.venv/bin:$PATH" \
     GHOST_LEDGER_ENV=prod \

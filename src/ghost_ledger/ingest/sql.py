@@ -1,4 +1,4 @@
-"""SQL the poller runs against the changing tables (db/migrations/*_changing_tables.sql).
+"""SQL the poller runs against the changing tables (infra/db/migrations/*_changing_tables.sql).
 
 Every write is conditional: a sweep that sees nothing new must produce no WAL and
 therefore no CDC event (tests/test_cdc_events.py checks this with a decoding slot).
