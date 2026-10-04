@@ -76,7 +76,7 @@ jobs:
           path: |
             infra/terraform/prod/tfplan
             infra/terraform/prod/plan.txt
-          retention-days: 14
+          retention-days: 3  # a saved plan holds the input values (email, IP)
 
       - name: Post the plan on the PR
         if: github.event_name == 'pull_request'

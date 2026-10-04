@@ -25,6 +25,7 @@ variable "blueprint_id" {
 variable "admin_cidrs" {
   description = "Only these may SSH to the box, e.g. [\"203.0.113.7/32\"]. CI never needs SSH."
   type        = list(string)
+  sensitive   = true
   validation {
     condition     = length(var.admin_cidrs) > 0 && !contains(var.admin_cidrs, "0.0.0.0/0")
     error_message = "Give at least one admin CIDR, and never 0.0.0.0/0."
@@ -34,6 +35,7 @@ variable "admin_cidrs" {
 variable "alert_email" {
   description = "Receives alarm (ALARM and OK) and budget emails. Confirm the SNS email once."
   type        = string
+  sensitive   = true
 }
 
 variable "ssh_public_key" {
