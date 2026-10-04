@@ -1,0 +1,4 @@
+Contact: mailto:soham0411@gmail.com
+Expires: 2027-10-01T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://chitransit.fyi/.well-known/security.txt

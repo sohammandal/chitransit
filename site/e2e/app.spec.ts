@@ -1158,3 +1158,34 @@ test("home-screen app: the map runs up behind the status bar; no shade in a brow
   await expect(page.locator('meta[name="apple-mobile-web-app-status-bar-style"]')).toHaveAttribute("content", "black-translucent");
   await expect(page.locator(".status-scrim")).toBeHidden(); // only in standalone display mode
 });
+
+test("installable: a manifest with its icons (Oct 4)", async ({ page }) => {
+  await setUp(page);
+  await page.goto("/");
+  const href = await page.locator('link[rel="manifest"]').getAttribute("href");
+  const m = await (await page.request.get(href!)).json();
+  expect(m).toMatchObject({ short_name: "chitransit", start_url: "/", display: "standalone" });
+  for (const icon of m.icons) expect((await page.request.get(icon.src)).ok()).toBe(true);
+  expect(m.icons.map((i: { sizes: string }) => i.sizes)).toEqual(expect.arrayContaining(["192x192", "512x512"]));
+});
+
+test("search engines and researchers: schema.org on the home page, security.txt (Oct 4)", async ({ page }) => {
+  await setUp(page);
+  await page.goto("/");
+  const ld = JSON.parse((await page.locator('script[type="application/ld+json"]').textContent())!);
+  expect(ld).toMatchObject({ "@type": "WebApplication", name: "chitransit", isAccessibleForFree: true });
+  const sec = await (await page.request.get("/.well-known/security.txt")).text();
+  expect(sec).toMatch(/^Contact: /m);
+  const expires = new Date(sec.match(/^Expires: (.+)$/m)![1]);
+  // RFC 9116: under a year ahead; renew before it lapses
+  expect(expires.getTime()).toBeGreaterThan(Date.now());
+});
+
+test("link previews: a large image on every page (Oct 4)", async ({ page }) => {
+  await setUp(page);
+  await page.goto("/route/79/");
+  const src = await page.locator('meta[property="og:image"]').getAttribute("content");
+  expect(src).toBe("https://chitransit.fyi/og.jpg");
+  expect((await page.request.get("/og.jpg")).ok()).toBe(true);
+  await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute("content", "summary_large_image");
+});

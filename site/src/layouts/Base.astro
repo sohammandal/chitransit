@@ -10,6 +10,19 @@ interface Props {
 const { title, description } = Astro.props;
 // One address per page for search engines and link previews (www serves the same site).
 const canonical = new URL(Astro.url.pathname, Astro.site).href;
+// What the site is, for search engines (schema.org): on the home page only.
+const home = Astro.url.pathname === "/";
+const site = JSON.stringify({
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  name: "chitransit",
+  url: "https://chitransit.fyi/",
+  description,
+  applicationCategory: "TravelApplication",
+  operatingSystem: "Any",
+  isAccessibleForFree: true,
+  offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+});
 ---
 <!doctype html>
 <html lang="en">
@@ -23,6 +36,11 @@ const canonical = new URL(Astro.url.pathname, Astro.site).href;
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
+    <meta property="og:image" content="https://chitransit.fyi/og.jpg" />
+    <meta property="og:image:width" content="2400" />
+    <meta property="og:image:height" content="1260" />
+    <meta property="og:image:alt" content="The 9 Ashland route view: buses together in amber and long waits in red, beside the live map" />
+    <meta name="twitter:card" content="summary_large_image" />
     <meta name="theme-color" content="#f2f4f3" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#12181d" media="(prefers-color-scheme: dark)" />
     <meta name="apple-mobile-web-app-title" content="chitransit" />
@@ -33,12 +51,15 @@ const canonical = new URL(Astro.url.pathname, Astro.site).href;
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2" />
+    <!-- Installable: Chrome's install button, Android's "Install app" (public/manifest.json) -->
+    <link rel="manifest" href="/manifest.json" />
     <!-- Start the slow handshakes early: the one font face, the basemap host. -->
     <link rel="preload" href={overpassLatin} as="font" type="font/woff2" crossorigin />
     <link rel="preconnect" href="https://tiles.openfreemap.org" crossorigin />
     <!-- Which commit is live: the deploy waits for this before testing prod. -->
     <meta name="build" content={import.meta.env.PUBLIC_BUILD ?? "local"} />
     <title>{title}</title>
+    {home && <script type="application/ld+json" is:inline set:html={site} />}
   </head>
   <body>
     <slot />
