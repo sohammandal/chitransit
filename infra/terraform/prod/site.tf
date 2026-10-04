@@ -63,6 +63,15 @@ resource "aws_route53_record" "site" {
   }
 }
 
+# Google Search Console: proves we own the domain (Oct 4). Keep it: Google rechecks it.
+resource "aws_route53_record" "google_verification" {
+  zone_id = aws_route53_zone.site.zone_id
+  name    = local.domain
+  type    = "TXT"
+  ttl     = 300
+  records = ["google-site-verification=TixlDKOOZzYLi8hzk5noYMYis2UWWoLOj_lE0odc-RE"]
+}
+
 resource "aws_s3_bucket" "site" {
   bucket = "ghost-ledger-site-${data.aws_caller_identity.me.account_id}"
 }
