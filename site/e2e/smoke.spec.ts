@@ -15,6 +15,10 @@ test("live site: new build, live feed, nightly data, a route page", async ({ pag
   for (const f of ["routes.json", "headways.json", "report.json"]) {
     expect((await request.get(`/data/v1/${f}`)).ok(), f).toBe(true);
   }
+  // every published file made it, hidden folders included (Oct 4: .well-known didn't)
+  for (const f of ["/.well-known/security.txt", "/manifest.json", "/og.jpg", "/sitemap-index.xml"]) {
+    expect((await request.get(f)).ok(), f).toBe(true);
+  }
 
   const first = page.locator(".sheet li button").first();
   if (await first.count()) {

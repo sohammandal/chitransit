@@ -80,6 +80,7 @@ jobs:
         with:
           name: dist
           path: site/dist
+          include-hidden-files: true # .well-known/security.txt (skipped by default)
           retention-days: 7
 
   deploy:
