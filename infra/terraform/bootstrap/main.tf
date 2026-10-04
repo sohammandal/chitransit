@@ -34,7 +34,6 @@ variable "github_sub_prefixes" {
   description = "The repo's OIDC sub claim prefixes (sub_claim_prefix)"
   type        = list(string)
   default = [
-    "repo:sohammandal@18245872/cta-ghost-ledger@1388304114",
     "repo:sohammandal@18245872/chitransit@1388304114",
   ]
 }
