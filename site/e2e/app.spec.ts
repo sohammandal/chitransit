@@ -21,7 +21,13 @@ async function setUp(page: Page, missing: string[] = [], f = feed) {
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => { if (m.type() === "error" && !/openfreemap|Failed to load resource/.test(m.text())) errors.push(m.text()); });
   await page.clock.setFixedTime(new Date(new Date(f.generated_at).getTime() + 10_000));
-  await page.addInitScript((f) => { window.__e2e = true; (window as unknown as { __feed: unknown }).__feed = f; }, f);
+  await page.addInitScript((f) => {
+    window.__e2e = true;
+    (window as unknown as { __feed: unknown }).__feed = f;
+    // every Content-Security-Policy violation, checked after each test (afterEach below)
+    const csp: string[] = ((window as unknown as { __csp: string[] }).__csp = []);
+    document.addEventListener("securitypolicyviolation", (e) => csp.push(`${e.violatedDirective} ${e.blockedURI}`));
+  }, f);
   await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: f }));
   await page.route("**/data/v1/**", (r) => {
     const name = new URL(r.request().url()).pathname.replace("/data/v1/", "");
@@ -30,6 +36,12 @@ async function setUp(page: Page, missing: string[] = [], f = feed) {
   });
   return errors;
 }
+
+// The page's Content-Security-Policy (a meta tag the build writes) blocked nothing in any test.
+test.afterEach(async ({ page }) => {
+  const csp = await page.evaluate(() => (window as unknown as { __csp?: string[] }).__csp ?? []).catch(() => []);
+  expect(csp, "CSP violations").toEqual([]);
+});
 
 /** The live search box: once the app has replaced the static first-paint shell (whose copy
  *  is inert: people can't type in it, but a test's fill() could, and lose the text). */
@@ -1111,4 +1123,14 @@ test("a route opened by its link: its × leaves the camera where it is (Oct 3) @
   await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
   expect(await camera(page)).toEqual(before);
   expect(errors).toEqual([]);
+});
+
+test("search engines may index every page, under one address each (Oct 4)", async ({ page }) => {
+  await setUp(page);
+  await page.goto("/route/79/");
+  await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", "https://chitransit.fyi/route/79/");
+  await expect(page.locator('meta[http-equiv="content-security-policy"]')).toHaveCount(1);
+  const robots = await (await page.request.get("/robots.txt")).text();
+  expect(robots).not.toMatch(/Disallow: \/\s/);
 });

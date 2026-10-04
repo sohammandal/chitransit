@@ -1,6 +1,7 @@
 // chitransit.fyi: static output, deployed to a private S3 bucket behind CloudFront.
 import { existsSync, readFileSync } from "node:fs";
 import { defineConfig } from "astro/config";
+import sitemap from "@astrojs/sitemap";
 import svelte from "@astrojs/svelte";
 
 const PROD = "https://www.chitransit.fyi";
@@ -51,9 +52,30 @@ function liveFeedInDev() {
 export default defineConfig({
   site: PROD.replace("www.", ""),
   output: "static",
-  integrations: [svelte()],
+  integrations: [svelte(), sitemap()],
   devToolbar: { enabled: false }, // dev should look like prod
   build: { format: "directory" },
+  // Content Security Policy as a <meta> tag on every page, with hashes for Astro's own inline
+  // scripts (a header can't know them). frame-ancestors can't go in a meta tag: CloudFront sends
+  // it (infra/terraform/prod/site.tf). e2e runs every view under this policy.
+  security: {
+    csp: {
+      directives: [
+        "default-src 'self'",
+        "img-src 'self' data: blob: https://tiles.openfreemap.org",
+        "connect-src 'self' https://tiles.openfreemap.org",
+        "font-src 'self'",
+        "worker-src 'self' blob:",
+        "child-src blob:",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "form-action 'none'",
+      ],
+      scriptDirective: { resources: ["'self'"] },
+      // style="" attributes (Svelte, MapLibre markers); style elements stay hashed
+      styleDirective: { resources: ["'self'", { resource: "'unsafe-inline'", kind: "attribute" }] },
+    },
+  },
   // Dev: the nightly files come from prod too, so localhost shows what the site shows.
   // DATA=local serves public/data instead (transform/site_data.py --out site/public/data),
   // to try a change to those files before the nightly publishes it.

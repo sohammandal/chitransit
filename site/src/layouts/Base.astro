@@ -8,6 +8,8 @@ interface Props {
   description: string;
 }
 const { title, description } = Astro.props;
+// One address per page for search engines and link previews (www serves the same site).
+const canonical = new URL(Astro.url.pathname, Astro.site).href;
 ---
 <!doctype html>
 <html lang="en">
@@ -15,8 +17,12 @@ const { title, description } = Astro.props;
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="description" content={description} />
-    <!-- Preview: keep search engines out until launch -->
-    <meta name="robots" content="noindex, nofollow" />
+    <link rel="canonical" href={canonical} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="chitransit" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
     <meta name="theme-color" content="#f2f4f3" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#12181d" media="(prefers-color-scheme: dark)" />
     <meta name="apple-mobile-web-app-title" content="chitransit" />

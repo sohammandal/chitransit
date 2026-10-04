@@ -110,20 +110,19 @@ resource "aws_cloudfront_origin_access_control" "site" {
   signing_protocol                  = "sigv4"
 }
 
-# Preview until launch: keep search engines out.
+# Security headers. The page's Content-Security-Policy is a <meta> tag the build writes (with
+# hashes of its inline scripts: site/astro.config.mjs); this header adds what a meta tag can't.
 resource "aws_cloudfront_response_headers_policy" "site" {
   name = "ghost-ledger-site"
   custom_headers_config {
     items {
-      header   = "X-Robots-Tag"
-      value    = "noindex, nofollow"
+      header   = "Content-Security-Policy"
+      value    = "frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
       override = true
     }
-    # Report-only until verified against the live map (browsers log violations, block
-    # nothing); then it moves to security_headers_config.content_security_policy.
     items {
-      header   = "Content-Security-Policy-Report-Only"
-      value    = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob: https://tiles.openfreemap.org; connect-src 'self' https://tiles.openfreemap.org; worker-src 'self' blob:; child-src blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
+      header   = "Permissions-Policy"
+      value    = "camera=(), microphone=(), geolocation=(self), payment=(), usb=(), interest-cohort=()"
       override = true
     }
   }
