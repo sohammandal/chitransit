@@ -116,17 +116,16 @@ resource "aws_cloudfront_response_headers_policy" "site" {
   name = "ghost-ledger-site"
   custom_headers_config {
     items {
-      header   = "Content-Security-Policy"
-      value    = "frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
-      override = true
-    }
-    items {
       header   = "Permissions-Policy"
       value    = "camera=(), microphone=(), geolocation=(self), payment=(), usb=(), interest-cohort=()"
       override = true
     }
   }
   security_headers_config {
+    content_security_policy {
+      content_security_policy = "frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
+      override                = true
+    }
     content_type_options {
       override = true
     }
