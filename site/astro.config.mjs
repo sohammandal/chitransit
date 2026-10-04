@@ -63,7 +63,7 @@ export default defineConfig({
       directives: [
         "default-src 'self'",
         "img-src 'self' data: blob: https://tiles.openfreemap.org",
-        "connect-src 'self' https://tiles.openfreemap.org",
+        "connect-src 'self' https://tiles.openfreemap.org https://chitransit.goatcounter.com", // page views: src/lib/count.ts
         "font-src 'self'",
         "worker-src 'self' blob:",
         "child-src blob:",

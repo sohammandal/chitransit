@@ -6,6 +6,7 @@
   //   stop  (tap a stop on the map, zoomed in): the next buses there, by stops away
   // The URL tracks the route, so a route page can be shared and Back works.
   import { onMount } from "svelte";
+  import { countView } from "../lib/count";
   import * as data from "../lib/data";
   import { pollFeed, pollStopWaits } from "../lib/feed";
   import { findProblems, scheduledGap } from "../lib/problems";
@@ -156,6 +157,7 @@
     if (history_ === "push") history.pushState({ prev: here() }, "", url);
     else if (history_ === "replace") history.replaceState({ prev: history.state?.prev ?? null }, "", url);
     document.title = rt ? `${rt} ${names[rt] ?? ""} bus, live | chitransit.fyi` : "Chicago buses, live | chitransit.fyi";
+    if (history_ === "push") countView(); // not while typing a search (replace)
   }
   const fromPath = () => decodeURIComponent(location.pathname.match(/^\/route\/([^/]+)/)?.[1] ?? "") || null;
 
@@ -197,6 +199,7 @@
     route = fromPath();
     stop = history.state?.stop ?? null; // a reload keeps an open stop
     if (route || stop) size = "half";
+    countView();
     const narrow = window.matchMedia("(max-width: 640px)");
     const onWidth = () => (phone = narrow.matches);
     onWidth();
