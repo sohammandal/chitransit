@@ -764,7 +764,9 @@ test("bus card: the next bus is where it is, stops back, never a forecast (Sep 2
   await expect(behind).toContainText(`${((bus.pdist - next.pdist) / 5280).toFixed(1)} mi back`);
   await expect(page.getByText(/until the next bus/)).toHaveCount(0);
   // heading for the same stop (it can still be miles back on an express stretch: #147 Sep 29)
+  // (the next sweep's file: a new generated_at, or the app takes it for the old copy again)
   Object.assign(bus, { behind_stops: 0 });
+  f.generated_at = new Date(new Date(f.generated_at).getTime() + 30_000).toISOString();
   await expect(behind).toContainText("Same next stop", { timeout: 40_000 });
 });
 

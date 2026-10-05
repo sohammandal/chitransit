@@ -2,7 +2,7 @@
   "id": "/",
   "name": "chitransit: Chicago buses, live",
   "short_name": "chitransit",
-  "description": "Every CTA bus on one map, updated every 30 seconds, with the gap to the bus ahead. Unofficial.",
+  "description": "See every Chicago bus live: where riders are waiting far too long, where buses arrive bunched together, and how each route ran yesterday. Unofficial.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
