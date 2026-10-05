@@ -1199,3 +1199,15 @@ test("each page's HTML names it in a heading, before any script runs (Oct 5)", a
   const home = await (await request.get("/")).text();
   expect(home).toMatch(/<h1[^>]*>Chicago buses, live<\/h1>/);
 });
+
+test("about: outside links open in a new tab, leaving the map where it was (Oct 5)", async ({ page }) => {
+  await setUp(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "About" }).click();
+  const links = page.locator(".sheet a[href^='http']");
+  expect(await links.count()).toBeGreaterThanOrEqual(3);
+  for (const a of await links.all()) {
+    await expect(a).toHaveAttribute("target", "_blank");
+    await expect(a).toHaveAttribute("rel", /noopener/);
+  }
+});

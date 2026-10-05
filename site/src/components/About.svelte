@@ -26,9 +26,9 @@
 <div class="fine">
   <p>Data provided by Chicago Transit Authority</p>
   <p>chitransit.fyi is an independent project. It is not affiliated with, made by, or endorsed by the CTA. Figures are our own estimates, and data may be delayed or incomplete</p>
-  <p>Official info: <a href="https://www.transitchicago.com">transitchicago.com</a></p>
+  <p>Official info: <a target="_blank" rel="noopener" href="https://www.transitchicago.com">transitchicago.com</a></p>
   <p>Privacy: no cookies, accounts or ads. Page views are counted without storing who you are, and "locate me" stays on your device</p>
-  <p>Feedback or a problem? <a href="https://github.com/sohammandal/chitransit/issues">Open an issue</a><Sep /><a href="https://github.com/sohammandal/chitransit">Source code</a></p>
+  <p>Feedback or a problem? <a target="_blank" rel="noopener" href="https://github.com/sohammandal/chitransit/issues">Open an issue</a><Sep /><a target="_blank" rel="noopener" href="https://github.com/sohammandal/chitransit">Source code</a></p>
 </div>
 
 <style>
