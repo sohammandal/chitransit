@@ -14,11 +14,16 @@ export async function getStaticPaths() {
   return Object.entries(names).map(([rt, name]) => ({ params: { rt }, props: { rt, name } }));
 }
 const { rt, name } = Astro.props;
+const description = `Every ${rt} ${name} bus, live, with the gaps between them and how yesterday's service went. Unofficial.`;
 ---
 <Base
   title={`${rt} ${name} bus, live | chitransit.fyi`}
-  description={`Every ${rt} ${name} bus, live, with the gaps between them and how yesterday's service went. Unofficial.`}
+  {description}
 >
+  <div class="about-page">
+    <h1>{rt} {name} bus, live</h1>
+    <p>{description}</p>
+  </div>
   <Shell />
   <App client:only="svelte" />
   <noscript>The live map needs JavaScript</noscript>

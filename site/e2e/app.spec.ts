@@ -1191,3 +1191,11 @@ test("link previews: a large image on every page (Oct 4)", async ({ page }) => {
   expect((await page.request.get("/og.jpg")).ok()).toBe(true);
   await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute("content", "summary_large_image");
 });
+
+test("each page's HTML names it in a heading, before any script runs (Oct 5)", async ({ request }) => {
+  // search engines read the HTML first; the app draws its own headings later
+  const route = await (await request.get("/route/66/")).text();
+  expect(route).toMatch(/<h1[^>]*>66 [^<]+ bus, live<\/h1>/);
+  const home = await (await request.get("/")).text();
+  expect(home).toMatch(/<h1[^>]*>Chicago buses, live<\/h1>/);
+});

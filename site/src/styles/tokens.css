@@ -72,3 +72,7 @@ a { color: var(--flag-blue); }
   pointer-events: none; background: linear-gradient(rgb(0 0 0 / 0.38), rgb(0 0 0 / 0));
 }
 @media not all and (display-mode: standalone) { .status-scrim { display: none; } }
+
+/* The page's headline and summary in its HTML, for search engines and screen readers; the app
+   shows the same in its own panels (pages/index.astro, pages/route/[rt].astro). */
+.about-page { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
