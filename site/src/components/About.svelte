@@ -14,7 +14,7 @@
   <dt>Search a route</dt>
   <dd>Each direction as a line, with its gaps</dd>
   <dt>Tap any bus</dt>
-  <dd>On the map or in its route view</dd>
+  <dd>On the map, or on a route's line</dd>
   <dt>Zoom in for stops</dt>
   <dd>Tap one to see what's coming</dd>
   <dt>Right now</dt>

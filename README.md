@@ -19,9 +19,9 @@ Public site: **[chitransit.fyi](https://chitransit.fyi)** - how CTA buses are re
 
 ## Problem
 
-CTA reports that buses delivered 98.8% of scheduled trips in June 2025. A good average can still hide what riders live with: two buses together and then a 25-minute gap, or a trip that never comes and is never flagged as canceled. The official tools show where a bus is and when it's predicted, not how service is actually going.
+Riders experience the bus system at a stop: how long they wait, and how evenly the buses come. CTA publishes its live bus positions, schedules and service alerts as open data, which makes it possible to see how service is going across the whole system, as it happens and day by day. `chitransit` is an independent view built on that data, alongside CTA's own tools.
 
-chitransit shows how Chicago's buses are really running, from CTA's own GPS:
+`chitransit` shows how Chicago's buses are really running, from CTA's own GPS:
 
 - **Right now:** every bus on one map; where riders are in a **long wait** (far longer than the schedule's gap since a bus last passed a stop) and where buses run **together**.
 - **Per route and stop:** each direction as a line with its gaps, the bus ahead and behind, and how long since a bus last passed a stop. Distances along the route, never forecasts.
@@ -96,8 +96,7 @@ Total running cost: about $15–20 a month, and it stays flat as traffic grows: 
 |--------|----------|
 | [CTA Bus Tracker API v3](https://www.transitchicago.com/developers/bustracker/) | Live positions (`getvehicles`), route patterns (`getpatterns`), cancellation flags (`getpredictions`) |
 | [CTA static GTFS](https://www.transitchicago.com/developers/gtfs/) | The current schedule |
-| [Transitland archive](https://www.transit.land/feeds/f-dp3-cta) | ~100 historical schedule versions since 2021 |
-| [Ghost Buses / CTA StopWatch](https://github.com/mansueto-institute/cta-stop-watch) | 5-minute bus history (2022 to today) for backfill and cross-checks |
+| [CTA Customer Alerts API](https://www.transitchicago.com/developers/alerts/) | CTA's own announcements (reroutes, disruptions), as context for gaps |
 
 ---
 
