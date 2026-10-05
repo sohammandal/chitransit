@@ -1,0 +1,60 @@
+name: Something looks wrong
+description: The site said one thing and the street said another (or something broke)
+title: "[Wrong] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! With the route, direction and time we can check what CTA's GPS showed at that moment.
+  - type: input
+    id: route
+    attributes:
+      label: Route
+      placeholder: "66 Chicago"
+    validations:
+      required: true
+  - type: dropdown
+    id: direction
+    attributes:
+      label: Direction
+      options: [Northbound, Southbound, Eastbound, Westbound, Not sure]
+    validations:
+      required: true
+  - type: input
+    id: when
+    attributes:
+      label: When
+      description: Date and time, as close as you can
+      placeholder: "Oct 5, 5:40 pm"
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Stop or bus number (optional)
+      placeholder: "Chicago & Ashland, or bus 8185"
+  - type: textarea
+    id: site
+    attributes:
+      label: What the site showed
+      placeholder: "A 25 min long wait at Chicago & Ashland"
+    validations:
+      required: true
+  - type: textarea
+    id: street
+    attributes:
+      label: What actually happened
+      placeholder: "A bus had just passed, two minutes earlier"
+    validations:
+      required: true
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot (optional)
+      description: Paste or drag an image here
+  - type: dropdown
+    id: device
+    attributes:
+      label: Device (optional)
+      options: [Phone browser, Phone home-screen app, Computer]

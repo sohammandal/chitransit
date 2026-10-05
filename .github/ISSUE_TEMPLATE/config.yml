@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security problem
+    url: https://chitransit.fyi/.well-known/security.txt
+    about: Please report it privately by email (the address is in security.txt), not in a public issue.
+  - name: Official CTA information
+    url: https://www.transitchicago.com
+    about: Service changes, fares, lost and found and complaints about service go to CTA.
