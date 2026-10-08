@@ -166,6 +166,8 @@ def test_delete_files_stop_it_before_anything_is_read():
         def snapshots(self):
             return []
 
+        metadata = type("M", (), {"properties": {}})()  # no compactions recorded
+
     with pytest.raises(SystemExit):
         ci.plan(Fake(), "started_at", CUTOFF)
 
@@ -211,3 +213,48 @@ def test_rewritten_files_have_small_row_groups_and_compacted_days_can_be_rewritt
         ci.compact(table, "started_at", day, again[day], True, row_group_rows=200)
     table.refresh()
     assert rows(table) == before and largest_group() == 200
+
+
+def expire_all_but_current(t):
+    """What lake_maintenance does after two days: older untagged snapshots are gone."""
+    old = [
+        s.snapshot_id for s in t.snapshots() if s.snapshot_id != t.current_snapshot().snapshot_id
+    ]
+    es = t.maintenance.expire_snapshots()
+    es._snapshot_ids_to_expire = set()  # pyiceberg 0.10 shares this set between instances
+    es.by_ids(old).commit()
+    t.refresh()
+
+
+def test_compacted_days_stay_compacted_after_their_snapshot_expires(table):
+    # Oct 7: compaction snapshots expired after two days, their files looked new again, and
+    # days written as several files (cut by size) were rewritten every night, each time a new
+    # locked copy. The snapshot ids are recorded where they don't expire.
+    groups = ci.plan(table, "started_at", CUTOFF)
+    for day in sorted(groups):
+        ci.compact(table, "started_at", day, groups[day], True)
+    ci.record(table, apply=True)
+    table.append(batch(DAY1 + timedelta(days=3), 5, 50_000, source_sequence=True))  # Debezium
+    table.refresh()
+    before = rows(table)
+    expire_all_but_current(table)
+    assert not any(s.summary.get(ci.MARK) for s in table.snapshots() if s.summary)
+    assert ci.plan(table, "started_at", CUTOFF) == {}  # still known as compacted
+    assert rows(table) == before
+
+
+def test_legacy_compactions_are_adopted_once_by_their_file_names(table):
+    # compactions before Oct 7 were known only by snapshots that have since expired
+    groups = ci.plan(table, "started_at", CUTOFF)
+    for day in sorted(groups):
+        ci.compact(table, "started_at", day, groups[day], True)
+    table.append(batch(DAY1 + timedelta(days=3), 5, 50_000, source_sequence=True))
+    table.refresh()
+    expire_all_but_current(table)
+    assert ci.plan(table, "started_at", CUTOFF) != {}  # the bug: compacted files look new
+    assert ci.plan(table, "started_at", CUTOFF, legacy=True) == {}  # the dry run of adopting
+    assert ci.record(table, apply=False, legacy=True) > 0  # a dry run records nothing
+    assert ci.plan(table, "started_at", CUTOFF) != {}
+    assert ci.record(table, apply=True, legacy=True) > 0
+    assert ci.plan(table, "started_at", CUTOFF) == {}
+    assert ci.record(table, apply=True, legacy=True) == 0  # once

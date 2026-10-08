@@ -13,8 +13,12 @@ Rules (Ingress is the system of record; see CLAUDE.md "Ingress protection"):
     lock), and tagged day snapshots still reference them. Nothing is deleted.
   * Only files whose newest row is before --cutoff (default: two UTC days ago) are touched,
     and never files a compaction wrote, so reruns are no-ops and late CDC files are picked up
-    by the next run. Debezium only appends, so its concurrent commits never conflict with a
-    rewrite; a lost commit race is retried on the refreshed table.
+    by the next run. A compaction's files are known by the snapshot that added them, kept in
+    the table property KEPT: the snapshots themselves expire after two days
+    (lake_maintenance.py), and until Oct 7 that made every compacted day look new again, so it
+    was rewritten every night (a day is written as 2-3 files, cut by size). Debezium only
+    appends, so its concurrent commits never conflict with a rewrite; a lost commit race is
+    retried on the refreshed table.
 """
 
 import argparse
@@ -38,6 +42,10 @@ from pyiceberg.table import Table
 REGION = "us-east-2"
 DATABASE = "ghost_ledger_ingress"
 MARK = "ghost-ledger.compaction"
+KEPT = "ghost-ledger.compaction.snapshots"  # table property: every compaction snapshot id
+# Files this script writes are named by pyiceberg "00000-<n>-<uuid>.parquet"; Debezium names its
+# "<yyyymmdd>-...". Used once (--adopt-legacy) for compactions whose snapshot expired before KEPT.
+LEGACY_NAME = "00000-"
 # table -> time column that sorts and splits it (the column the nightly filters on)
 TABLES = {
     "bus_positions": "observed_at",
@@ -53,18 +61,56 @@ ROW_GROUP_ROWS = {"raw_responses": 1024}
 DEFAULT_ROW_GROUP_ROWS = 131_072
 
 
+def compaction_ids(table: Table) -> set[int]:
+    """Every compaction snapshot: recorded in KEPT, or still in the history with MARK."""
+    kept = {int(x) for x in table.metadata.properties.get(KEPT, "").split(",") if x}
+    return kept | {s.snapshot_id for s in table.snapshots() if s.summary and s.summary.get(MARK)}
+
+
+def record(table: Table, apply: bool, legacy: bool = False) -> int:
+    """Writes every compaction snapshot id into KEPT before the snapshot can expire (metadata
+    only). legacy: also the snapshots that added files named like this script's output, for
+    compactions whose snapshot expired before KEPT existed. Returns how many ids are new."""
+    kept = {int(x) for x in table.metadata.properties.get(KEPT, "").split(",") if x}
+    ids = compaction_ids(table)
+    if legacy:
+        entries = table.inspect.entries().select(["snapshot_id", "data_file"]).to_pylist()
+        ids |= {
+            e["snapshot_id"]
+            for e in entries
+            if e["data_file"]["file_path"].rsplit("/", 1)[-1].startswith(LEGACY_NAME)
+        }
+    new = ids - kept
+    if new and apply:
+        for attempt in range(5):
+            try:
+                value = ",".join(str(i) for i in sorted(ids | compaction_ids(table)))
+                table.transaction().set_properties({KEPT: value}).commit_transaction()
+                break
+            except CommitFailedException:  # Debezium committed meanwhile
+                time.sleep(2 + attempt * 3)
+                table.refresh()
+        else:
+            raise SystemExit(f"{table.name()}: couldn't record compaction snapshots")
+        table.refresh()
+    return len(new)
+
+
 def compacted_paths(table: Table) -> set[str]:
     """Data files added by a compaction snapshot (never rewritten again)."""
-    marked = {s.snapshot_id for s in table.snapshots() if s.summary and s.summary.get(MARK)}
+    marked = compaction_ids(table)
     if not marked:
         return set()
     entries = table.inspect.entries().select(["snapshot_id", "data_file"]).to_pylist()
     return {e["data_file"]["file_path"] for e in entries if e["snapshot_id"] in marked}
 
 
-def plan(table: Table, column: str, cutoff: datetime, again: bool = False) -> dict[date, list]:
+def plan(
+    table: Table, column: str, cutoff: datetime, again: bool = False, legacy: bool = False
+) -> dict[date, list]:
     """Candidate files grouped by the UTC day of their oldest row. again: compacted files too
-    (to rewrite them with other row groups)."""
+    (to rewrite them with other row groups). legacy: files named like a compaction's count as
+    compacted (a dry run of --adopt-legacy)."""
     field = table.schema().find_field(column)
     done = set() if again else compacted_paths(table)
     groups: dict[date, list] = defaultdict(list)
@@ -76,6 +122,8 @@ def plan(table: Table, column: str, cutoff: datetime, again: bool = False) -> di
             # (upsert=false), so this must never happen; stop if it does.
             raise SystemExit(f"{table.name()}: {f.file_path} has delete files; nothing done")
         if f.file_path in done or field.field_id not in f.upper_bounds:
+            continue
+        if legacy and not again and f.file_path.rsplit("/", 1)[-1].startswith(LEGACY_NAME):
             continue
         low = from_bytes(field.field_type, f.lower_bounds[field.field_id])
         high = from_bytes(field.field_type, f.upper_bounds[field.field_id])
@@ -221,6 +269,11 @@ def main() -> None:
     p.add_argument("--day", type=date.fromisoformat, help="only this batch (UTC day)")
     p.add_argument("--apply", action="store_true", help="rewrite and commit (default: plan only)")
     p.add_argument("--again", action="store_true", help="rewrite compacted files too")
+    p.add_argument(
+        "--adopt-legacy",
+        action="store_true",
+        help="also record compactions whose snapshot expired before they were recorded (once)",
+    )
     p.add_argument("--catalog", default="glue", help=argparse.SUPPRESS)  # tests: a local catalog
     args = p.parse_args()
     cutoff_day = args.cutoff or datetime.now(UTC).date() - timedelta(days=2)
@@ -235,12 +288,16 @@ def main() -> None:
     print(f"files entirely before {cutoff:%Y-%m-%d} UTC; {'APPLY' if args.apply else 'dry run'}")
     for name in args.tables.split(","):
         table = catalog.load_table(f"{DATABASE}.ghost_ops_{name}")
-        groups = plan(table, TABLES[name], cutoff, args.again)
+        # Known compactions first (a dry run counts them as if recorded), so none is redone
+        new = record(table, args.apply, args.adopt_legacy)
+        print(f"{name}: {new} compaction snapshots {'recorded' if args.apply else 'to record'}")
+        groups = plan(table, TABLES[name], cutoff, args.again, legacy=args.adopt_legacy)
         print(f"{name}: {sum(map(len, groups.values()))} files in {len(groups)} batches")
         for day in sorted(groups):
             if args.day is None or day == args.day:
                 rows = ROW_GROUP_ROWS.get(name, DEFAULT_ROW_GROUP_ROWS)
                 compact(table, TABLES[name], day, groups[day], args.apply, rows)
+        record(table, args.apply)  # this run's compactions, before their snapshots can expire
 
 
 if __name__ == "__main__":
