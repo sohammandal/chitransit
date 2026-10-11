@@ -14,6 +14,13 @@ export type Problem = {
   where: string | null; // together: near the lead bus; wait: the stop the wait is measured at
 };
 
+/** Whether CTA has a route and direction on a detour now: the feed's rerouted lists that direction,
+ *  or "" (a detour CTA gave no direction: all of them). */
+export function isRerouted(rerouted: Record<string, string[]> | undefined, rt: string, dir: string | null): boolean {
+  const dirs = rerouted?.[rt] ?? [];
+  return dirs.includes("") || (dir != null && dirs.includes(dir));
+}
+
 /** Scheduled seconds between buses for a route and direction at a moment, or null. */
 export function scheduledGap(h: Headways | null, rt: string, dir: string | null, at: Date): number | null {
   if (!h || !dir) return null;

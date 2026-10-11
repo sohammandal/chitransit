@@ -290,7 +290,7 @@
       {:else if level === "stop" && stop}
         <StopView {stop} {rows} loading={stopLoading} {names} onSelect={(vid) => { const name = stop![2]; select(vid, "line"); fromStop = name; }} onClose={() => history.back()} />
       {:else}
-        <RightNow {problems} {names} onOpen={(rt) => go(rt)} />
+        <RightNow {problems} {names} rerouted={feed?.rerouted} onOpen={(rt) => go(rt)} />
       {/if}
     </Sheet>
   {/if}

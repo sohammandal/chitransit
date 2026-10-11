@@ -2,11 +2,15 @@
   // City level: where service is falling apart right now, worst first.
   import { minutes } from "../lib/format";
   import { placeName } from "../lib/labels";
-  import type { Problem } from "../lib/problems";
+  import { isRerouted, type Problem } from "../lib/problems";
+  import Rerouted from "./Rerouted.svelte";
 
-  let { problems, names, onOpen }: {
+  // rerouted: the feed's, so a long wait on a detoured route says so (the wait is real; the detour
+  // is its context, not a reason to hide it)
+  let { problems, names, rerouted = {}, onOpen }: {
     problems: Problem[];
     names: Record<string, string>;
+    rerouted?: Record<string, string[]>;
     onOpen: (rt: string) => void;
   } = $props();
 
@@ -35,6 +39,7 @@
         <span class="what">
           <b>{p.kind === "together" ? `${p.buses.length} buses together` : "Long wait"}{at(p)}</b>
           <span>{names[p.rt] ?? `Route ${p.rt}`} {p.dir.toLowerCase()}</span>
+          {#if isRerouted(rerouted, p.rt, p.dir)}<Rerouted alone />{/if}
         </span>
         {#if p.wait_s != null}
           <span class="wait">{minutes(p.wait_s)}<small>since the last bus</small>{#if p.scheduled_s}<small class="vs">vs every {Math.round(p.scheduled_s / 60)} min</small>{/if}</span>

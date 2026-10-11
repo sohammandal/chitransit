@@ -5,7 +5,9 @@
   import { mainPid, onLine } from "../lib/project";
   import { scheduleRange } from "../lib/waits";
   import type { Alert, Pattern, ReportRow, Vehicle } from "../lib/types";
+  import { isRerouted } from "../lib/problems";
   import Key from "./Key.svelte";
+  import Rerouted from "./Rerouted.svelte";
   import LineView from "./LineView.svelte";
   import ReportCard from "./ReportCard.svelte";
 
@@ -69,7 +71,7 @@
 {/if}
 {#each directions as d (d.dir)}
   <div class="dir line">
-    <p class="lab"><b>{d.dir}{#if rerouted.includes(d.dir) || rerouted.includes("")}<span class="tag">Rerouted</span>{/if}</b>{#if d.range}<span>scheduled every {d.range[0] === d.range[1] ? minutes(d.range[0]) : `${Math.round(d.range[0] / 60)}–${minutes(d.range[1])}`}</span>{/if}</p>
+    <p class="lab"><b>{d.dir}{#if isRerouted({ [rt]: rerouted }, rt, d.dir)}<Rerouted />{/if}</b>{#if d.range}<span>scheduled every {d.range[0] === d.range[1] ? minutes(d.range[0]) : `${Math.round(d.range[0] / 60)}–${minutes(d.range[1])}`}</span>{/if}</p>
     {#if d.pid != null}
       <LineView pattern={patterns.get(d.pid)!} buses={d.drawn} scheduled={d.scheduled} {selected} {onSelect} />
     {:else}
@@ -97,8 +99,6 @@
   .lab { margin: 0; display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--fog); }
   .lab b { color: var(--asphalt); font-size: 14px; }
   .note { margin: 0; font-size: 12px; color: var(--fog); }
-  /* neutral, dashed like the regular streets a reroute skips on the map: amber means "together" */
-  .tag { margin-left: 8px; padding: 2px 6px 0; /* Overpass capitals sit high */ border: 1px dashed var(--fog); border-radius: 6px; color: var(--asphalt); font-size: 11px; font-weight: 700; letter-spacing: 0.02em; vertical-align: 1px; }
   .alerts { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
   .alerts li { padding: 7px 10px 6px; border-radius: 8px; background: var(--concrete); font-size: 13px; line-height: 1.3; }
   .alerts li::before { content: "CTA: "; font-weight: 700; }

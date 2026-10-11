@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findProblems, scheduledGap } from "./problems";
+import { findProblems, isRerouted, scheduledGap } from "./problems";
 import { bus as fake } from "./testing";
 import { behindOf, scheduleRange } from "./waits";
 import type { Headways, Vehicle } from "./types";
@@ -122,5 +122,16 @@ describe("behindOf and scheduleRange", () => {
     expect(scheduleRange([v("A", {}), v("B", { sched_s: 1800 })], 900)).toEqual([600, 1800]);
     expect(scheduleRange([v("A", { sched_s: null, at_terminal: false })], 900)).toEqual([900, 900]);
     expect(scheduleRange([], null)).toBeNull();
+  });
+});
+
+describe("isRerouted", () => {
+  it("is CTA's detour list for that route and direction; no direction means all of them", () => {
+    const rerouted = { "6": ["Northbound"], "146": [""] };
+    expect(isRerouted(rerouted, "6", "Northbound")).toBe(true);
+    expect(isRerouted(rerouted, "6", "Southbound")).toBe(false);
+    expect(isRerouted(rerouted, "146", "Southbound")).toBe(true); // "" = every direction
+    expect(isRerouted(rerouted, "22", "Northbound")).toBe(false);
+    expect(isRerouted(undefined, "6", "Northbound")).toBe(false); // a feed from before the field
   });
 });

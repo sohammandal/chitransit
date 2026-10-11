@@ -1325,3 +1325,24 @@ test("route: the Rerouted pill is centred on its direction's capitals, and its t
   expect(lift).toBeLessThan(1.8);
   expect(await tag.evaluate((e) => parseFloat(getComputedStyle(e).paddingTop) - parseFloat(getComputedStyle(e).paddingBottom))).toBe(2);
 });
+
+test("right now: a long wait or bunch on a route CTA has rerouted says so, the wait still shown (Oct 11) @both", async ({ page }) => {
+  // On reroute days (Marathon, Oct 11) detoured routes' long waits are real (GPS-checked Oct 10),
+  // but read as CTA failures without the context
+  await setUp(page);
+  await page.goto("/");
+  const first = page.locator(".row").first();
+  const rt = (await first.locator(".rt").textContent())!.trim();
+  const dir = (await first.locator(".what span").textContent())!.trim().split(" ").pop()!; // "westbound"
+  const Dir = dir[0].toUpperCase() + dir.slice(1);
+  await setUp(page, [], { ...feed, rerouted: { [rt]: [Dir] } });
+  await page.goto("/");
+  const rows = page.locator(".row");
+  await expect(rows.first().locator(".tag")).toHaveText("Rerouted");
+  await expect(rows.first().locator(".rt")).toHaveText(rt);
+  await expect(rows.first().locator(".what b")).not.toBeEmpty(); // the claim itself, unchanged
+  const tagged = await rows.evaluateAll((els) => els.filter((e) => e.querySelector(".tag"))
+    .map((e) => `${e.querySelector(".rt")!.textContent!.trim()} ${e.querySelector(".what span")!.textContent!.toLowerCase()}`));
+  for (const t of tagged) expect(t.startsWith(`${rt} `) && t.includes(dir)).toBe(true); // only that route and direction
+  await noSideScroll(page);
+});
