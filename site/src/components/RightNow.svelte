@@ -2,6 +2,7 @@
   // City level: where service is falling apart right now, worst first.
   import { minutes } from "../lib/format";
   import { placeName } from "../lib/labels";
+  import { plainClick, routeUrl } from "../lib/links";
   import { isRerouted, type Problem } from "../lib/problems";
   import Rerouted from "./Rerouted.svelte";
 
@@ -34,7 +35,7 @@
 <ul>
   {#each problems as p (p.kind + p.pid + p.buses[0].vid)}
     <li>
-      <button class="row" onclick={() => onOpen(p.rt)}>
+      <a class="row" href={routeUrl(p.rt)} onclick={(e) => { if (plainClick(e)) { e.preventDefault(); onOpen(p.rt); } }}>
         <span class="rt">{p.rt}</span>
         <span class="what">
           <b>{p.kind === "together" ? `${p.buses.length} buses together` : "Long wait"}{at(p)}</b>
@@ -44,7 +45,7 @@
         {#if p.wait_s != null}
           <span class="wait">{minutes(p.wait_s)}<small>since the last bus</small>{#if p.scheduled_s}<small class="vs">vs every {Math.round(p.scheduled_s / 60)} min</small>{/if}</span>
         {/if}
-      </button>
+      </a>
     </li>
   {/each}
 </ul>
@@ -58,7 +59,7 @@
   ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
   .row {
     width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center;
-    text-align: left; font: inherit; color: inherit; border: 0; background: var(--concrete); border-radius: 12px;
+    color: inherit; text-decoration: none; background: var(--concrete); border-radius: 12px;
     padding: 9px 10px; min-height: 56px; cursor: pointer;
   }
   .row:hover { background: var(--surface2); }

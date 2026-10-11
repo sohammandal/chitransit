@@ -1,13 +1,14 @@
 <script lang="ts">
   import Sep from "./Sep.svelte";
-  let { onClose }: { onClose: () => void } = $props();
+  // onClose: the app's panel; without it, the text alone (pages/about.astro's copy in the HTML)
+  let { onClose }: { onClose?: () => void } = $props();
 </script>
 
 <div class="sheet-head">
 <header>
   <h2>Every CTA bus, live</h2>
   <span class="tag">Unofficial</span>
-  <button class="x" onclick={onClose} aria-label="Close">×</button>
+  {#if onClose}<button class="x" onclick={onClose} aria-label="Close">×</button>{/if}
 </header>
 </div>
 <p class="what">How Chicago's buses are really running, live and over time</p>

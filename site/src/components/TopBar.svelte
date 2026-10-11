@@ -3,6 +3,7 @@
   // typing pauses (lib/search.ts), so phones need no Return key; a tap on a suggestion or
   // Return opens at once.
   import { untrack } from "svelte";
+  import { plainClick, routeUrl } from "../lib/links";
   import { matchRoutes, toOpen } from "../lib/search";
   import Mark from "./Mark.svelte";
 
@@ -63,7 +64,8 @@
     <Mark />
     <span><span class="chi">chi</span>transit<b>.fyi</b></span>
   </a>
-  <button class="about-btn" onclick={onAbout} aria-expanded={aboutOpen}>About</button>
+  <!-- A link to About's own page; the app opens a plain click in place -->
+  <a class="about-btn" href="/about/" onclick={(e) => { if (plainClick(e)) { e.preventDefault(); onAbout(); } }} aria-expanded={aboutOpen}>About</a>
   <!-- Two lines in every state, so nothing moves when the first feed arrives. -->
   <p class="status" aria-live="polite">
     {#if count === null}
@@ -107,9 +109,9 @@
       <ul id="route-list" class="list">
         {#each matches as m (m.rt)}
           <li>
-            <button type="button" onmousedown={(e) => e.preventDefault()} onclick={() => open(m.rt, true)}>
+            <a href={routeUrl(m.rt)} onmousedown={(e) => e.preventDefault()} onclick={(e) => { if (plainClick(e)) { e.preventDefault(); open(m.rt, true); } }}>
               <span class="rt">{m.rt}</span><span class="name">{m.name}</span>
-            </button>
+            </a>
           </li>
         {/each}
       </ul>
@@ -128,7 +130,7 @@
     position: absolute; top: 10px; right: 10px; height: 32px; padding: 4px 12px 0; /* Overpass sits high: nudge */
     display: inline-flex; align-items: center; line-height: 1;
     border: 1px solid var(--rule); border-radius: 999px; background: var(--surface);
-    font: inherit; font-size: 13px; font-weight: 700; color: var(--fog); cursor: pointer;
+    font: inherit; font-size: 13px; font-weight: 700; color: var(--fog); text-decoration: none; cursor: pointer;
   }
   .about-btn[aria-expanded="true"] { color: var(--asphalt); border-color: var(--asphalt); }
   .brand { display: flex; align-items: center; gap: 8px; color: var(--asphalt); text-decoration: none; font-size: 19px; font-weight: 800; letter-spacing: -0.01em; }
@@ -159,11 +161,11 @@
     background: var(--surface); border-radius: 12px; box-shadow: var(--shadow);
   }
   .list { list-style: none; margin: 0; padding: 4px; display: grid; gap: 2px; }
-  .list button {
+  .list a {
     width: 100%; display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 8px;
-    border: 0; border-radius: 10px; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer;
+    border-radius: 10px; color: inherit; text-decoration: none; cursor: pointer;
   }
-  .list button:hover, .list button:focus-visible { background: var(--concrete); }
+  .list a:hover, .list a:focus-visible { background: var(--concrete); }
   .rt { display: inline-grid; place-items: center; min-width: 44px; height: 28px; padding: 4px 8px 0; /* Overpass numerals sit high: nudge */ border-radius: 8px; background: var(--asphalt); color: var(--surface); font-weight: 900; font-size: 14px; flex: none; }
   .name { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .miss { margin: 0; padding: 12px 14px; font-size: 13px; color: var(--fog); }

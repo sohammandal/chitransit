@@ -2,6 +2,7 @@
   // Route level, two tabs: Now (each direction as a straight line with its live buses) and
   // Report card (how reliable the route has been on the days we watched).
   import { minutes } from "../lib/format";
+  import { ctaLink } from "../lib/links";
   import { mainPid, onLine } from "../lib/project";
   import { scheduleRange } from "../lib/waits";
   import type { Alert, Pattern, ReportRow, Vehicle } from "../lib/types";
@@ -65,7 +66,8 @@
   <!-- CTA's own words (its bus status page), on CTA's site -->
   <ul class="alerts">
     {#each alerts.filter((a, i) => alerts.findIndex((b) => b.h === a.h) === i) as a (a.h)}
-      <li>{#if a.u}<a href={a.u} target="_blank" rel="noopener">{a.h}</a>{:else}{a.h}{/if}</li>
+      {@const href = ctaLink(a.u)}
+      <li>{#if href}<a {href} target="_blank" rel="noopener">{a.h}</a>{:else}{a.h}{/if}</li>
     {/each}
   </ul>
 {/if}

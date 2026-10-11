@@ -97,7 +97,7 @@ test("route: lines per direction, key, map shows only this route @both", async (
 test("about: opens and closes", async ({ page }) => {
   await setUp(page);
   await page.goto("/");
-  await page.getByRole("button", { name: "About" }).click();
+  await page.getByRole("link", { name: "About" }).click();
   await expect(page.getByText(/not affiliated/)).toBeVisible();
   await page.getByRole("button", { name: "Close" }).click();
   await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
@@ -150,7 +150,7 @@ test("phone: dragging the handle resizes the sheet, and it settles on a size", a
   test.skip(!isMobile, "phone layout only");
   await setUp(page);
   await page.goto("/");
-  await page.getByRole("button", { name: "About" }).click(); // long enough to need "full"
+  await page.getByRole("link", { name: "About" }).click(); // long enough to need "full"
   const grab = page.getByRole("button", { name: /Show more|Show less/ });
   const sheet = page.locator(".sheet");
   await expect(sheet).toHaveClass(/half/);
@@ -191,7 +191,7 @@ test("phone: the title and tabs stay put and drag the sheet; only the rest scrol
   test.skip(!isMobile, "phone layout only");
   await setUp(page);
   await page.goto("/");
-  await page.getByRole("button", { name: "About" }).click(); // long: scrolls at half
+  await page.getByRole("link", { name: "About" }).click(); // long: scrolls at half
   const sheet = page.locator(".sheet");
   await expect(sheet).toHaveClass(/half/);
   await page.waitForTimeout(400); // the sheet animates to its size
@@ -301,7 +301,7 @@ test("search: names suggest routes; tapping one opens it", async ({ page }) => {
   await setUp(page);
   await page.goto("/");
   await (await searchBox(page)).fill("western");
-  await page.getByRole("button", { name: /49B North Western/ }).click();
+  await page.getByRole("link", { name: /49B North Western/ }).click();
   await expect(page).toHaveURL(/\/route\/49B\/$/);
 });
 
@@ -344,7 +344,7 @@ test("map fits every route opened in a row: search, close, search again, then a 
   expect(await offScreen(page, "151")).toBe(0);
 
   await page.getByLabel("Back to all routes").click();
-  const row = page.locator(".sheet li button").first();
+  const row = page.locator(".sheet .row").first();
   const rt = (await row.locator(".rt").innerText()).trim();
   await row.click();
   await expect(page).toHaveURL(new RegExp(`/route/${rt}/$`));
@@ -697,7 +697,7 @@ test("no on-screen text piece ends with a period (only inner periods between sen
   const found: string[] = [];
   await page.goto("/");
   found.push(...(await ends()));
-  await page.getByRole("button", { name: "About" }).click();
+  await page.getByRole("link", { name: "About" }).click();
   found.push(...(await ends()));
   await page.goto("/route/66/");
   found.push(...(await ends()));
@@ -1155,7 +1155,7 @@ test("search engines may index every page, under one address each (Oct 4)", asyn
 test("about: the Unofficial pill is centered on the heading's capitals (Oct 4)", async ({ page }) => {
   await setUp(page);
   await page.goto("/");
-  await page.getByRole("button", { name: "About" }).click();
+  await page.getByRole("link", { name: "About" }).click();
   // Overpass capitals sit ~3 px above the middle of the 20 px heading's line box (4x screenshot).
   // Polled: the sheet may still be growing when About opens.
   const lift = async () => {
@@ -1216,13 +1216,73 @@ test("each page's HTML names it in a heading, before any script runs (Oct 5)", a
 test("about: outside links open in a new tab, leaving the map where it was (Oct 5)", async ({ page }) => {
   await setUp(page);
   await page.goto("/");
-  await page.getByRole("button", { name: "About" }).click();
+  await page.getByRole("link", { name: "About" }).click();
   const links = page.locator(".sheet a[href^='http']");
   expect(await links.count()).toBeGreaterThanOrEqual(3);
   for (const a of await links.all()) {
     await expect(a).toHaveAttribute("target", "_blank");
     await expect(a).toHaveAttribute("rel", /noopener/);
   }
+});
+
+test("about: its own address; Back and × return to what was open under it, bus and all (Oct 11)", async ({ page }) => {
+  const errors = await setUp(page);
+  await page.goto("/route/66/");
+  await page.locator(".sheet .bus").first().click();
+  const bus = page.getByRole("button", { name: "‹ 66 Chicago" });
+  await expect(bus).toBeVisible();
+  await page.getByRole("link", { name: "About" }).click();
+  await expect(page).toHaveURL(/\/about\/$/);
+  await expect(page).toHaveTitle("About | chitransit.fyi");
+  await expect(page.getByText(/not affiliated/)).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/route\/66\/$/);
+  await expect(bus).toBeVisible(); // the bus About was opened over, still open
+  await page.goForward();
+  await expect(page.getByText(/not affiliated/)).toBeVisible();
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page).toHaveURL(/\/route\/66\/$/);
+  await expect(bus).toBeVisible();
+  await expect(page).toHaveTitle(/^66 Chicago bus, live/);
+  expect(errors).toEqual([]);
+});
+
+test("about: a visit that begins at /about/ opens it, its text in the HTML before any script; × goes to the city (Oct 11)", async ({ page, request }) => {
+  // search engines and link previews read the HTML; the app shows the same text in its panel
+  const html = await (await request.get("/about/")).text();
+  expect(html).toMatch(/<h1[^>]*>About chitransit\.fyi<\/h1>/);
+  expect(html).toContain("not affiliated with, made by, or endorsed by the CTA");
+  expect(await (await request.get("/sitemap-0.xml")).text()).toContain("https://chitransit.fyi/about/");
+  const errors = await setUp(page);
+  await page.goto("/about/");
+  await expect(page.locator(".about-copy")).toHaveCount(0); // the HTML's copy: gone once the panel shows it
+  await expect(page.getByText(/not affiliated/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "About" })).toHaveAttribute("aria-expanded", "true");
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/");
+  await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/about\/$/);
+  await expect(page.getByText(/not affiliated/)).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("links: Right now rows, search results and About are real links; a click opens in place (Oct 11) @both", async ({ page }) => {
+  // search engines follow only <a href>, and a rider can open one in a new tab
+  const errors = await setUp(page);
+  await page.goto("/");
+  await expect(page.getByRole("link", { name: "About" })).toHaveAttribute("href", "/about/");
+  const row = page.locator(".sheet .row").first();
+  const href = (await row.getAttribute("href"))!;
+  expect(href).toMatch(/^\/route\/[^/]+\/$/);
+  await page.evaluate(() => ((window as unknown as { kept: boolean }).kept = true)); // gone if the page loads anew
+  await row.click();
+  await expect(page).toHaveURL(new RegExp(`${href}$`));
+  await expect(page.getByLabel("Back to all routes")).toBeVisible();
+  expect(await page.evaluate(() => (window as unknown as { kept?: boolean }).kept)).toBe(true);
+  await (await searchBox(page)).fill("western");
+  await expect(page.getByRole("link", { name: /49B North Western/ })).toHaveAttribute("href", "/route/49B/");
+  expect(errors).toEqual([]);
 });
 
 /** The feed with #66's Westbound buses on a reroute that only the poller's live files have
@@ -1260,6 +1320,21 @@ test("a reroute's own pattern (live files): its buses on the line, the streets i
   await busesDrawn(page);
   await page.waitForFunction(() => window.map!.querySourceFeatures("regular").length > 0);
   await noSideScroll(page);
+  expect(errors).toEqual([]);
+});
+
+test("alerts: only a link to CTA's own site is a link; any other shows as plain text (Oct 11)", async ({ page }) => {
+  // the feed passes CTA's alert links through: a tampered feed (CTA's or our box's) can't plant one
+  const f = { ...rerouted(), alerts: { "66": [
+    { h: "#66 Chicago Temporary Westbound Reroute near Chicago/Noble", u: "https://www.transitchicago.com/travel_information/alert_detail.aspx?AlertId=1" },
+    { h: "Planted headline", u: "https://example.net/login" },
+  ] } };
+  const errors = await setUp(page, [], f);
+  await page.goto("/route/66/");
+  await expect(page.locator(".alerts li")).toHaveCount(2);
+  await expect(page.locator(".alerts a")).toHaveCount(1);
+  await expect(page.locator(".alerts a")).toHaveAttribute("href", /^https:\/\/www\.transitchicago\.com\//);
+  await expect(page.locator(".alerts li", { hasText: "Planted headline" }).locator("a")).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 

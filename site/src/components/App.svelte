@@ -4,9 +4,11 @@
   //   route (/route/66/)    : Now (the route as a line per direction) and its Report card
   //   bus   (tap a bus)     : the gap ahead of and behind that bus
   //   stop  (tap a stop on the map, zoomed in): the next buses there, by stops away
-  // The URL tracks the route, so a route page can be shared and Back works.
+  //   about (/about/)       : what the site is, over whatever was open
+  // The URL tracks the route and About, so they can be shared and Back works.
   import { onMount } from "svelte";
   import { countView } from "../lib/count";
+  import { routeUrl } from "../lib/links";
   import * as data from "../lib/data";
   import { pollFeed, pollStopWaits } from "../lib/feed";
   import { findProblems, scheduledGap } from "../lib/problems";
@@ -149,6 +151,8 @@
     view = { cam, n: view.n + 1 };
   }
 
+  const titleOf = (rt: string | null) => (rt ? `${rt} ${names[rt] ?? ""} bus, live | chitransit.fyi` : "Chicago buses, live | chitransit.fyi");
+
   /** Open a route (or the city). history: "push" a new entry, "replace" the current one (while
    *  typing a search, so Back skips the in-between routes), or "none" (Back/Forward). */
   function go(rt: string | null, history_: "push" | "replace" | "none" = "push", fitMap = true) {
@@ -159,13 +163,37 @@
     selected = null;
     about = false;
     size = rt ? "half" : "peek";
-    const url = rt ? `/route/${encodeURIComponent(rt)}/` : "/";
+    const url = routeUrl(rt);
     if (history_ === "push") history.pushState({ prev: here() }, "", url);
     else if (history_ === "replace") history.replaceState({ prev: history.state?.prev ?? null }, "", url);
-    document.title = rt ? `${rt} ${names[rt] ?? ""} bus, live | chitransit.fyi` : "Chicago buses, live | chitransit.fyi";
+    document.title = titleOf(rt);
     if (history_ === "push") countView(); // not while typing a search (replace)
   }
   const fromPath = () => decodeURIComponent(location.pathname.match(/^\/route\/([^/]+)/)?.[1] ?? "") || null;
+
+  /** About has its own address (pages/about.astro). It opens over whatever is open, which stays
+   *  open under it, so closing it goes Back there (or to the city, for a visit that began on it). */
+  const ABOUT = "/about/";
+  function showAbout() {
+    about = true;
+    if (size === "peek") size = "half";
+    document.title = "About | chitransit.fyi";
+  }
+  function openAbout() {
+    showAbout();
+    history.pushState({ about: "over", prev: here() }, "", ABOUT);
+    countView();
+  }
+  /** About's address gives way to the view under it: a new history entry, as a route's × makes. */
+  function leaveAbout() {
+    about = false;
+    history.pushState(stop ? { stop, prev: here() } : { prev: here() }, "", routeUrl(route));
+    document.title = titleOf(route);
+  }
+  function closeAbout() {
+    if (history.state?.about === "over") history.back();
+    else leaveAbout();
+  }
 
   /** from "map": keep the camera; from "line": zoom the map to the bus. */
   function select(vid: string, from: "map" | "line") {
@@ -173,12 +201,12 @@
     if (!v) return;
     if (from === "line" && vid === selected) return toRoute(); // tap it again: back to the route
     if (v.rt !== route) go(v.rt, "push", false);
+    else if (about) leaveAbout(); // a bus of the route under About: the route's address again
     selected = vid;
     if (from === "line") {
       frame(false); // no route fit on top of the zoom
       focusNonce++;
     }
-    about = false;
     if (size === "peek") size = "half";
   }
   /** Bus → its route: the card's back link names the route, so it shows the whole route. */
@@ -194,7 +222,7 @@
     if (prev) restore(prev);
   }
   function back() {
-    if (about) about = false;
+    if (about) closeAbout();
     else if (stop) history.back();
     else if (selected) toRoute();
     else if (route) close();
@@ -202,8 +230,10 @@
 
   onMount(() => {
     document.querySelector(".shell")?.remove(); // index.astro's static shell, for the first paint
+    document.querySelector(".about-copy")?.remove(); // about.astro's copy of About: the panel shows it now
     route = fromPath();
     stop = history.state?.stop ?? null; // a reload keeps an open stop
+    if (location.pathname === ABOUT) showAbout();
     if (route || stop) size = "half";
     countView();
     const narrow = window.matchMedia("(max-width: 640px)");
@@ -212,6 +242,16 @@
     narrow.addEventListener("change", onWidth);
     const onPop = () => {
       const s: Stop | null = history.state?.stop ?? null;
+      if (location.pathname === ABOUT) {
+        showAbout(); // Forward to About, over what's open
+        return;
+      }
+      // Back from About to the view it was opened over: still open under it, as it was
+      if (about && fromPath() === route && JSON.stringify(s) === JSON.stringify(stop)) {
+        about = false;
+        document.title = titleOf(route);
+        return;
+      }
       const cam = here(); // where the camera was when the rider left this page
       go(fromPath(), "none", !s && !cam);
       if (s) { stop = s; size = "half"; }
@@ -240,12 +280,12 @@
 
 <div class="side panel-column" style:--top-h="{topH}px">
   <div bind:clientHeight={topH}>
-    <TopBar {route} count={feed ? vehicles.length : null} {age} {failed} {downSince} {names} onOpen={(rt, replace) => go(rt, replace ? "replace" : "push")} aboutOpen={about} onAbout={() => { about = !about; if (about && size === "peek") size = "half"; }} />
+    <TopBar {route} count={feed ? vehicles.length : null} {age} {failed} {downSince} {names} onOpen={(rt, replace) => go(rt, replace ? "replace" : "push")} aboutOpen={about} onAbout={() => (about ? closeAbout() : openAbout())} />
   </div>
   {#if feed || about}
     <Sheet {size} onSize={(s) => (size = s)}>
       {#if level === "about"}
-        <About onClose={() => (about = false)} />
+        <About onClose={closeAbout} />
       {:else if level === "bus" && bus}
         <!-- The direction's main line, as on the route view, so a short turn stays a ring;
              a bus that isn't on it (a branch, a detour) gets its own pattern's line -->

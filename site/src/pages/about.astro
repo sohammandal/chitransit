@@ -1,0 +1,19 @@
+---
+// About at its own address, so it can be linked, shared and found: the app with its About panel
+// open (the app reads the URL), and About's text in the HTML for search engines and screen
+// readers (the app removes that copy once its panel shows the same).
+import Base from "../layouts/Base.astro";
+import About from "../components/About.svelte";
+import App from "../components/App.svelte";
+import Shell from "../components/Shell.astro";
+const description = "What chitransit.fyi shows: every Chicago bus live, long waits and buses arriving bunched together, judged against the schedule, and how each route ran. An independent project, not affiliated with CTA.";
+---
+<Base title="About | chitransit.fyi" {description}>
+  <div class="about-page">
+    <h1>About chitransit.fyi</h1>
+    <div class="about-copy"><About /></div>
+  </div>
+  <Shell />
+  <App client:only="svelte" />
+  <noscript>The live map needs JavaScript</noscript>
+</Base>
