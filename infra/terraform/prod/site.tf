@@ -3,7 +3,9 @@
 #   live/*        the poller on the box, after each sweep (the box user can write nothing else;
 #                 CloudFront serves only the feed's own names there: aws_cloudfront_function.index)
 #   everything    the nightly / site workflows (transform role; IAM denies it live/*)
-# The lake is not an origin: nothing in it is public.
+# The lake is not an origin: nothing in it is public. The distribution is on CloudFront's
+# flat-rate Free plan (no overage charges, so a flood can't run up a bill) with a per-IP rate
+# limit (aws_wafv2_web_acl.site); the plan allows no custom header policy (headers below).
 
 locals {
   domain = "chitransit.fyi"
@@ -124,38 +126,73 @@ resource "aws_cloudfront_origin_access_control" "site" {
   signing_protocol                  = "sigv4"
 }
 
-# Security headers. The page's Content-Security-Policy is a <meta> tag the build writes (with
-# hashes of its inline scripts: site/astro.config.mjs); this header adds what a meta tag can't.
-resource "aws_cloudfront_response_headers_policy" "site" {
-  name = "ghost-ledger-site"
-  custom_headers_config {
-    items {
-      header   = "Permissions-Policy"
-      value    = "camera=(), microphone=(), geolocation=(self), payment=(), usb=(), interest-cohort=()"
-      override = true
+# Security headers, within what CloudFront's flat-rate Free plan allows (AWS-managed header
+# policies, functions; no custom header policy). AWS's SecurityHeadersPolicy puts a baseline on
+# every response, errors included (HSTS, nosniff, SAMEORIGIN, Referrer-Policy). CloudFront then
+# runs this function on successful responses (never on 4xx/5xx), which tightens them to the
+# site's own: DENY, HSTS for www too, frame-ancestors (a <meta> CSP can't carry it; the page's
+# CSP is a <meta> tag the build writes: site/astro.config.mjs) and Permissions-Policy.
+data "aws_cloudfront_response_headers_policy" "security" {
+  name = "Managed-SecurityHeadersPolicy"
+}
+
+resource "aws_cloudfront_function" "headers" {
+  name    = "ghost-ledger-site-headers"
+  runtime = "cloudfront-js-2.0"
+  publish = true
+  code    = <<-JS
+    function handler(event) {
+      var h = event.response.headers;
+      h["strict-transport-security"] = { value: "max-age=31536000; includeSubDomains" };
+      h["x-frame-options"] = { value: "DENY" };
+      h["content-security-policy"] = { value: "frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'" };
+      h["permissions-policy"] = { value: "camera=(), microphone=(), geolocation=(self), payment=(), usb=(), interest-cohort=()" };
+      delete h["x-xss-protection"]; // the managed policy's; obsolete, and the site never sent it
+      return event.response;
+    }
+  JS
+}
+
+# A per-IP rate limit at the edge. With the distribution on CloudFront's flat-rate Free plan
+# (subscribed in the console: the provider has no resource for it) the bill can't run away:
+# no overage charges whatever the traffic, and requests WAF blocks don't count. Blocked
+# requests get a 403, shown as the site's 404 page (custom_error_response below).
+resource "aws_wafv2_web_acl" "site" {
+  provider    = aws.us_east_1 # CloudFront's web ACLs live in us-east-1
+  name        = "ghost-ledger-site"
+  description = "chitransit.fyi: per-IP rate limit"
+  scope       = "CLOUDFRONT"
+
+  default_action {
+    allow {}
+  }
+
+  rule {
+    name     = "per-ip-rate"
+    priority = 0
+    action {
+      block {}
+    }
+    statement {
+      # Requests per IP per 5 minutes (10 a second). An open tab makes ~20-40 in that time,
+      # and a page load ~20; generous, as phones and offices can share one address.
+      rate_based_statement {
+        limit                 = 3000
+        aggregate_key_type    = "IP"
+        evaluation_window_sec = 300
+      }
+    }
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "ghost-ledger-site-per-ip-rate"
+      sampled_requests_enabled   = true
     }
   }
-  security_headers_config {
-    content_security_policy {
-      content_security_policy = "frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
-      override                = true
-    }
-    content_type_options {
-      override = true
-    }
-    strict_transport_security {
-      access_control_max_age_sec = 31536000
-      include_subdomains         = true
-      override                   = true
-    }
-    frame_options {
-      frame_option = "DENY"
-      override     = true
-    }
-    referrer_policy {
-      referrer_policy = "strict-origin-when-cross-origin"
-      override        = true
-    }
+
+  visibility_config {
+    cloudwatch_metrics_enabled = true
+    metric_name                = "ghost-ledger-site"
+    sampled_requests_enabled   = true
   }
 }
 
@@ -167,10 +204,11 @@ resource "aws_cloudfront_distribution" "site" {
   enabled             = true
   comment             = "chitransit.fyi"
   default_root_object = "index.html"
-  price_class         = "PriceClass_100"
+  price_class         = "PriceClass_All" # the flat-rate plan's (set on subscribing): every edge, same $0
   http_version        = "http2and3"
   is_ipv6_enabled     = true
   aliases             = [local.domain, "www.${local.domain}"]
+  web_acl_id          = aws_wafv2_web_acl.site.arn
 
   origin {
     origin_id                = "site"
@@ -185,10 +223,14 @@ resource "aws_cloudfront_distribution" "site" {
     cached_methods             = ["GET", "HEAD"]
     compress                   = true
     cache_policy_id            = data.aws_cloudfront_cache_policy.optimized.id
-    response_headers_policy_id = aws_cloudfront_response_headers_policy.site.id
+    response_headers_policy_id = data.aws_cloudfront_response_headers_policy.security.id
     function_association {
       event_type   = "viewer-request"
       function_arn = aws_cloudfront_function.index.arn
+    }
+    function_association {
+      event_type   = "viewer-response"
+      function_arn = aws_cloudfront_function.headers.arn
     }
   }
 
