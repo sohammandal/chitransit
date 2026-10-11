@@ -94,9 +94,9 @@ Total running cost: about $15–20 a month, and it stays flat as traffic grows: 
 
 | Source | Used for |
 |--------|----------|
-| [CTA Bus Tracker API v3](https://www.transitchicago.com/developers/bustracker/) | Live positions (`getvehicles`), route patterns (`getpatterns`), cancellation flags (`getpredictions`) |
+| [CTA Bus Tracker API v3](https://www.transitchicago.com/developers/bustracker/) | Live positions (`getvehicles`), route patterns (`getpatterns`), cancellation flags (`getpredictions`), detours (`getdetours`) |
 | [CTA static GTFS](https://www.transitchicago.com/developers/gtfs/) | The current schedule |
-| [CTA Customer Alerts API](https://www.transitchicago.com/developers/alerts/) | CTA's own announcements (reroutes, disruptions), as context for gaps |
+| [CTA Customer Alerts API](https://www.transitchicago.com/developers/alerts/) | CTA's own announcements (reroutes, disruptions, including those announced ahead), as context for gaps |
 
 ---
 

@@ -57,7 +57,13 @@ PREDICTION_SAMPLE_EVERY = timedelta(minutes=5)
 REPORT_MAX_AGE = timedelta(hours=6)
 REPORT_MAX_AHEAD = timedelta(minutes=10)
 # CTA Customer Alerts (reroutes): keyless, off-quota. Kept raw; dbt reads them as context.
+# Upcoming ones too: the Marathon's reroutes were announced the day before (Oct 10).
 ALERTS_SAMPLE_EVERY = timedelta(minutes=10)
+# CTA's detours (getdetours: ~18 KB, 720 calls a day): kept raw for the history of each detour
+# (when it started, changed, ended), the active ones mark the live feed's rerouted routes, and
+# a route whose detours changed has its patterns fetched again at once (each detour's path as
+# CTA drew it, not the next day's).
+DETOURS_SAMPLE_EVERY = timedelta(minutes=2)
 
 
 def direction_of(rtdir: str) -> str:
@@ -178,6 +184,8 @@ class Poller:
         self._next_partition_check = self.now()
         self._next_routes_refresh = self.now()
         self._next_alerts = self.now()
+        self._next_detours = self.now()
+        self._detours_seen: dict[str, tuple] = {}  # id -> (ver, st, startdt, enddt, routes)
         self._next_schedule_load = self.now()
         self._schedule_version: str | None = None
         self._pending_calls: list[Call] = []
@@ -222,7 +230,8 @@ class Poller:
             if self.live_sink is not None:
                 board = live.LiveBoard()
                 board.seed(conn.execute(sql.LOAD_TRAILS, {"since": self.now() - live.TRAIL}))
-                for pid, rt, rtdir, length, points in conn.execute(sql.LOAD_PATTERN_SHAPES):
+                rows = conn.execute(sql.LOAD_PATTERN_SHAPES).fetchall()
+                for pid, rt, rtdir, length, points, _ in rows:
                     board.routes[pid] = rt
                     board.dirs[pid] = rtdir
                     board.stops[pid] = live.pattern_stops(points)
@@ -231,7 +240,13 @@ class Poller:
                     board.shapes[pid] = live.pattern_shape(points)
                     if length is not None:
                         board.lengths[pid] = float(length)
+                # every pattern's file again after a (re)start: the site reads them first
+                serving = board.serving()
+                for pid, rt, rtdir, _, points, regular in rows:
+                    board.note_pattern(pid, rt, rtdir, points, regular, serving)
                 board.schedule = self.live.schedule  # survives a state reload
+                board.detours = self.live.detours
+                board.alerts = self.live.alerts
                 self.live = board
         self.presence = PresenceTracker(self.presence.grace, trips, last_seen)
         # Every read above must sit inside the transaction block: a statement outside it opens
@@ -326,6 +341,7 @@ class Poller:
                     continue
                 positions.append((call, p))
 
+        self._sample_detours(deadline)
         pattern_rows = self._fetch_patterns(positions, deadline)
         self._sample_predictions(deadline)
         self._sample_alerts(deadline)
@@ -377,8 +393,10 @@ class Poller:
             )
             rows += self._pattern_rows(call, rt)
 
-        if self.now() >= self._next_pattern_refresh and not self._refresh_queue:
-            self._refresh_queue = list(self.routes)
+        if self.now() >= self._next_pattern_refresh:
+            # every route, after any already queued (a detour's route first: _sample_detours)
+            queued = set(self._refresh_queue)
+            self._refresh_queue += [rt for rt in self.routes if rt not in queued]
             self._next_pattern_refresh = self.now() + PATTERN_REFRESH_EVERY
         for _ in range(PATTERN_REFRESH_ROUTES_PER_SWEEP):
             if not self._refresh_queue or self.monotonic() > deadline:
@@ -417,8 +435,48 @@ class Poller:
         # All alerts in full-network mode; only the polled routes when POLL_ROUTES is set
         routes = list(self.settings.poll_routes or [])
         params = {"routeid": ",".join(routes)} if routes else {}
-        self._call("alerts", params, lambda: self.client.get_alerts(routes), routes)
+        params["activeonly"] = "false"
+        call = self._call(
+            "alerts", params, lambda: self.client.get_alerts(routes, active_only=False), routes
+        )
         self._next_alerts = self.now() + ALERTS_SAMPLE_EVERY
+        if call.result.ok:  # else the last known alerts stand; their dates still end them
+            self.live.alerts = live.reroute_alerts(call.result.body)
+
+    def _sample_detours(self, deadline: float) -> None:
+        """getdetours every DETOURS_SAMPLE_EVERY (all routes: it takes one rt at most). Kept raw
+        like every call. Its active detours go to the live feed (rerouted); a route with a
+        detour that's new or changed (version, state or dates) goes to the front of the
+        pattern refresh queue, so the path CTA drew for it is kept the same minute."""
+        if self.now() < self._next_detours or self.monotonic() > deadline:
+            return
+        call = self._call("getdetours", {}, self.client.get_detours)
+        self._next_detours = self.now() + DETOURS_SAMPLE_EVERY
+        if not call.result.ok:
+            return  # the last known detours stand; their dates still end them on time
+        dtrs = call.result.body.get("dtrs", [])
+        seen: dict[str, tuple] = {}
+        for d in dtrs:
+            routes = tuple(str(r["rt"]) for r in d.get("rtdirs") or [] if r.get("rt"))
+            seen[str(d.get("id"))] = (
+                d.get("ver"),
+                d.get("st"),
+                d.get("startdt"),
+                d.get("enddt"),
+                routes,
+            )
+        # new, changed, or gone from the list: their routes' patterns may have changed
+        changed = [
+            rt
+            for key in seen.keys() | self._detours_seen.keys()
+            if seen.get(key) != self._detours_seen.get(key)
+            for rt in (seen.get(key) or self._detours_seen[key])[-1]
+        ]
+        self._detours_seen = seen
+        polled = set(self.routes)
+        first = [rt for rt in dict.fromkeys(changed) if rt in polled]
+        self._refresh_queue = first + [rt for rt in self._refresh_queue if rt not in first]
+        self.live.detours = live.active_detours(dtrs)
 
     def _pattern_rows(self, call: Call, rt: str) -> list[dict[str, Any]]:
         rows = []
@@ -435,6 +493,7 @@ class Poller:
             self.live.shapes[pid] = live.pattern_shape(ptr.get("pt", []))
             if ptr.get("ln") is not None:
                 self.live.lengths[pid] = float(ptr["ln"])
+            self.live.note_pattern(pid, rt, ptr["rtdir"], ptr.get("pt", []), ptr.get("dtrpt"))
             self.stops.update(dict.fromkeys(sample_stops(ptr), rt))
             rows.append({
                 "pid": pid, "rt": rt, "rtdir": ptr["rtdir"], "length_ft": _float(ptr.get("ln")),

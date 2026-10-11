@@ -4,7 +4,10 @@ Verified live on 2026-09-25: getvehicles accepts at most 10 routes per call
 ("Maximum number of rt identifiers exceeded" for 11); tmres=s gives seconds;
 tmstmp is Chicago local time with no offset; getpredictions carries dyn,
 stsd and stst; getpatterns?rt= returns only the patterns running right now,
-so new ones must be fetched by pid when a bus first reports them.
+so new ones must be fetched by pid when a bus first reports them. getdetours (verified
+2026-10-10) lists CTA's detours, each with id, ver, st (1 = active), desc, rtdirs and
+startdt/enddt (Chicago local, "YYYYMMDD HH:MM"); it takes at most one rt, so we ask for all.
+A detoured pattern carries its detour's id (dtrid) and path (dtrpt).
 """
 
 import logging
@@ -177,12 +180,14 @@ class BusTrackerClient:
         serious = [m for m in serious if m not in BENIGN_API_ERRORS]
         return f"API error: {'; '.join(serious)}" if serious else None
 
-    def get_alerts(self, routes: list[str] | None = None) -> ApiResult:
-        """Active CTA Customer Alerts (reroutes, disruptions): a separate, keyless API that
-        doesn't count against the Bus Tracker quota. One attempt; the next sample retries."""
+    def get_alerts(self, routes: list[str] | None = None, active_only: bool = True) -> ApiResult:
+        """CTA Customer Alerts (reroutes, disruptions): a separate, keyless API that doesn't
+        count against the Bus Tracker quota. active_only=False adds alerts announced ahead
+        (the Marathon's reroutes were listed the day before). One attempt; the next sample
+        retries."""
         result = ApiResult(attempts=1)
         started = time.monotonic()
-        params = {"outputType": "JSON", "activeonly": "true"}
+        params = {"outputType": "JSON", "activeonly": "true" if active_only else "false"}
         if routes:
             params["routeid"] = ",".join(routes)
         try:
@@ -223,6 +228,10 @@ class BusTrackerClient:
     def get_pattern(self, pid: int | str) -> ApiResult:
         """One pattern by id, for pids first seen mid-day."""
         return self.call("getpatterns", pid=str(pid))
+
+    def get_detours(self) -> ApiResult:
+        """Every route's detours, active or not (see the module docstring)."""
+        return self.call("getdetours")
 
     def get_predictions(self, stop_ids: list[str]) -> ApiResult:
         if not 1 <= len(stop_ids) <= MAX_STOPS_PER_CALL:

@@ -84,15 +84,26 @@ PATTERN_POINTS = [
 ]
 
 
+DETOUR = {
+    "id": "GLT-D1", "ver": 1, "st": 1, "desc": "Test reroute",
+    "rtdirs": [{"rt": ROUTES[0], "dir": "Eastbound"}],
+    "startdt": "20260925 18:00", "enddt": "20260926 18:00",
+}  # fmt: skip
+
+
 class FakeCta:
     def __init__(self):
         self.vehicles: list[dict] = []
         self.fail_vehicles = False
         self.calls: list[str] = []
+        self.requests: list[tuple[str, dict]] = []  # (endpoint, params without the key)
+        self.detours: list[dict] = [DETOUR]
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         endpoint = request.url.path.rsplit("/", 1)[-1]
         self.calls.append(endpoint)
+        params = {k: v for k, v in request.url.params.items() if k not in ("key", "format")}
+        self.requests.append((endpoint, params))
         if endpoint == "alerts.aspx":  # Customer Alerts: keyless
             assert "key" not in request.url.params
             alert = {
@@ -114,6 +125,8 @@ class FakeCta:
         if endpoint == "getpredictions":
             prd = {"stpid": STOPS[0], "rt": ROUTES[0], "dyn": 1, "stsd": "2026-09-25", "stst": 1}
             return httpx.Response(200, json={"bustime-response": {"prd": [prd]}})
+        if endpoint == "getdetours":
+            return httpx.Response(200, json={"bustime-response": {"dtrs": self.detours}})
         return httpx.Response(404)
 
 
@@ -138,7 +151,10 @@ def cleanup(conn):
     test_polls = (
         "SELECT poll_id FROM ops.raw_polls WHERE request_params->>'rt' LIKE 'GLT%%' "
         "OR request_params->>'pid' = %s OR request_params->>'stpid' LIKE 'GLT%%' "
-        "OR request_params->>'routeid' LIKE 'GLT%%'"
+        "OR request_params->>'routeid' LIKE 'GLT%%' "
+        # calls for every route (getdetours) in the tests' sweeps
+        "OR sweep_id IN (SELECT sweep_id FROM ops.raw_polls "
+        "WHERE request_params->>'rt' LIKE 'GLT%%')"
     )
     conn.execute(f"DELETE FROM ops.raw_responses WHERE poll_id IN ({test_polls})", (str(PID),))
     conn.execute("DELETE FROM ops.bus_positions WHERE vid LIKE 'GLT-%%'")
@@ -211,6 +227,8 @@ def test_poller_lifecycle_against_the_database(db):
     ).fetchall()
     assert [(a[0], a[1]) for a in alerts] == [(s1.sweep_id, None)]
     assert json.loads(alerts[0][2])["CTAAlerts"]["Alert"][0]["Impact"] == "Planned Reroute"
+    # upcoming alerts too (the Marathon's reroutes were announced the day before)
+    assert [p.get("activeonly") for e, p in fake.requests if e == "alerts.aspx"] == ["false"]
 
     # 2. same report again: no new position, no assignment write, no alerts call yet
     clock.t = T0 + timedelta(seconds=30)
@@ -345,7 +363,7 @@ def test_restart_rebuilds_state_from_the_database(db):
     second.start()
     s = second.sweep()
     assert s.assigned == 0 and s.patterns_written == 0
-    assert fake.calls.count("getpatterns") == 2  # only the daily refresh of the two routes
+    assert fake.calls.count("getpatterns") == 2  # only the daily refresh (the detour's route first)
     second.conn.close()
 
 
@@ -381,4 +399,69 @@ def test_a_wild_report_time_is_skipped_not_fatal_to_the_sweep(db):
     s = poller.sweep()
     assert s.new_positions == 0
     assert one(conn, "SELECT COUNT(*) FROM ops.sweeps WHERE sweep_id = %s", s.sweep_id) == (1,)
+    poller.conn.close()
+
+
+@pytest.mark.db
+def test_detours_are_kept_raw_mark_the_feed_and_refetch_their_routes_patterns(db, tmp_path):
+    """getdetours every 2 min: stored raw (Ingress keeps each detour's history), its active
+    detours in the live feed, and a new or changed detour refetches its route's patterns at
+    once, so the path CTA drew for it is kept (not the next day's daily refresh)."""
+    settings, conn = db
+    feed = tmp_path / "live" / "vehicles.json"
+    settings = dataclasses.replace(settings, live_target=str(feed))
+    fake = FakeCta()
+    fake.vehicles = [bus(64890, "20260925 19:21:44")]
+    clock = Clock(T0)
+    client = BusTrackerClient(
+        "k", transport=httpx.MockTransport(fake.handler), sleep=lambda s: None
+    )
+    poller = Poller(settings, client, now=clock)
+    poller.start()
+
+    def refetched(since: int) -> list[str]:
+        return [p.get("rt") for e, p in fake.requests[since:] if e == "getpatterns" and "rt" in p]
+
+    s1 = poller.sweep()
+    body = one(
+        conn,
+        "SELECT r.body FROM ops.raw_polls p JOIN ops.raw_responses r USING (poll_id) "
+        "WHERE p.sweep_id = %s AND p.endpoint = 'getdetours'",
+        s1.sweep_id,
+    )[0]
+    assert json.loads(body)["bustime-response"]["dtrs"][0]["id"] == "GLT-D1"
+    assert refetched(0)[:1] == [ROUTES[0]]  # the detour's route first, in the same sweep
+    assert json.loads(feed.read_text())["rerouted"] == {ROUTES[0]: ["Eastbound"]}
+    pattern = json.loads((feed.parent / "patterns" / f"{PID}.json").read_text())
+    assert (pattern["rt"], pattern["dir"]) == (ROUTES[0], "Eastbound")
+
+    # 30 s on: not due again. Then the daily refresh runs its course.
+    clock.t = T0 + timedelta(seconds=30)
+    poller.sweep()
+    assert [e for e, _ in fake.requests].count("getdetours") == 1
+    # 2 min on, the same detour: nothing refetched for it
+    clock.t = T0 + timedelta(minutes=2)
+    n = len(fake.requests)
+    poller.sweep()
+    assert [e for e, _ in fake.requests].count("getdetours") == 2 and refetched(n) == []
+    # its next version: refetched again
+    fake.detours = [{**DETOUR, "ver": 2}]
+    clock.t = T0 + timedelta(minutes=4)
+    n = len(fake.requests)
+    poller.sweep()
+    assert refetched(n) == [ROUTES[0]]
+    # it ends: off the feed (and refetched once more, the reroute's patterns gone)
+    fake.detours = [{**DETOUR, "ver": 2, "st": 0}]
+    clock.t = T0 + timedelta(minutes=6)
+    n = len(fake.requests)
+    poller.sweep()
+    assert refetched(n) == [ROUTES[0]]
+    assert json.loads(feed.read_text())["rerouted"] == {}
+    # and once CTA drops it from the list altogether
+    fake.detours = []
+    clock.t = T0 + timedelta(minutes=8)
+    n = len(fake.requests)
+    poller.sweep()
+    assert refetched(n) == [ROUTES[0]]
+    client.close()
     poller.conn.close()

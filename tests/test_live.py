@@ -851,3 +851,174 @@ def test_every_stop_reads_its_own_stamp_not_the_wait_of_the_bus_heading_for_it(t
     assert canal[0] < 5 * 60 and canal[1] == 0  # 8894 just passed
     bus = by_vid(snap)["8847"]  # a bus reads the stamp at its next stop: the same number
     assert bus["next_stop"] == "Sheridan & Bryn Mawr" and bus["stop_gap_s"] == stops["1038"][0]
+
+
+def test_every_pattern_has_a_live_file_written_before_the_feed(tmp_path):
+    """The site draws routes and stops from the poller's pattern files, never waiting for the
+    nightly (Oct 10: CTA started #6's and #146's reroute patterns after it ran, and the site
+    drew none of their buses). A new pattern's file goes before the feed showing its bus."""
+    from ghost_ledger.live import site_pattern
+
+    pts = [
+        {"seq": 2, "typ": "W", "pdist": 0, "lat": 41.80001, "lon": -87.60001},
+        {"seq": 1, "typ": "S", "pdist": 0, "lat": 41.8, "lon": -87.6, "stpid": "10",
+         "stpnm": "Clark & Belmont"},
+        {"seq": 3, "typ": "S", "pdist": 1234.6, "lat": 41.81, "lon": -87.61, "stpid": "11",
+         "stpnm": "Clark & Diversey"},
+    ]  # fmt: skip
+    assert site_pattern("22", "Northbound", pts) == {
+        "rt": "22",
+        "dir": "Northbound",
+        "c": [[-87.6, 41.8], [-87.60001, 41.80001], [-87.61, 41.81]],  # in seq order
+        "s": [
+            [-87.6, 41.8, "Clark & Belmont", 0, "10"],
+            [-87.61, 41.81, "Clark & Diversey", 1235, "11"],
+        ],
+    }
+    board = LiveBoard()
+    board.stops = {500: pattern_stops(pts), 77: [(0.0, "Belmont & Clark")]}  # #77 crosses
+    board.routes = {500: "22", 77: "77"}
+    board.note_pattern(500, "22", "Northbound", pts)
+    path = tmp_path / "live" / "vehicles.json"
+
+    class Recording(FileSink):
+        order: list[str] = []
+
+        def put(self, path, text):
+            Recording.order.append(path.name)
+            super().put(path, text)
+
+    publish(board, Recording(str(path)), [pos("A", 0, T0, pid=500)], T0)
+    assert Recording.order == ["500.json", "vehicles.json", "stops.json"]  # pattern first
+    doc = json.loads((path.parent / "patterns" / "500.json").read_text())
+    stops = doc["s"]  # [lon, lat, name, feet, routes at the crossing, stop id]
+    assert [s[4] for s in stops] == [2, 1] and stops[0][5] == "10"
+    assert doc["c"][0] == [-87.6, 41.8] and not board.pattern_files  # written, not again
+
+    Recording.order.clear()
+    publish(board, Recording(str(path)), [pos("A", 10, T0)], T0 + timedelta(seconds=30))
+    assert Recording.order == ["vehicles.json", "stops.json"]
+
+
+def test_pattern_files_never_hold_up_the_feed(tmp_path):
+    """A refused pattern file (S3 down, or before the box may write them) leaves the feed
+    going, and is tried again PATTERNS_RETRY later, not every sweep; at most
+    PATTERN_FILES_PER_SWEEP a sweep, the ones buses are on first."""
+    from ghost_ledger import live
+    from ghost_ledger.live import PATTERNS_RETRY
+
+    path = tmp_path / "live" / "vehicles.json"
+
+    class Refuses(FileSink):
+        tries = 0
+
+        def put_pattern(self, pid, doc):
+            Refuses.tries += 1
+            raise PermissionError("AccessDenied")
+
+    board = LiveBoard()
+    for pid in (1, 2, 1599):
+        board.note_pattern(pid, "79", "Eastbound", [])
+    publish(board, Refuses(str(path)), [pos("A", 0, T0)], T0)
+    assert json.loads(path.read_text())["vehicles"][0]["vid"] == "A"
+    assert Refuses.tries == 1 and len(board.pattern_files) == 3
+    publish(board, Refuses(str(path)), [pos("A", 10, T0)], T0 + timedelta(seconds=30))
+    assert Refuses.tries == 1  # not every sweep
+
+    live.PATTERN_FILES_PER_SWEEP, saved = 1, live.PATTERN_FILES_PER_SWEEP
+    try:
+        later = T0 + PATTERNS_RETRY
+        publish(board, FileSink(str(path)), [pos("A", 20, later)], later)  # A is on 1599
+    finally:
+        live.PATTERN_FILES_PER_SWEEP = saved
+    assert sorted(board.pattern_files) == [1, 2]  # 1599 first: a bus is on it
+
+
+def test_rerouted_lists_cta_detours_active_now():
+    from ghost_ledger.live import active_detours
+
+    dtrs = [
+        {"id": "a", "st": 1, "startdt": "20261011 06:30", "enddt": "20261011 16:00",
+         "rtdirs": [{"rt": "22", "dir": "Northbound"}, {"rt": "22", "dir": "Southbound"}]},
+        {"id": "b", "st": 0, "startdt": "20261010 05:00", "enddt": "20261012 12:00",
+         "rtdirs": [{"rt": "6", "dir": "Northbound"}]},  # not active (CTA's own state)
+        {"id": "c", "st": "1", "startdt": "20261010 09:00", "enddt": "",
+         "rtdirs": [{"rt": "146", "dir": ""}]},  # no end date, no direction
+    ]  # fmt: skip
+    board = LiveBoard()
+    board.detours = active_detours(dtrs)
+    at = lambda hhmm: datetime.strptime(f"20261011 {hhmm}", "%Y%m%d %H:%M").replace(  # noqa: E731
+        tzinfo=CHICAGO
+    )
+    assert board.rerouted(at("06:29")) == {"146": [""]}
+    assert board.rerouted(at("06:30")) == {"146": [""], "22": ["Northbound", "Southbound"]}
+    assert board.rerouted(at("16:00")) == {"146": [""]}
+    assert board.snapshot(at("12:00"))["rerouted"]["22"] == ["Northbound", "Southbound"]
+
+
+def test_a_reroute_carries_the_regular_path_and_the_stops_it_skips():
+    """CTA's reroute patterns carry the regular path they replace (dtrpt): #6's on Oct 10 drove
+    Michigan, skipping Columbus's stops (1100 S Columbus, Balbo & Columbus) as CTA's map shows."""
+    from ghost_ledger.live import site_pattern
+
+    run = [
+        {
+            "seq": 1,
+            "typ": "S",
+            "pdist": 0,
+            "lat": 41.86,
+            "lon": -87.624,
+            "stpid": "1",
+            "stpnm": "Michigan & 11th Street",
+        },
+        {
+            "seq": 2,
+            "typ": "S",
+            "pdist": 900,
+            "lat": 41.87,
+            "lon": -87.624,
+            "stpid": "2",
+            "stpnm": "Michigan & Balbo",
+        },
+    ]
+    regular = [
+        {"seq": 1, "typ": "S", "pdist": 0, "lat": 41.86, "lon": -87.624, "stpid": "1",
+         "stpnm": "Michigan & 11th Street"},
+        {"seq": 2, "typ": "W", "pdist": 0, "lat": 41.865, "lon": -87.62},
+        {"seq": 3, "typ": "S", "pdist": 700, "lat": 41.87, "lon": -87.62, "stpid": "9",
+         "stpnm": "Balbo & Columbus"},
+    ]  # fmt: skip
+    doc = site_pattern("6", "Northbound", run, regular)
+    assert doc["d"] == [[-87.624, 41.86], [-87.62, 41.865], [-87.62, 41.87]]
+    assert doc["x"] == [[-87.62, 41.87, "Balbo & Columbus", "9"]]  # skipped; stop 1 is served
+    assert "d" not in site_pattern("6", "Northbound", run, []) and "x" not in site_pattern(
+        "6", "Northbound", run
+    )
+
+
+def test_cta_reroute_alerts_go_to_the_feed_while_in_force():
+    """What CTA's bus status page lists (Oct 10: #77's reroute near Belmont/Sayre kept its
+    regular pattern, so only the alert says so)."""
+    from ghost_ledger.live import reroute_alerts
+
+    body = {"ErrorCode": "0", "Alert": [
+        {"Headline": "#77 Belmont Temporary Eastbound Reroute near Belmont/Sayre",
+         "Impact": "Minor Delays / Reroute", "EventStart": "2026-10-10T18:09:00", "EventEnd": None,
+         "AlertURL": {"#cdata-section": "http://www.transitchicago.com/x?AlertId=1"},
+         "ImpactedService": {"Service": {"ServiceType": "B", "ServiceId": "77"}}},
+        {"Headline": "Temporary Reroute", "Impact": "Planned Reroute",
+         "EventStart": "2026-10-11T06:30:00", "EventEnd": "2026-10-11T16:00:00",
+         "ImpactedService": {"Service": [{"ServiceType": "B", "ServiceId": "77"},
+                                         {"ServiceType": "R", "ServiceId": "Red"}]}},
+        {"Headline": "Elevator out", "Impact": "Elevator Status", "EventStart": "2026-10-01",
+         "ImpactedService": {"Service": {"ServiceType": "B", "ServiceId": "22"}}},
+    ]}  # fmt: skip
+    board = LiveBoard()
+    board.alerts = reroute_alerts(body)
+    at = lambda s: datetime.fromisoformat(s).replace(tzinfo=CHICAGO)  # noqa: E731
+    sayre = {"h": "#77 Belmont Temporary Eastbound Reroute near Belmont/Sayre",
+             "u": "https://www.transitchicago.com/x?AlertId=1"}  # fmt: skip
+    assert board.reroutes(at("2026-10-10T20:00:00")) == {"77": [sayre]}  # not yet the Marathon
+    marathon = {"h": "Temporary Reroute", "u": None}
+    assert board.reroutes(at("2026-10-11T07:00:00")) == {"77": [marathon, sayre]}  # newest first
+    assert board.snapshot(at("2026-10-11T16:00:00"))["alerts"] == {"77": [sayre]}

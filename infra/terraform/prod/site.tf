@@ -1,6 +1,7 @@
 # The public site, chitransit.fyi: a private site bucket behind CloudFront (origin access
 # control: only this distribution can read it). Who writes what:
-#   live/*        the poller on the box, after each sweep (the box user can write nothing else)
+#   live/*        the poller on the box, after each sweep (the box user can write nothing else;
+#                 CloudFront serves only the feed's own names there: aws_cloudfront_function.index)
 #   everything    the nightly / site workflows (transform role; IAM denies it live/*)
 # The lake is not an origin: nothing in it is public.
 
@@ -93,7 +94,8 @@ resource "aws_s3_bucket_public_access_block" "site" {
   restrict_public_buckets = true
 }
 
-# S3 has no directory index for OAC origins: /route/79/ -> /route/79/index.html.
+# S3 has no directory index for OAC origins: /route/79/ -> /route/79/index.html. Under /live/
+# only the poller's own file names are served, whatever else the box key could write there.
 resource "aws_cloudfront_function" "index" {
   name    = "ghost-ledger-site-index"
   runtime = "cloudfront-js-2.0"
@@ -102,6 +104,9 @@ resource "aws_cloudfront_function" "index" {
     function handler(event) {
       var request = event.request;
       var uri = request.uri;
+      if (uri.startsWith("/live/") && !/^\/live\/(vehicles|stops|patterns\/[0-9]+)\.json$/.test(uri)) {
+        return { statusCode: 404, statusDescription: "Not Found" };
+      }
       if (uri.endsWith("/")) {
         request.uri = uri + "index.html";
       } else if (uri.split("/").pop().indexOf(".") === -1) {
@@ -230,15 +235,17 @@ resource "aws_s3_bucket_policy" "site" {
   policy = data.aws_iam_policy_document.site_read.json
 }
 
-# The poller writes the live feed and nothing else in the site bucket: exact keys, so a
-# stolen box key can't plant pages (say live/login.html) on chitransit.fyi.
+# The poller writes the live feed and nothing else in the site bucket: exact keys and JSON
+# pattern files, and CloudFront serves no other name under live/ (aws_cloudfront_function.index),
+# so a stolen box key can't plant pages (say live/login.html) on chitransit.fyi.
 data "aws_iam_policy_document" "box_live" {
   statement {
     sid     = "LiveFeed"
     actions = ["s3:PutObject"]
     resources = [
       "${aws_s3_bucket.site.arn}/live/vehicles.json",
-      "${aws_s3_bucket.site.arn}/live/stops.json", # every stop's own wait (ghost_ledger.live)
+      "${aws_s3_bucket.site.arn}/live/stops.json",      # every stop's own wait (ghost_ledger.live)
+      "${aws_s3_bucket.site.arn}/live/patterns/*.json", # every pattern's shape and stops
     ]
   }
 }

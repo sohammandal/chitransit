@@ -1,11 +1,24 @@
 """The live feed for the public site: where every bus is now, and the claims about it.
 
 After each committed sweep the poller hands this module the sweep's vehicle reports. It keeps
-each bus's recent trail in memory and writes two JSON snapshots:
+each bus's recent trail in memory and writes these JSON files:
 
   vehicles.json  {"generated_at": ISO, "build": commit, "no_data_since": ISO | None,
+                  "rerouted": {rt: [rtdir, ...]},
                   "vehicles": [{vid, rt, pid, hdg, lat, lon, dly, des, dir, t, pdist,
                   at_terminal, near, ...the fields below}]}
+  patterns/{pid}.json  every pattern the poller knows, as the nightly writes data/v1/patterns
+                 (site_pattern): all of them after a (re)start, and each new or changed one at
+                 once, before the vehicles.json that first shows a bus on it. The site draws
+                 routes and stops from these, never waiting for the nightly (CTA's reroutes
+                 start patterns any time: on Oct 10 the site drew none of #6's or #146's buses).
+  rerouted (in vehicles.json) the routes and directions CTA has on a detour now (getdetours:
+                 active, and within its dates); "" for a detour CTA gave no direction
+  alerts (in vehicles.json) {rt: [{"h": headline, "u": link}]}: CTA's Customer Alerts that
+                 reroute that route's buses now, newest first (what CTA's bus status page
+                 lists; small reroutes keep the regular pattern and have no detour, Oct 10 #77)
+  A reroute's pattern carries the regular path it replaces (CTA's dtrpt): its file gives that
+  as "d" (the path) and "x" (its stops the reroute skips), as CTA's own map draws it.
   stops.json     {"generated_at": ISO, "stops": {"rt|rtdir": {stpid: [wait_s, long]}}}: every
                  stop's own stamp, read where the claim is made (the site's stop view; Oct 1:
                  a bus's wait shown under a stop 73 stops on, where a bus had just passed).
@@ -67,6 +80,7 @@ import logging
 import math
 import os
 import sys
+import time
 from array import array
 from bisect import bisect_left, bisect_right
 from collections import deque
@@ -162,6 +176,14 @@ BACKWARD_NEAR_M = 150
 AT_STOP_M = 50
 # Short and never stale: the file changes every 30 s and readers time their fetch to it.
 CACHE_CONTROL = "public, max-age=5"
+# Pattern files change rarely (a reroute, CTA's daily edits): a minute's cache is fine
+PATTERN_CACHE_CONTROL = "public, max-age=60"
+# Pattern files written per sweep, at most (all ~830 after a restart take ~8 min, the ones
+# buses are on first), and for no longer than this: S3 must never hold up the sweep
+PATTERN_FILES_PER_SWEEP = 50
+PATTERN_FILES_SECONDS = 2.0
+# After a failed pattern file write (say S3 refuses it), the next try is this much later
+PATTERNS_RETRY = timedelta(minutes=5)
 
 
 class Schedule:
@@ -246,6 +268,13 @@ class LiveBoard:
         self.untrusted_at: dict[str, list[tuple[datetime, str]]] = {}
         # rt -> [(from, to, rtdir, GPS from, GPS to)]: a bus of rt ran against its rtdir pattern
         self.backwards: dict[str, list[tuple[datetime, datetime, str, tuple, tuple]]] = {}
+        # Pattern files due (patterns/{pid}.json, note_pattern): pid -> its JSON, oldest first
+        self.pattern_files: dict[int, str] = {}
+        self.patterns_retry_at: datetime | None = None  # after a failed write
+        # CTA's active detours (active_detours): [(rt, rtdir, start, end)]
+        self.detours: list[tuple[str, str, datetime | None, datetime | None]] = []
+        # CTA's reroute alerts (reroute_alerts): [(rt, headline, link, start, end)]
+        self.alerts: list[tuple[str, str, str | None, datetime | None, datetime | None]] = []
 
     def seed(self, rows) -> None:
         """Rebuild trails from stored positions (vid, observed_at, pid, pdist[, stsd, stst[, lat,
@@ -698,6 +727,59 @@ class LiveBoard:
         d = float(p["pdist"])
         return d < TERMINAL_FT or (length is not None and d > length - TERMINAL_FT)
 
+    def note_pattern(
+        self,
+        pid: int,
+        rt: str,
+        rtdir: str,
+        points: list[dict[str, Any]],
+        regular: list[dict[str, Any]] | None = None,
+        serving: dict[str, set[str]] | None = None,
+    ) -> None:
+        """Queue a pattern's file (new, changed, or every one after a restart): site_pattern,
+        each stop with how many routes serve its crossing (serving(), passed in when noting
+        many at once), as site_patterns counts them. regular: the path a reroute replaces."""
+        serving = self.serving() if serving is None else serving
+        doc = site_pattern(rt, rtdir, points, regular)
+        doc["s"] = [
+            [lon, lat, name, feet, len(serving.get(crossing(name or ""), ())) or 1, sid]
+            for lon, lat, name, feet, sid in doc["s"]
+        ]
+        self.pattern_files.pop(int(pid), None)  # a newer version goes to the back
+        self.pattern_files[int(pid)] = json.dumps(doc, separators=(",", ":"))
+
+    def serving(self) -> dict[str, set[str]]:
+        """Crossing (see crossing) -> the routes with a stop there, over every known pattern."""
+        out: dict[str, set[str]] = {}
+        for pid, stops in self.stops.items():
+            rt = self.routes.get(pid)
+            for _, name in stops if rt is not None else ():
+                out.setdefault(crossing(name), set()).add(rt)
+        return out
+
+    def rerouted(self, now: datetime) -> dict[str, list[str]]:
+        """Route -> the directions CTA has on a detour now (see the module docstring)."""
+        out: dict[str, set[str]] = {}
+        for rt, rtdir, start, end in self.detours:
+            if (start is None or start <= now) and (end is None or now < end):
+                out.setdefault(rt, set()).add(rtdir)
+        return {rt: sorted(dirs) for rt, dirs in sorted(out.items())}
+
+    def reroutes(self, now: datetime) -> dict[str, list[dict[str, str | None]]]:
+        """Route -> CTA's reroute alerts in force now, newest first (see the module docstring)."""
+        out: dict[str, list[tuple[datetime | None, str, str | None]]] = {}
+        for rt, headline, link, start, end in self.alerts:
+            if (start is None or start <= now) and (end is None or now < end):
+                out.setdefault(rt, []).append((start, headline, link))
+        oldest = datetime.min.replace(tzinfo=CHICAGO)
+        return {
+            rt: [
+                {"h": h, "u": u}
+                for _, h, u in sorted(notes, key=lambda x: x[0] or oldest, reverse=True)[:3]
+            ]
+            for rt, notes in sorted(out.items())
+        }
+
     def snapshot(self, now: datetime) -> dict[str, Any]:
         by_pid: dict[int, list[dict[str, Any]]] = {}
         terminal = set()
@@ -768,6 +850,8 @@ class LiveBoard:
             "generated_at": now.isoformat(timespec="seconds"),
             "build": os.environ.get("GIT_SHA", "unknown"),
             "no_data_since": down.isoformat(timespec="seconds") if down else None,
+            "rerouted": self.rerouted(now),
+            "alerts": self.reroutes(now),
             "vehicles": rows,
             "stops": self.stop_waits(index, dark, stop_at, now),
         }
@@ -940,37 +1024,157 @@ def pattern_stops(points: list[dict[str, Any]]) -> list[tuple[float, str]]:
     )
 
 
+def crossing(name: str) -> str:
+    """One key for both spellings of a corner, as site_patterns counts a crossing's routes:
+    "Clark & Belmont" and "Belmont & Clark" -> "belmont|clark"."""
+    return "|".join(sorted(part.strip() for part in name.lower().split("&")))
+
+
+def site_pattern(
+    rt: str, rtdir: str, points: list[dict[str, Any]], regular: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """A Bus Tracker pattern as the site draws it (transform/site_data.py, data/v1/patterns):
+    {"rt", "dir", "c": [[lon, lat], ...] in order, "s": [[lon, lat, name, feet along, stop id],
+    ...]}; note_pattern adds each stop's route count before its id. A reroute (regular: the
+    path it replaces, CTA's dtrpt) also has "d": that path, and "x": [[lon, lat, name, stop
+    id], ...], its stops the reroute skips."""
+    doc = {
+        "rt": rt,
+        "dir": rtdir,
+        "c": [[round(float(p["lon"]), 5), round(float(p["lat"]), 5)] for p in in_order(points)],
+        "s": [
+            [
+                round(float(p["lon"]), 5),
+                round(float(p["lat"]), 5),
+                p.get("stpnm"),
+                None if p.get("pdist") is None else round(float(p["pdist"])),
+                None if p.get("stpid") is None else str(p["stpid"]),
+            ]
+            for p in in_order(points)
+            if p.get("typ") == "S"
+        ],
+    }
+    if in_order(regular):
+        served = {stop[4] for stop in doc["s"]}
+        doc["d"] = [
+            [round(float(p["lon"]), 5), round(float(p["lat"]), 5)] for p in in_order(regular)
+        ]
+        doc["x"] = [
+            [round(float(p["lon"]), 5), round(float(p["lat"]), 5), p.get("stpnm"), str(p["stpid"])]
+            for p in in_order(regular)
+            if p.get("typ") == "S" and p.get("stpid") and str(p["stpid"]) not in served
+        ]
+    return doc
+
+
+def in_order(points: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """A pattern's points that have a place, in their order (seq)."""
+    return sorted(
+        (p for p in points or [] if p.get("lat") is not None and p.get("lon") is not None),
+        key=lambda p: int(p.get("seq") or 0),
+    )
+
+
+def alert_time(value: Any) -> datetime | None:
+    """Customer Alerts' EventStart/EventEnd ("2026-10-11T06:30:00" or "2026-06-18", Chicago
+    local); None if absent or unreadable."""
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(str(value), fmt).replace(tzinfo=CHICAGO)
+        except ValueError:
+            continue
+    return None
+
+
+def reroute_alerts(
+    body: dict[str, Any],
+) -> list[tuple[str, str, str | None, datetime | None, datetime | None]]:
+    """CTA's Customer Alerts (the CTAAlerts object) that reroute buses (their Impact says
+    reroute or detour), one per bus route: [(rt, headline, link, start, end)]."""
+    alerts = body.get("Alert") or []
+    out = []
+    for a in [alerts] if isinstance(alerts, dict) else alerts:
+        impact = str(a.get("Impact") or "").lower()
+        if "reroute" not in impact and "detour" not in impact:
+            continue
+        link = a.get("AlertURL")
+        link = link.get("#cdata-section") if isinstance(link, dict) else link
+        link = str(link).replace("http://", "https://", 1) if link else None
+        services = (a.get("ImpactedService") or {}).get("Service") or []
+        for svc in [services] if isinstance(services, dict) else services:
+            if svc.get("ServiceType") == "B" and svc.get("ServiceId"):
+                out.append((
+                    str(svc["ServiceId"]), str(a.get("Headline") or "").strip(), link,
+                    alert_time(a.get("EventStart")), alert_time(a.get("EventEnd")),
+                ))  # fmt: skip
+    return out
+
+
+def detour_time(value: Any) -> datetime | None:
+    """getdetours' startdt/enddt ("20261011 06:30", Chicago local); None if absent or unreadable."""
+    try:
+        return datetime.strptime(str(value), "%Y%m%d %H:%M").replace(tzinfo=CHICAGO)
+    except ValueError:
+        return None
+
+
+def active_detours(
+    dtrs: list[dict[str, Any]],
+) -> list[tuple[str, str, datetime | None, datetime | None]]:
+    """CTA's active detours (getdetours st 1) as [(rt, rtdir, start, end)], one per route and
+    direction; a missing or unreadable date leaves that end open."""
+    return [
+        (
+            str(r["rt"]),
+            r.get("dir") or "",
+            detour_time(d.get("startdt")),
+            detour_time(d.get("enddt")),
+        )
+        for d in dtrs
+        if str(d.get("st")) == "1"
+        for r in d.get("rtdirs") or []
+        if r.get("rt")
+    ]
+
+
 class Sink(Protocol):
+    def put_pattern(self, pid: int, doc: str) -> None: ...
     def write(self, snapshot: dict[str, Any]) -> None: ...
 
 
 def documents(snapshot: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-    """The snapshot as the two files the site reads: vehicles.json (fetched every sweep) and
-    stops.json (as big again; fetched only while a stop is open)."""
+    """The snapshot as the two files the site reads every sweep: vehicles.json (fetched every
+    sweep) and stops.json (as big again; fetched only while a stop is open)."""
     vehicles = {k: v for k, v in snapshot.items() if k != "stops"}
     stops = {"generated_at": snapshot["generated_at"], "stops": snapshot.get("stops", {})}
     return [("vehicles.json", vehicles), ("stops.json", stops)]
 
 
 class FileSink:
-    """Dev: write the snapshot where the site's dev server can read it (path: vehicles.json;
-    stops.json goes beside it)."""
+    """Dev: write the files where the site's dev server can read them (path: vehicles.json;
+    the others go beside it)."""
 
     def __init__(self, path: str) -> None:
         self.path = Path(path)
 
+    def put(self, path: Path, text: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(text)
+        tmp.replace(path)  # readers never see a half-written file
+
+    def put_pattern(self, pid: int, doc: str) -> None:
+        self.put(self.path.parent / "patterns" / f"{int(pid)}.json", doc)
+
     def write(self, snapshot: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         for name, doc in documents(snapshot):
             path = self.path if name == "vehicles.json" else self.path.with_name(name)
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(doc, separators=(",", ":")))
-            tmp.replace(path)  # readers never see a half-written file
+            self.put(path, json.dumps(doc, separators=(",", ":")))
 
 
 class S3Sink:
-    """Prod: two objects (vehicles.json at url, stops.json beside it), gzip-encoded, short
-    cache life (CloudFront serves them as they are)."""
+    """Prod: vehicles.json at url, the other files beside it, gzip-encoded, short cache life
+    (CloudFront serves them as they are)."""
 
     def __init__(self, url: str) -> None:
         import boto3  # only needed in prod
@@ -984,14 +1188,20 @@ class S3Sink:
             config=Config(connect_timeout=2, read_timeout=3, retries={"max_attempts": 1}),
         )
 
+    def put(self, key: str, text: str, cache_control: str) -> None:
+        self.client.put_object(
+            Bucket=self.bucket, Key=key, Body=gzip.compress(text.encode(), mtime=0),
+            ContentType="application/json", ContentEncoding="gzip", CacheControl=cache_control,
+        )  # fmt: skip
+
+    def put_pattern(self, pid: int, doc: str) -> None:
+        key = f"{self.key.rsplit('/', 1)[0]}/patterns/{int(pid)}.json"
+        self.put(key, doc, PATTERN_CACHE_CONTROL)
+
     def write(self, snapshot: dict[str, Any]) -> None:
         for name, doc in documents(snapshot):
             key = self.key if name == "vehicles.json" else f"{self.key.rsplit('/', 1)[0]}/{name}"
-            body = gzip.compress(json.dumps(doc, separators=(",", ":")).encode(), mtime=0)
-            self.client.put_object(
-                Bucket=self.bucket, Key=key, Body=body, ContentType="application/json",
-                ContentEncoding="gzip", CacheControl=CACHE_CONTROL,
-            )  # fmt: skip
+            self.put(key, json.dumps(doc, separators=(",", ":")), CACHE_CONTROL)
 
 
 def make_sink(target: str | None) -> Sink | None:
@@ -1008,10 +1218,38 @@ def publish(
     polled: set[str] | None = None,
 ) -> None:
     """Best-effort: the feed is a disposable view; never let it fail the sweep. polled: the
-    routes whose call succeeded (LiveBoard.update)."""
+    routes whose call succeeded (LiveBoard.update). Pattern files due go first (a bus on a new
+    pattern never reaches the site before its pattern), on their own: a refused one never
+    holds up the feed."""
     try:
         board.update(positions, now, polled)
-        if sink is not None:
-            sink.write(board.snapshot(now))
+        if sink is None:
+            return
+        if board.pattern_files and (
+            board.patterns_retry_at is None or now >= board.patterns_retry_at
+        ):
+            write_patterns(board, sink, now)
+        sink.write(board.snapshot(now))
     except Exception:  # noqa: BLE001 - logged; the next sweep rewrites the whole snapshot
         log.exception("live feed not published this sweep")
+
+
+def write_patterns(board: LiveBoard, sink: Sink, now: datetime) -> None:
+    """The pattern files due, the ones buses are on first, within PATTERN_FILES_PER_SWEEP and
+    PATTERN_FILES_SECONDS; a failure stops them until PATTERNS_RETRY later."""
+    started = time.monotonic()
+    on_road = {int(p["pid"]) for p in board.latest.values() if p.get("pid") is not None}
+    due = sorted(
+        board.pattern_files, key=lambda pid: pid not in on_road
+    )  # stable: on the road first
+    for pid in due[:PATTERN_FILES_PER_SWEEP]:
+        if time.monotonic() - started > PATTERN_FILES_SECONDS:
+            break
+        try:
+            sink.put_pattern(pid, board.pattern_files[pid])
+        except Exception as e:  # noqa: BLE001 - logged; tried again after PATTERNS_RETRY
+            board.patterns_retry_at = now + PATTERNS_RETRY
+            log.warning("pattern files not published (next try %s): %s", board.patterns_retry_at, e)
+            return
+        del board.pattern_files[pid]
+    board.patterns_retry_at = None

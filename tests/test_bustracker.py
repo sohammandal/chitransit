@@ -155,3 +155,30 @@ def test_an_oversized_reply_is_refused_and_not_stored():
     client = make_client(lambda request: httpx.Response(200, content=b"x" * 5_000_001))
     result = client.get_vehicles(["79"])
     assert not result.ok and "too large" in result.error and result.raw is None
+
+
+def test_get_detours_asks_for_every_route():
+    seen = {}
+
+    def handler(request):
+        seen["path"] = request.url.path
+        seen.update(request.url.params)
+        return httpx.Response(200, json=ok_body(dtrs=[{"id": "x", "st": 1}]))
+
+    with make_client(handler) as client:
+        result = client.get_detours()
+    assert seen["path"].endswith("/getdetours") and "rt" not in seen  # it takes one rt at most
+    assert result.ok and result.body["dtrs"][0]["id"] == "x"
+
+
+def test_alerts_can_include_those_announced_ahead():
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.params.get("activeonly"))
+        return httpx.Response(200, json={"CTAAlerts": {"ErrorCode": "0", "Alert": []}})
+
+    with make_client(handler) as client:
+        client.get_alerts()
+        client.get_alerts(active_only=False)
+    assert seen == ["true", "false"]
