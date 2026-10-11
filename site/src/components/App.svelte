@@ -10,7 +10,7 @@
   import * as data from "../lib/data";
   import { pollFeed, pollStopWaits } from "../lib/feed";
   import { findProblems, scheduledGap } from "../lib/problems";
-  import { mainPid, onLine } from "../lib/project";
+  import { mainPid, onLine, onRoad } from "../lib/project";
   import { stopPatterns, stopRows } from "../lib/stops";
   import { feetBetween } from "../lib/distance";
   import { behindOf } from "../lib/waits";
@@ -69,8 +69,10 @@
   });
   // A stop's map: only the buses on its card, and their lines
   const stopBuses = $derived(level !== "stop" ? null : stopLoading ? [] : rows.flatMap((r) => r.next.map((n) => n.bus)));
-  const shapes = $derived(route ? [...patterns.values()].filter((p) => p.rt === route && (!direction || p.dir === direction))
-    : stopBuses ? [...new Set(stopBuses.map((b) => b.pid))].flatMap((pid) => patterns.get(pid!) ?? [])
+  // The map's lines: the patterns the open route's buses (in the open bus's direction) or the open
+  // stop's buses are on now
+  const shapes = $derived(route ? onRoad(routeBuses.filter((b) => !direction || b.dir === direction), patterns)
+    : stopBuses ? onRoad(stopBuses, patterns)
     : []);
   // The map's stops: a bus's own pattern's, a route's running patterns', none beside an open
   // stop, or all

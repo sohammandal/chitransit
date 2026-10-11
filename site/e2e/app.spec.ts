@@ -1281,3 +1281,28 @@ test("stop: buses on a reroute's pattern count, and a stop it skips says so, nev
   await expect(page.getByText(/No bus on the way now:.*66 Westbound/)).toHaveCount(0);
   expect(errors).toEqual([]);
 });
+
+test("the map draws only the patterns buses are on now: one whose last bus left goes (Oct 10)", async ({ page }) => {
+  // #6, 20:02-20:10: one southbound bus on the regular pattern (7107) during the reroute; after it
+  // left, its line stayed drawn under the reroute's dashes (the page keeps every pattern it loaded)
+  const errors = await setUp(page);
+  let current = feed;
+  await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: current })); // newer than setUp's: wins
+  await page.goto("/route/66/");
+  await expect(page.locator(".sheet svg")).toHaveCount(2);
+  await busesDrawn(page);
+  const lines = () => page.evaluate(() => {
+    const src = (window.map as unknown as { getSource(id: string): { serialize(): { data: { geometry?: { coordinates: unknown[] } } } } | undefined })
+      .getSource("route");
+    return src?.serialize().data.geometry?.coordinates.length ?? 0;
+  });
+  await expect.poll(lines).toBe(2); // Eastbound and Westbound
+  current = {
+    ...feed,
+    generated_at: new Date(new Date(feed.generated_at).getTime() + 30_000).toISOString(),
+    vehicles: feed.vehicles.filter((v: { rt: string; dir: string }) => !(v.rt === "66" && v.dir === "Westbound")),
+  };
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange"))); // fetch the feed now
+  await expect.poll(lines).toBe(1);
+  expect(errors).toEqual([]);
+});

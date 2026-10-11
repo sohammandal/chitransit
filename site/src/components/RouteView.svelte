@@ -97,7 +97,8 @@
   .lab { margin: 0; display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--fog); }
   .lab b { color: var(--asphalt); font-size: 14px; }
   .note { margin: 0; font-size: 12px; color: var(--fog); }
-  .tag { margin-left: 8px; padding: 1px 6px 0; border-radius: 6px; background: var(--signal-amber); color: var(--surface); font-size: 11px; font-weight: 800; letter-spacing: 0.02em; vertical-align: 1px; }
+  /* neutral, dashed like the regular streets a reroute skips on the map: amber means "together" */
+  .tag { margin-left: 8px; padding: 0 6px; border: 1px dashed var(--fog); border-radius: 6px; color: var(--asphalt); font-size: 11px; font-weight: 700; letter-spacing: 0.02em; vertical-align: 1px; }
   .alerts { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
   .alerts li { padding: 7px 10px 6px; border-radius: 8px; background: var(--concrete); font-size: 13px; line-height: 1.3; }
   .alerts li::before { content: "CTA: "; font-weight: 700; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { onLine, project, skippedStretches, withoutSpurs } from "./project";
+import { onLine, onRoad, project, skippedStretches, withoutSpurs } from "./project";
 import { bus } from "./testing";
 import type { Pattern } from "./types";
 
@@ -48,5 +48,14 @@ describe("skippedStretches", () => {
     const regular: [number, number][] = [[-87.624, 41.86], [-87.624, 41.865], [-87.62, 41.866], [-87.62, 41.873], [-87.624, 41.874], [-87.624, 41.88]];
     expect(skippedStretches(regular, run)).toEqual([[[-87.624, 41.865], [-87.62, 41.866], [-87.62, 41.873], [-87.624, 41.874]]]);
     expect(skippedStretches(run, run)).toEqual([]); // the same streets: nothing dashed
+  });
+});
+
+describe("onRoad", () => {
+  it("draws only the patterns buses are on now, each once (Oct 10: a pattern whose bus left stayed drawn)", () => {
+    const pat = (rt: string) => ({ rt, dir: "Southbound", c: [], s: [] });
+    const loaded = new Map([[7107, pat("6")], [502418, pat("6")], [9, pat("6")]]);
+    const buses = [bus({ vid: "a", rt: "6", pid: 502418 }), bus({ vid: "b", rt: "6", pid: 502418 }), bus({ vid: "c", rt: "6", pid: 77 })];
+    expect(onRoad(buses, loaded)).toEqual([loaded.get(502418)]); // 7107 and 9: no bus on them; 77: not loaded
   });
 });
