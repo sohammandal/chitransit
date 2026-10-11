@@ -10,7 +10,7 @@
   // MapLibre 6 parses tiles in a module worker; bundled, it can't find it on its own.
   import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
   import * as data from "../lib/data";
-  import { skippedStretches, withoutSpurs } from "../lib/project";
+  import { dashedStretches, withoutSpurs } from "../lib/project";
   import { routeStops } from "../lib/stops";
   import type { Camera, Pattern, Stop, Vehicle } from "../lib/types";
 
@@ -262,8 +262,7 @@
     source("route")?.setData(shapes.length
       ? { type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: shapes.map((p) => withoutSpurs(p.c)) } }
       : empty);
-    const lines = shapes.map((p) => p.c);
-    const regular = shapes.flatMap((p) => (p.d?.length ? skippedStretches(withoutSpurs(p.d), lines) : []));
+    const regular = dashedStretches(shapes);
     source("regular")?.setData(regular.length
       ? { type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: regular } }
       : empty);

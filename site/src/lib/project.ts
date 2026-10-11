@@ -85,6 +85,15 @@ export function mainPid(buses: Vehicle[], patterns: Map<number, Pattern>): numbe
 }
 
 const metres = (a: [number, number], b: [number, number]) => Math.hypot((a[0] - b[0]) * 82_990, (a[1] - b[1]) * 110_540);
+/** What the map dashes for the patterns drawn: each reroute's regular streets that no bus running
+ *  the same direction runs now (a bus the other way, on the far side of a divided road, serves no
+ *  one going this way: Oct 10, #6 northbound's dashes broke into pieces beside a southbound bus on
+ *  Lake Shore Drive). */
+export function dashedStretches(shapes: Pattern[]): [number, number][][] {
+  return shapes.flatMap((p) =>
+    p.d?.length ? skippedStretches(withoutSpurs(p.d), shapes.filter((q) => q.dir === p.dir).map((q) => q.c)) : []);
+}
+
 /** The lines to draw for some buses: the patterns they are on now (loaded ones), each once. Never
  *  a pattern no bus runs any more: on Oct 10 #6's regular southbound stayed on the map, under the
  *  reroute's dashes, after the one bus on it left (the page keeps every pattern it loaded). */

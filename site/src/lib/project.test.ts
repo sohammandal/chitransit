@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { onLine, onRoad, project, skippedStretches, withoutSpurs } from "./project";
+import { dashedStretches, onLine, onRoad, project, skippedStretches, withoutSpurs } from "./project";
 import { bus } from "./testing";
 import type { Pattern } from "./types";
 
@@ -63,5 +63,16 @@ describe("onRoad", () => {
     const loaded = new Map([[7107, pat("6")], [502418, pat("6")], [9, pat("6")]]);
     const buses = [bus({ vid: "a", rt: "6", pid: 502418 }), bus({ vid: "b", rt: "6", pid: 502418 }), bus({ vid: "c", rt: "6", pid: 77 })];
     expect(onRoad(buses, loaded)).toEqual([loaded.get(502418)]); // 7107 and 9: no bus on them; 77: not loaded
+  });
+});
+
+describe("dashedStretches", () => {
+  it("dashes a reroute's skipped streets even beside a bus running the other way (Oct 10, #6 on Lake Shore Drive)", () => {
+    const run: [number, number][] = [[-87.624, 41.86], [-87.624, 41.88]];
+    const regular: [number, number][] = [[-87.624, 41.86], [-87.624, 41.865], [-87.62, 41.866], [-87.62, 41.873], [-87.624, 41.874], [-87.624, 41.88]];
+    const north = { rt: "6", dir: "Northbound", c: run, s: [], d: regular };
+    const southOnRegular = { rt: "6", dir: "Southbound", c: [...regular].reverse(), s: [] }; // the far roadway
+    expect(dashedStretches([north, southOnRegular])).toHaveLength(1); // northbound still skips them
+    expect(dashedStretches([north, { ...southOnRegular, dir: "Northbound" }])).toEqual([]); // a northbound bus runs them
   });
 });
