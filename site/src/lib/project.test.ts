@@ -46,8 +46,14 @@ describe("skippedStretches", () => {
   it("dashes only where the regular path leaves the reroute's, joined at both ends", () => {
     const run: [number, number][] = [[-87.624, 41.86], [-87.624, 41.88]]; // straight up Michigan
     const regular: [number, number][] = [[-87.624, 41.86], [-87.624, 41.865], [-87.62, 41.866], [-87.62, 41.873], [-87.624, 41.874], [-87.624, 41.88]];
-    expect(skippedStretches(regular, run)).toEqual([[[-87.624, 41.865], [-87.62, 41.866], [-87.62, 41.873], [-87.624, 41.874]]]);
-    expect(skippedStretches(run, run)).toEqual([]); // the same streets: nothing dashed
+    expect(skippedStretches(regular, [run])).toEqual([[[-87.624, 41.865], [-87.62, 41.866], [-87.62, 41.873], [-87.624, 41.874]]]);
+    expect(skippedStretches(run, [run])).toEqual([]); // the same streets: nothing dashed
+  });
+
+  it("never dashes a street another bus of the route runs now (Oct 10, #6: one bus on the regular pattern)", () => {
+    const run: [number, number][] = [[-87.624, 41.86], [-87.624, 41.88]];
+    const regular: [number, number][] = [[-87.624, 41.86], [-87.624, 41.865], [-87.62, 41.866], [-87.62, 41.873], [-87.624, 41.874], [-87.624, 41.88]];
+    expect(skippedStretches(regular, [run, regular])).toEqual([]); // a bus on the regular pattern: not skipped
   });
 });
 

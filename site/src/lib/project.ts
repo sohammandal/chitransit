@@ -118,13 +118,16 @@ function toLine(p: [number, number], c: [number, number][]): number {
   }
   return c.length === 1 ? metres(p, c[0]) : best;
 }
-/** The stretches of a reroute's regular path (CTA's dtrpt, the pattern's d) its buses no longer
- *  take (off its path c), each joined to where it leaves and rejoins it: what CTA's map dashes. */
-export function skippedStretches(d: [number, number][], c: [number, number][]): [number, number][][] {
+/** The stretches of a reroute's regular path (CTA's dtrpt, the pattern's d) that no bus of the route
+ *  runs now (away from every line drawn: `lines`), each joined to where it leaves and rejoins them:
+ *  what CTA's map dashes. A street some bus still runs isn't skipped (Oct 10: one #6 southbound bus
+ *  on the regular pattern drew the regular streets blue under the reroute's dashes). */
+export function skippedStretches(d: [number, number][], lines: [number, number][][]): [number, number][][] {
   const out: [number, number][][] = [];
   let run: [number, number][] | null = null;
+  const off = (p: [number, number]) => lines.every((c) => toLine(p, c) > SAME_STREET_M);
   d.forEach((p, i) => {
-    if (toLine(p, c) > SAME_STREET_M) (run ??= i > 0 ? [d[i - 1]] : []).push(p);
+    if (off(p)) (run ??= i > 0 ? [d[i - 1]] : []).push(p);
     else if (run) { run.push(p); out.push(run); run = null; }
   });
   if (run) out.push(run);

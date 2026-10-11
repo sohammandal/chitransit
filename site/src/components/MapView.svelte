@@ -262,7 +262,8 @@
     source("route")?.setData(shapes.length
       ? { type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: shapes.map((p) => withoutSpurs(p.c)) } }
       : empty);
-    const regular = shapes.flatMap((p) => (p.d?.length ? skippedStretches(withoutSpurs(p.d), p.c) : []));
+    const lines = shapes.map((p) => p.c);
+    const regular = shapes.flatMap((p) => (p.d?.length ? skippedStretches(withoutSpurs(p.d), lines) : []));
     source("regular")?.setData(regular.length
       ? { type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: regular } }
       : empty);

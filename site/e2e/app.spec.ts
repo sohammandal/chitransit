@@ -1306,3 +1306,22 @@ test("the map draws only the patterns buses are on now: one whose last bus left 
   await expect.poll(lines).toBe(1);
   expect(errors).toEqual([]);
 });
+
+test("route: the Rerouted pill is centred on its direction's capitals, and its text in it (Oct 10)", async ({ page }) => {
+  await setUp(page, [], rerouted());
+  await page.goto("/route/66/");
+  const tag = page.locator(".lab .tag");
+  await expect(tag).toHaveText("Rerouted");
+  // Measured at 4x: the pill 0.00 px off the label's capitals, its text 0.12 px off its own centre.
+  // In box terms: the label text's box centre sits 1.5 px below the pill's (0.5 when it sat ~1 px low),
+  // and Overpass capitals ride high, so the pill's text has 2 px more room above than below.
+  const lift = await page.locator(".lab", { has: page.locator(".tag") }).evaluate((el) => {
+    const r = document.createRange();
+    r.selectNodeContents(el.querySelector("b")!.firstChild!);
+    const t = r.getBoundingClientRect(), p = el.querySelector(".tag")!.getBoundingClientRect();
+    return (t.top + t.bottom) / 2 - (p.top + p.bottom) / 2;
+  });
+  expect(lift).toBeGreaterThan(1.2);
+  expect(lift).toBeLessThan(1.8);
+  expect(await tag.evaluate((e) => parseFloat(getComputedStyle(e).paddingTop) - parseFloat(getComputedStyle(e).paddingBottom))).toBe(2);
+});
