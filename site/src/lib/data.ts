@@ -1,4 +1,5 @@
-// The nightly data files, each fetched once per page view (they change daily).
+// The nightly data files, each fetched once per page view (they change daily), and the
+// poller's pattern files (live/patterns/), which the site reads first.
 import type { Headways, Pattern, Report, Stop } from "./types";
 
 const BASE = "/data/v1";
@@ -20,5 +21,18 @@ function load<T>(path: string): Promise<T> {
 export const routeNames = () => load<Record<string, string>>("routes.json");
 export const headways = () => load<Headways>("headways.json");
 export const report = () => load<Report>("report.json");
-export const pattern = (pid: number) => load<Pattern>(`patterns/${pid}.json`);
+const live = new Map<number, Promise<Pattern>>();
+/** A pattern's shape and stops: the poller's own file first (every pattern, a reroute's from the
+ *  minute it starts), the nightly's if that's missing. Neither yet: asked again next time. */
+export function pattern(pid: number): Promise<Pattern> {
+  let p = live.get(pid);
+  if (!p) {
+    p = fetch(`/live/patterns/${pid}.json`)
+      .then((r) => (r.ok ? (r.json() as Promise<Pattern>) : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .catch(() => load<Pattern>(`patterns/${pid}.json`));
+    p.catch(() => live.delete(pid));
+    live.set(pid, p);
+  }
+  return p;
+}
 export const stops = () => load<Stop[]>("stops.json");

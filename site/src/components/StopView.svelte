@@ -20,7 +20,10 @@
   // Routes with a bus on the way first; the rest (not running now, or no bus on a pattern
   // that stops here) folded into one line, so a busy corner at night isn't a wall of "none"
   const coming = $derived(rows.filter((r) => r.next.length));
-  const idle = $derived(rows.filter((r) => !r.next.length).map((r) => `${r.rt} ${r.dir}`));
+  const idle = $derived(rows.filter((r) => !r.next.length && !r.skipped && !r.unknown).map((r) => `${r.rt} ${r.dir}`));
+  // CTA's reroute skips this stop (its pattern says so); a bus whose route isn't loaded may be coming
+  const skipped = $derived(rows.filter((r) => r.skipped).map((r) => `${r.rt} ${r.dir}`));
+  const unsure = $derived(rows.filter((r) => r.unknown && !r.skipped).map((r) => `${r.rt} ${r.dir}`));
   const away = (n: number) => (n === 0 ? "At the stop" : `${n} ${n === 1 ? "stop" : "stops"} away`);
 </script>
 
@@ -57,6 +60,8 @@
       </li>
     {/each}
   </ul>
+  {#if skipped.length}<p class="none">CTA's reroute skips this stop: {skipped.join(", ")}</p>{/if}
+  {#if unsure.length}<p class="none">Can't tell yet: {unsure.join(", ")}</p>{/if}
   {#if idle.length}<p class="none">No bus on the way now: {idle.join(", ")}</p>{/if}
 {:else}
   <p class="none">{loading ? "Loading…" : "No routes stop here right now"}</p>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stopOnPattern, stopRows } from "./stops";
+import { routeStops, stopOnPattern, stopPatterns, stopRows } from "./stops";
 import { bus as fake } from "./testing";
 import type { Pattern, Stop, StopWaits, Vehicle } from "./types";
 
@@ -58,5 +58,47 @@ describe("stopRows", () => {
     expect(stopRows(belmont, [next], patterns, null)[0].wait).toBeNull(); // not loaded: say nothing
     const unknown: StopWaits = { generated_at: "", stops: { "22|Northbound": { "22-Belmont": [null, 0] } } };
     expect(stopRows(belmont, [next], patterns, unknown)[0].wait).toEqual({ s: null, long: false });
+  });
+
+  // Oct 10: CTA put #146's buses on reroute patterns the nightly didn't have, and every #146 stop
+  // said "No bus on the way now" while they drove towards it.
+  it("counts buses on a pattern the nightly doesn't list for the stop (a reroute's, from the live files)", () => {
+    const reroute = pat("22", "Northbound", ["A", "B", "Q", "D", "E", "Belmont", "G"]); // C moved to Q
+    const withReroute = new Map([...patterns, [9, reroute]]);
+    const coming = [bus("r", 9, 1500)]; // on the reroute only
+    expect(stopPatterns(belmont, coming, withReroute)).toEqual([1, 2, 9]);
+    expect(stopRows(belmont, coming, withReroute)[0].next.map((n) => [n.bus.vid, n.away])).toEqual([["r", 4]]);
+  });
+
+  it("can't tell, rather than none coming, while a bus's pattern isn't loaded", () => {
+    const [row] = stopRows(belmont, [bus("r", 9, 1500)], patterns); // pattern 9 not (yet) known
+    expect([row.next, row.unknown]).toEqual([[], true]);
+    expect(stopRows(belmont, [bus("a", 1, 1500), bus("r", 9, 1500)], patterns)[0].unknown).toBe(false); // one is coming
+  });
+
+  it("says CTA's reroute skips the stop when the route's buses run a pattern that skips it", () => {
+    const skipping: Pattern = { ...pat("22", "Northbound", ["A", "B", "C", "D", "E", "G"]), x: [[-87.65, 41.9 + 5 * 0.0027, "Belmont", "22-Belmont"]] };
+    const withSkip = new Map([...patterns, [9, skipping]]);
+    const [row] = stopRows(belmont, [bus("r", 9, 500)], withSkip);
+    expect([row.next, row.skipped, row.unknown]).toEqual([[], true, false]);
+    // a reroute the nightly still lists for the stop, with no bus on it: not in force
+    const listed: Stop = [belmont[0], belmont[1], belmont[2], [1, 2, 9]];
+    expect(stopRows(listed, [], withSkip)[0].skipped).toBe(false);
+  });
+});
+
+describe("routeStops", () => {
+  it("draws a route's stops from its own patterns, merged by corner, with the nightly's other routes there", () => {
+    const index: Stop[] = [[-87.65, 41.9 + 5 * 0.0027, "Belmont", [1, 40]]]; // #77 (40) stops there too
+    const stops = routeStops([{ pid: 1, p: main }, { pid: 2, p: short }], index);
+    expect(stops.map((s) => s.stop[2])).toEqual(["A", "B", "C", "D", "E", "Belmont", "G"]); // H: last stop
+    expect(stops.find((s) => s.stop[2] === "Belmont")!.stop[3]).toEqual([1, 40]); // the short turn ends there
+    expect(stops.every((s) => !s.skipped)).toBe(true);
+  });
+
+  it("adds the regular stops a reroute skips, marked, as CTA's map shows them", () => {
+    const skipping: Pattern = { ...pat("22", "Northbound", ["A", "B", "Q"]), x: [[-87.64, 41.95, "Columbus & Balbo", "9"], [-87.65, 41.9, "A", "22-A"]] };
+    const stops = routeStops([{ pid: 9, p: skipping }], []);
+    expect(stops.map((s) => [s.stop[2], s.skipped])).toEqual([["A", false], ["B", false], ["Columbus & Balbo", true]]);
   });
 });

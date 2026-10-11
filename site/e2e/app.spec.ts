@@ -10,6 +10,7 @@ const fixture = (name: string) => (existsSync(new URL(name, FIX)) ? readFileSync
 type Map = {
   loaded(): boolean; getFilter(id: string): unknown; queryRenderedFeatures(o: object): { properties: { rt: string } }[];
   jumpTo(o: { center: [number, number]; zoom: number }): void; project(p: [number, number]): { x: number; y: number };
+  querySourceFeatures(id: string): unknown[];
   getCanvas(): HTMLCanvasElement;
 };
 declare global { interface Window { map?: Map; __e2e?: boolean } }
@@ -29,6 +30,11 @@ async function setUp(page: Page, missing: string[] = [], f = feed) {
     document.addEventListener("securitypolicyviolation", (e) => csp.push(`${e.violatedDirective} ${e.blockedURI}`));
   }, f);
   await page.route("**/live/vehicles.json", (r) => r.fulfill({ json: f }));
+  // the poller's pattern files (live/patterns/{pid}.json): the fixtures' live/ ones, else none
+  await page.route("**/live/patterns/**", (r) => {
+    const body = fixture(new URL(r.request().url()).pathname.slice(1));
+    return body ? r.fulfill({ body, contentType: "application/json" }) : r.fulfill({ status: 404 });
+  });
   await page.route("**/data/v1/**", (r) => {
     const name = new URL(r.request().url()).pathname.replace("/data/v1/", "");
     const body = missing.includes(name) ? null : fixture(name);
@@ -578,6 +584,9 @@ for (const rt of ["66", "J14"]) test(`line view: no two pieces of text overlap o
 test("line view: tapping the line names the nearest stop; tapping again clears it", async ({ page }) => {
   await setUp(page);
   await page.goto("/route/66/");
+  // every pattern in (live file or nightly's): a late one redraws the line and moves its buses
+  await expect(page.locator(".sheet svg")).toHaveCount(2);
+  await page.waitForLoadState("networkidle");
   const line = page.locator(".sheet svg").first();
   // a stretch of line with no bus on it (a bus there takes the tap: it opened the bus, and its
   // glide kept the spot moving until the click timed out)
@@ -838,12 +847,16 @@ test("stop: click around like a rider: route, stop, bus, back link, Back/Forward
   test.slow(); // a long click-through: ~47 s on CI's runner, over the 45 s default (Sep 29)
   const errors = await setUp(page);
   const stops = JSON.parse(fixture("stops.json")!.toString()) as [number, number, string, number[]][];
-  // The stops on the map (all of them, not just the ones in view) are exactly those the pids serve
+  // The stops on the map (all of them, not just the ones in view) are exactly those the pids'
+  // patterns serve (riders board at every stop but a pattern's last), corners merged (Oct 10:
+  // from the patterns themselves, so a reroute's stops show the minute it starts)
+  const corner = (n: string) => n.split(" & ").sort().join(" & ");
+  const served = (pid: number) => (JSON.parse(fixture(`patterns/${pid}.json`)!.toString()).s as [number, number, string][]).slice(0, -1).map((s) => corner(s[2]));
   const drawnStopsServe = async (pids: number[]) => {
-    const idx = await page.evaluate(() => (window.map as unknown as { getSource(id: string): { serialize(): {
-      data: { features: { properties: { i: number } }[] } } } }).getSource("stops").serialize().data.features.map((f) => f.properties.i));
-    const want = stops.flatMap((s, i) => (s[3].some((p) => pids.includes(p)) ? [i] : []));
-    return want.length > 0 && want.length < stops.length && JSON.stringify(idx) === JSON.stringify(want);
+    const names = await page.evaluate(() => (window.map as unknown as { getSource(id: string): { serialize(): {
+      data: { features: { properties: { name: string } }[] } } } }).getSource("stops").serialize().data.features.map((f) => f.properties.name));
+    const want = [...new Set(pids.flatMap(served))].sort();
+    return names.length > 0 && names.length < stops.length && JSON.stringify([...new Set(names.map(corner))].sort()) === JSON.stringify(want);
   };
   const routePids = [...new Set(feed.vehicles.filter((v: { rt: string }) => v.rt === "66").map((v: { pid: number }) => v.pid))] as number[];
 
@@ -1210,4 +1223,61 @@ test("about: outside links open in a new tab, leaving the map where it was (Oct 
     await expect(a).toHaveAttribute("target", "_blank");
     await expect(a).toHaveAttribute("rel", /noopener/);
   }
+});
+
+/** The feed with #66's Westbound buses on a reroute that only the poller's live files have
+ *  (fixtures/live/patterns/966665.json: it skips Chicago & Noble), and CTA's word on it. Oct 10:
+ *  CTA started #6's and #146's reroutes after the nightly ran; the site drew none of their buses,
+ *  and every #146 stop said "No bus on the way now" as they drove towards it. */
+const rerouted = () => ({
+  ...feed,
+  rerouted: { "66": ["Westbound"] },
+  alerts: { "66": [{ h: "#66 Chicago Temporary Westbound Reroute near Chicago/Noble", u: "https://www.transitchicago.com/travel_information/alert_detail.aspx?AlertId=1" }] },
+  vehicles: feed.vehicles.map((v: { pid: number }) => (v.pid === 6665 ? { ...v, pid: 966665 } : v)),
+});
+
+/** Click the stop drawn at [lon, lat] (zoomed in to street level). */
+async function openStopAt(page: Page, at: [number, number]) {
+  await page.evaluate((at) => window.map!.jumpTo({ center: at, zoom: 17 }), at);
+  await page.waitForFunction(() => window.map!.queryRenderedFeatures({ layers: ["stops"] }).length > 0);
+  const pt = await page.evaluate((at) => {
+    const p = window.map!.project(at);
+    const r = window.map!.getCanvas().getBoundingClientRect();
+    return { x: r.left + p.x, y: r.top + p.y };
+  }, at);
+  await page.mouse.click(pt.x, pt.y);
+}
+
+test("a reroute's own pattern (live files): its buses on the line, the streets it skips dashed, CTA's alert (Oct 10) @both", async ({ page }) => {
+  const errors = await setUp(page, [], rerouted());
+  await page.goto("/route/66/");
+  await expect(page.locator(".sheet svg")).toHaveCount(2); // both directions drawn
+  await expect(page.locator(".lab", { hasText: "Westbound" }).locator(".tag")).toHaveText("Rerouted");
+  await expect(page.locator(".lab", { hasText: "Eastbound" }).locator(".tag")).toHaveCount(0);
+  const alert = page.locator(".alerts a");
+  await expect(alert).toHaveText("#66 Chicago Temporary Westbound Reroute near Chicago/Noble");
+  await expect(alert).toHaveAttribute("target", "_blank");
+  await busesDrawn(page);
+  await page.waitForFunction(() => window.map!.querySourceFeatures("regular").length > 0);
+  await noSideScroll(page);
+  expect(errors).toEqual([]);
+});
+
+test("stop: buses on a reroute's pattern count, and a stop it skips says so, never 'no bus' (Oct 10)", async ({ page }) => {
+  const errors = await setUp(page, [], rerouted());
+  await page.goto("/");
+  await busesDrawn(page);
+  await openStopAt(page, [-87.66733, 41.89608]); // Chicago & Ashland: the reroute stops there
+  await expect(page.locator(".sheet h2")).toHaveText("Chicago & Ashland");
+  const row = page.locator(".sheet .rows li").filter({ hasText: "Westbound" });
+  await expect(row).toContainText("66");
+  await expect(row.locator(".bus").nth(0)).toContainText("1 stop away"); // 8185, on the reroute
+  await page.evaluate(() => history.replaceState(null, "", "/")); // a reload keeps an open stop
+  await page.goto("/");
+  await busesDrawn(page);
+  await openStopAt(page, [-87.66236, 41.89616]); // Chicago & Noble: the reroute skips it
+  await expect(page.locator(".sheet h2")).toHaveText("Chicago & Noble");
+  await expect(page.getByText("CTA's reroute skips this stop: 66 Westbound")).toBeVisible();
+  await expect(page.getByText(/No bus on the way now:.*66 Westbound/)).toHaveCount(0);
+  expect(errors).toEqual([]);
 });

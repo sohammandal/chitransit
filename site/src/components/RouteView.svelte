@@ -4,12 +4,12 @@
   import { minutes } from "../lib/format";
   import { mainPid, onLine } from "../lib/project";
   import { scheduleRange } from "../lib/waits";
-  import type { Pattern, ReportRow, Vehicle } from "../lib/types";
+  import type { Alert, Pattern, ReportRow, Vehicle } from "../lib/types";
   import Key from "./Key.svelte";
   import LineView from "./LineView.svelte";
   import ReportCard from "./ReportCard.svelte";
 
-  let { rt, name, buses, patterns, scheduledFor, days, report, now, selected = null, onSelect, onClose }: {
+  let { rt, name, buses, patterns, scheduledFor, days, report, now, rerouted = [], alerts = [], selected = null, onSelect, onClose }: {
     rt: string;
     name: string | undefined;
     buses: Vehicle[]; // this route's buses
@@ -18,6 +18,8 @@
     days: string[]; // the report card's watched days
     report: ReportRow[] | undefined; // this route's rows, aligned with days
     now: Date;
+    rerouted?: string[]; // the directions CTA has on a detour now ("": all of them)
+    alerts?: Alert[]; // CTA's reroute alerts for this route, newest first
     selected?: string | null;
     onSelect: (vid: string) => void;
     onClose: () => void;
@@ -57,11 +59,21 @@
 {#if tab === "report"}
   <ReportCard {days} rows={report} {now} />
 {:else}
+{#if alerts.length}
+  <!-- CTA's own words (its bus status page), on CTA's site -->
+  <ul class="alerts">
+    {#each alerts.filter((a, i) => alerts.findIndex((b) => b.h === a.h) === i) as a (a.h)}
+      <li>{#if a.u}<a href={a.u} target="_blank" rel="noopener">{a.h}</a>{:else}{a.h}{/if}</li>
+    {/each}
+  </ul>
+{/if}
 {#each directions as d (d.dir)}
   <div class="dir line">
-    <p class="lab"><b>{d.dir}</b>{#if d.range}<span>scheduled every {d.range[0] === d.range[1] ? minutes(d.range[0]) : `${Math.round(d.range[0] / 60)}–${minutes(d.range[1])}`}</span>{/if}</p>
+    <p class="lab"><b>{d.dir}{#if rerouted.includes(d.dir) || rerouted.includes("")}<span class="tag">Rerouted</span>{/if}</b>{#if d.range}<span>scheduled every {d.range[0] === d.range[1] ? minutes(d.range[0]) : `${Math.round(d.range[0] / 60)}–${minutes(d.range[1])}`}</span>{/if}</p>
     {#if d.pid != null}
       <LineView pattern={patterns.get(d.pid)!} buses={d.drawn} scheduled={d.scheduled} {selected} {onSelect} />
+    {:else}
+      <p class="note">Can't draw this direction yet: its buses' route is still loading</p>
     {/if}
     {#if d.pid != null && d.off}<p class="note">{d.off} more {d.off === 1 ? "bus is" : "buses are"} on a branch or detour off this line (not shown)</p>{/if}
   </div>
@@ -85,6 +97,11 @@
   .lab { margin: 0; display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--fog); }
   .lab b { color: var(--asphalt); font-size: 14px; }
   .note { margin: 0; font-size: 12px; color: var(--fog); }
+  .tag { margin-left: 8px; padding: 1px 6px 0; border-radius: 6px; background: var(--signal-amber); color: var(--surface); font-size: 11px; font-weight: 800; letter-spacing: 0.02em; vertical-align: 1px; }
+  .alerts { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+  .alerts li { padding: 7px 10px 6px; border-radius: 8px; background: var(--concrete); font-size: 13px; line-height: 1.3; }
+  .alerts li::before { content: "CTA: "; font-weight: 700; }
+  .alerts a { color: var(--asphalt); }
   .line { gap: 6px; padding-top: 6px; }
   .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 3px; border-radius: 10px; background: var(--concrete); }
   .tabs button { min-height: 36px; border: 0; border-radius: 8px; background: none; font: inherit; font-size: 14px; font-weight: 700; color: var(--fog); cursor: pointer; }

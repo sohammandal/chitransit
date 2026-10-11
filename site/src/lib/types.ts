@@ -1,5 +1,6 @@
-// Shapes of the files the site reads. The poller writes live/vehicles.json every 30 s;
-// the nightly job writes everything under data/v1/ (transform/site_data.py).
+// Shapes of the files the site reads. The poller writes live/vehicles.json every 30 s and
+// live/patterns/{pid}.json for every pattern (ghost_ledger.live); the nightly job writes
+// everything under data/v1/ (transform/site_data.py).
 
 export type Vehicle = {
   vid: string;
@@ -32,7 +33,17 @@ export type Vehicle = {
   trip: "starting" | "finishing" | null; // why a bus has no next stop
 };
 
-export type Feed = { generated_at: string; build?: string; no_data_since?: string | null; vehicles: Vehicle[] }; // build: the poller's commit; no_data_since: CTA's feed down since then
+export type Feed = {
+  generated_at: string;
+  build?: string; // the poller's commit
+  no_data_since?: string | null; // CTA's feed down since then
+  rerouted?: Record<string, string[]>; // route -> directions CTA has on a detour now ("": all)
+  alerts?: Record<string, Alert[]>; // route -> CTA's reroute alerts in force, newest first
+  vehicles: Vehicle[];
+};
+
+/** One of CTA's Customer Alerts: its headline and CTA's page about it. */
+export type Alert = { h: string; u: string | null };
 
 /** A stop riders board at (same-named stops at a corner merged): [lon, lat, name, pids]. */
 export type Stop = [number, number, string, number[]];
@@ -42,6 +53,8 @@ export type Pattern = {
   dir: string;
   c: [number, number][]; // [lon, lat] along the route
   s: [number, number, string, number, number?, string?][]; // stops: [lon, lat, name, feet along, routes at that crossing, CTA stop id]
+  d?: [number, number][]; // a reroute: the regular path it replaces (CTA's own map dashes it)
+  x?: [number, number, string, string][]; // a reroute: the regular stops it skips [lon, lat, name, CTA stop id]
 };
 
 /** live/stops.json: every stop's own wait, "rt|Northbound" -> stop id -> [seconds since the

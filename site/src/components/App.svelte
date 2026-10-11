@@ -11,7 +11,7 @@
   import { pollFeed, pollStopWaits } from "../lib/feed";
   import { findProblems, scheduledGap } from "../lib/problems";
   import { mainPid, onLine } from "../lib/project";
-  import { stopRows } from "../lib/stops";
+  import { stopPatterns, stopRows } from "../lib/stops";
   import { feetBetween } from "../lib/distance";
   import { behindOf } from "../lib/waits";
   import type { Camera, Feed, Headways, Pattern, Report, Stop, StopWaits, Vehicle } from "../lib/types";
@@ -72,11 +72,13 @@
   const shapes = $derived(route ? [...patterns.values()].filter((p) => p.rt === route && (!direction || p.dir === direction))
     : stopBuses ? [...new Set(stopBuses.map((b) => b.pid))].flatMap((pid) => patterns.get(pid!) ?? [])
     : []);
-  // The map's stops: a bus's own pattern, a route's running patterns, none beside an open stop, or all
+  // The map's stops: a bus's own pattern's, a route's running patterns', none beside an open
+  // stop, or all
   const stopPids = $derived(bus?.pid != null ? [bus.pid]
     : route ? [...new Set(routeBuses.flatMap((b) => (b.pid != null ? [b.pid] : [])))]
     : stopBuses ? []
     : null);
+  const stopShapes = $derived(stopPids?.flatMap((pid) => (patterns.has(pid) ? [{ pid, p: patterns.get(pid)! }] : [])) ?? null);
 
   // Map padding keeps the route clear of the panel: beside it on wide screens, above it on phones.
   const padding = $derived(phone
@@ -92,9 +94,11 @@
     }
   });
 
-  // Load an open stop's patterns (where the stop is on each one)
+  // Load an open stop's patterns (where the stop is on each one): the nightly's for the stop, and
+  // every pattern a bus of those routes is on (a reroute's), asked again with each feed until in
   $effect(() => {
-    for (const pid of stop?.[3] ?? []) {
+    if (!stop) return;
+    for (const pid of stopPatterns(stop, vehicles, patterns)) {
       if (patterns.has(pid)) continue;
       data.pattern(pid).then((p) => { patterns = new Map(patterns).set(pid, p); }).catch(() => {});
     }
@@ -230,7 +234,7 @@
   });
 </script>
 
-<MapView vehicles={stopBuses ?? vehicles} {route} {direction} {selected} {shapes} {stopPids} stop={level === "stop" ? stop : null} {padding} {fit} {fitNonce} {focusNonce} {view} onSelect={(vid) => select(vid, "map")} onStop={openStop} onCamera={keepCamera} />
+<MapView vehicles={stopBuses ?? vehicles} {route} {direction} {selected} {shapes} {stopShapes} stop={level === "stop" ? stop : null} {padding} {fit} {fitNonce} {focusNonce} {view} onSelect={(vid) => select(vid, "map")} onStop={openStop} onCamera={keepCamera} />
 
 <div class="side panel-column" style:--top-h="{topH}px">
   <div bind:clientHeight={topH}>
@@ -274,6 +278,8 @@
           scheduledFor={(dir) => scheduledGap(hw, route!, dir, at)}
           days={report?.days ?? []}
           report={report?.routes[route]}
+          rerouted={feed?.rerouted?.[route] ?? []}
+          alerts={feed?.alerts?.[route] ?? []}
           now={new Date(now)}
           {selected}
           onSelect={(vid) => select(vid, "line")}

@@ -97,3 +97,29 @@ export function withoutSpurs(c: [number, number][]): [number, number][] {
   }
   return out;
 }
+
+const SAME_STREET_M = 40; // a regular path this close to the reroute's is the same street
+/** Metres from point p to the polyline c (flat earth at city scale). */
+function toLine(p: [number, number], c: [number, number][]): number {
+  let best = Infinity;
+  for (let i = 0; i + 1 < c.length; i++) {
+    const [ax, ay] = [(c[i][0] - p[0]) * 82_990, (c[i][1] - p[1]) * 110_540];
+    const [bx, by] = [(c[i + 1][0] - p[0]) * 82_990, (c[i + 1][1] - p[1]) * 110_540];
+    const [dx, dy] = [bx - ax, by - ay];
+    const k = dx || dy ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy))) : 0;
+    best = Math.min(best, Math.hypot(ax + k * dx, ay + k * dy));
+  }
+  return c.length === 1 ? metres(p, c[0]) : best;
+}
+/** The stretches of a reroute's regular path (CTA's dtrpt, the pattern's d) its buses no longer
+ *  take (off its path c), each joined to where it leaves and rejoins it: what CTA's map dashes. */
+export function skippedStretches(d: [number, number][], c: [number, number][]): [number, number][][] {
+  const out: [number, number][][] = [];
+  let run: [number, number][] | null = null;
+  d.forEach((p, i) => {
+    if (toLine(p, c) > SAME_STREET_M) (run ??= i > 0 ? [d[i - 1]] : []).push(p);
+    else if (run) { run.push(p); out.push(run); run = null; }
+  });
+  if (run) out.push(run);
+  return out.filter((r) => r.length > 1);
+}

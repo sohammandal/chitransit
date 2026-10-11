@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { onLine, project, withoutSpurs } from "./project";
+import { onLine, project, skippedStretches, withoutSpurs } from "./project";
 import { bus } from "./testing";
 import type { Pattern } from "./types";
 
@@ -38,5 +38,15 @@ describe("withoutSpurs", () => {
     expect(withoutSpurs([[-87.77437, 41.89472], A, stop, A, end])).toEqual([[-87.77437, 41.89472], A, end]);
     const far: [number, number] = [-87.77193, 41.8940]; // 84 m up a street and back
     expect(withoutSpurs([A, far, A, end])).toEqual([A, far, A, end]);
+  });
+});
+
+describe("skippedStretches", () => {
+  // Oct 10, #6: the reroute ran Michigan; its regular path (dtrpt) went by Balbo and Columbus
+  it("dashes only where the regular path leaves the reroute's, joined at both ends", () => {
+    const run: [number, number][] = [[-87.624, 41.86], [-87.624, 41.88]]; // straight up Michigan
+    const regular: [number, number][] = [[-87.624, 41.86], [-87.624, 41.865], [-87.62, 41.866], [-87.62, 41.873], [-87.624, 41.874], [-87.624, 41.88]];
+    expect(skippedStretches(regular, run)).toEqual([[[-87.624, 41.865], [-87.62, 41.866], [-87.62, 41.873], [-87.624, 41.874]]]);
+    expect(skippedStretches(run, run)).toEqual([]); // the same streets: nothing dashed
   });
 });

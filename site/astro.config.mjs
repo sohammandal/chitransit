@@ -45,6 +45,13 @@ function liveFeedInDev() {
         res.setHeader("Content-Type", "application/json");
         res.end(r ? await r.text() : "");
       });
+      // the poller's pattern files, which the site reads first (the nightly's are the fallback)
+      server.middlewares.use("/live/patterns/", async (req, res) => {
+        const r = await fetch(`${PROD}/live/patterns${req.url}`, { cache: "no-store" }).catch(() => null);
+        res.statusCode = r?.status ?? 502;
+        res.setHeader("Content-Type", "application/json");
+        res.end(r?.ok ? await r.text() : "");
+      });
     },
   };
 }

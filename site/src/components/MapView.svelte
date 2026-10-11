@@ -1,25 +1,28 @@
 <script lang="ts">
   // The map: every bus, gliding between feed updates. With a route open, only that route's
-  // buses show and the map fits its shape around the panel. Tap a bus to select it. Zoomed in
-  // to street level, stops show too (stops.json, fetched then): tap one to open it.
+  // buses show and the map fits its shape around the panel; a reroute is drawn as CTA's own map
+  // draws it: the regular streets it skips dashed, their stops greyed. Tap a bus to select it.
+  // Zoomed in to street level, stops show too (a route's from its own patterns, else
+  // stops.json, fetched then): tap one to open it.
   import { onMount, untrack } from "svelte";
   import * as maplibregl from "maplibre-gl";
   import "maplibre-gl/dist/maplibre-gl.css";
   // MapLibre 6 parses tiles in a module worker; bundled, it can't find it on its own.
   import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
   import * as data from "../lib/data";
-  import { withoutSpurs } from "../lib/project";
+  import { skippedStretches, withoutSpurs } from "../lib/project";
+  import { routeStops } from "../lib/stops";
   import type { Camera, Pattern, Stop, Vehicle } from "../lib/types";
 
   maplibregl.setWorkerUrl(workerUrl);
 
-  let { vehicles, route, direction, selected, shapes, stopPids, stop, padding, fit, fitNonce, focusNonce, view, onSelect, onStop, onCamera }: {
+  let { vehicles, route, direction, selected, shapes, stopShapes, stop, padding, fit, fitNonce, focusNonce, view, onSelect, onStop, onCamera }: {
     vehicles: Vehicle[];
     route: string | null;
     direction: string | null; // a bus is open: show only its direction ("Eastbound")
     selected: string | null;
     shapes: Pattern[]; // the open route's patterns
-    stopPids: number[] | null; // show only stops these patterns serve (a route, a bus); null: all
+    stopShapes: { pid: number; p: Pattern }[] | null; // show only these patterns' stops (a route, a bus); null: all
     stop: Stop | null; // the open stop, highlighted at every zoom
     padding: { top: number; bottom: number; left: number; right: number };
     fit: boolean; // frame the route (or the city) at all; false keeps the camera (a tapped bus)
@@ -32,6 +35,7 @@
   } = $props();
   const STOPS_ZOOM = 14; // stops show from here (a neighbourhood): ~6,000 would clutter the city view
   let stops = $state.raw<Stop[]>([]);
+  let shown: Stop[] = []; // the stops drawn, by feature index (what a tap opens)
 
   const STYLES = { light: "https://tiles.openfreemap.org/styles/positron", dark: "https://tiles.openfreemap.org/styles/dark" };
   const CITY = { center: [-87.66, 41.86] as [number, number], zoom: 10.6 };
@@ -77,17 +81,22 @@
 
   function addLayers() {
     if (!map) return;
-    const bus = color("--flag-blue"), ink = color("--asphalt"), halo = color("--surface");
+    const bus = color("--flag-blue"), ink = color("--asphalt"), halo = color("--surface"), fog = color("--fog");
     setImage("gl-bus", busIcon(bus, halo));
     map.addSource("route", { type: "geojson", data: empty });
+    map.addSource("regular", { type: "geojson", data: empty });
     map.addSource("buses", { type: "geojson", data: empty });
     map.addSource("stops", { type: "geojson", data: stopFeatures() });
+    // a stop a reroute skips: smaller and grey, as on CTA's map
     map.addLayer({ id: "stops", type: "circle", source: "stops", minzoom: STOPS_ZOOM,
-      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], STOPS_ZOOM, 4.5, 18, 8],
-        "circle-color": halo, "circle-stroke-color": ink, "circle-stroke-width": 2 } });
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], STOPS_ZOOM, ["case", ["get", "skipped"], 3.5, 4.5], 18, ["case", ["get", "skipped"], 6, 8]],
+        "circle-color": halo, "circle-stroke-color": ["case", ["get", "skipped"], fog, ink], "circle-stroke-width": ["case", ["get", "skipped"], 1.5, 2] } });
     // a finger-sized target around each small dot (invisible)
     map.addLayer({ id: "stops-hit", type: "circle", source: "stops", minzoom: STOPS_ZOOM,
       paint: { "circle-radius": 16, "circle-color": "#000", "circle-opacity": 0 } });
+    // the regular path a reroute replaces, dashed under the path the buses take
+    map.addLayer({ id: "regular", type: "line", source: "regular", layout: { "line-join": "round" },
+      paint: { "line-color": fog, "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.5, 15, 3], "line-dasharray": [2, 1.5] } });
     map.addLayer({ id: "route", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": bus, "line-width": ["interpolate", ["linear"], ["zoom"], 10, 3, 15, 7], "line-opacity": 0.45 } });
     map.addSource("stop", { type: "geojson", data: empty });
@@ -108,14 +117,13 @@
     draw(1);
   }
 
-  // Only the stops the open route's (or bus's) patterns serve; all of them when nothing is open.
+  // The open route's (or bus's) stops, from its own patterns, with the stops its reroutes skip;
+  // every stop when nothing is open.
   function stopFeatures(): GeoJSON.FeatureCollection {
-    const features: GeoJSON.Feature[] = [];
-    stops.forEach(([lon, lat, name, pids], i) => {
-      if (stopPids == null || pids.some((pid) => stopPids.includes(pid)))
-        features.push({ type: "Feature", geometry: { type: "Point", coordinates: [lon, lat] }, properties: { i, name } });
-    });
-    return { type: "FeatureCollection", features };
+    const drawn = stopShapes == null ? stops.map((stop) => ({ stop, skipped: false })) : routeStops(stopShapes, stops);
+    shown = drawn.map((d) => d.stop);
+    return { type: "FeatureCollection", features: drawn.map(({ stop: [lon, lat, name], skipped }, i) => (
+      { type: "Feature", geometry: { type: "Point", coordinates: [lon, lat] }, properties: { i, name, skipped } })) };
   }
   function loadStops() {
     if (stops.length || !map || map.getZoom() < STOPS_ZOOM - 0.5) return;
@@ -254,6 +262,10 @@
     source("route")?.setData(shapes.length
       ? { type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: shapes.map((p) => withoutSpurs(p.c)) } }
       : empty);
+    const regular = shapes.flatMap((p) => (p.d?.length ? skippedStretches(withoutSpurs(p.d), p.c) : []));
+    source("regular")?.setData(regular.length
+      ? { type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: regular } }
+      : empty);
     const running = route != null && vehicles.some((v) => v.rt === route);
     const ask = `${fitNonce}|${route}`, key = `${ask}|${shapes.length}|${running}`;
     if (key === fitted) return;
@@ -318,7 +330,7 @@
       // a bus under the finger wins (its own handler opens it)
       if (map!.queryRenderedFeatures(e.point, { layers: ["bus-dot", "bus-sym"] }).length) return;
       const i = e.features?.[0]?.properties?.i as number | undefined;
-      if (i != null && stops[i]) onStop(stops[i]);
+      if (i != null && shown[i]) onStop(shown[i]);
     });
     for (const layer of ["bus-dot", "bus-sym", "stops-hit"]) {
       map.on("click", layer, (e) => {
