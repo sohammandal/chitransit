@@ -9,7 +9,8 @@ test("live site: new build, live feed, nightly data, a route page", async ({ pag
 
   await page.goto("/");
   if (build) await expect(page.locator('meta[name="build"]')).toHaveAttribute("content", build);
-  await expect(page.getByText(/\d+ buses/)).toBeVisible({ timeout: 20_000 });
+  // the top bar's count ("362 buses · 50 trains"; Right now's rows say "2 buses together")
+  await expect(page.locator("header.bar").getByText(/\d+ buses/)).toBeVisible({ timeout: 20_000 });
   await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
 
   for (const f of ["routes.json", "headways.json", "report.json"]) {
