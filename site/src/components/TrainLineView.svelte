@@ -20,6 +20,7 @@
   } = $props();
 
   const mine = $derived(trains.filter((t) => t.rt === rt));
+  const claimed = $derived(mine.some((t) => t.long_wait || t.together_with));
   const directions = $derived(lineDirections(trains, rt, lines));
 </script>
 
@@ -50,8 +51,9 @@
 {:else}
   {#if loaded}<p class="note">CTA shows no trains on this line right now: it lists a train once it leaves its terminal</p>{/if}
 {/each}
-{#if mine.length}<Key square />{/if}
-<p class="note">Minutes between trains: CTA's arrival times; a long wait's, measured. Positions come from CTA's track sensors, not GPS</p>
+<!-- the key and its words only with a claim on the strips (published once graded) -->
+{#if claimed}<Key square />{/if}
+<p class="note">Minutes between trains: CTA's arrival times{#if claimed}; a long wait's, measured{/if}. Positions come from CTA's track sensors, not GPS</p>
 
 <style>
   header { display: flex; align-items: center; gap: 12px; }

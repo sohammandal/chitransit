@@ -1724,6 +1724,10 @@ test("a line's strip marks a long wait in red and trains together in amber, as a
   await expect(toHoward.locator("text.min:not(.long):not(.together)")).toHaveText(["9 min", "13 min", "7 min"]);
   await expect(page.locator(".sheet .key")).toContainText("Together");
   await expect(page.locator(".sheet section").filter({ hasText: "Toward 95th" }).locator("line.wait")).toHaveCount(0);
+  // a line with no claims shows no key for them (claims go out only once graded)
+  await page.goto("/line/blue/");
+  await expect(page.getByRole("heading", { name: "Blue Line" })).toBeVisible();
+  await expect(page.locator(".sheet .key")).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
