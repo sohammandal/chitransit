@@ -15,4 +15,7 @@ describe("nextFetch", () => {
     expect(nextFetch(gen, false, false, gen + 34_000)).toBe(10_000);
     expect(nextFetch(null, true, true, gen)).toBe(10_000);
   });
+  it("the train feed comes every 20 s: asks 5.5 s after the next one is due", () => {
+    expect(nextFetch(gen, true, true, gen + 2_000, 20_000)).toBe(23_500);
+  });
 });

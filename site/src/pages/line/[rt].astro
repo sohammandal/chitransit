@@ -1,0 +1,24 @@
+---
+// One page per 'L' line, so /line/red/ loads directly and can be shared. The app reads the line
+// from the URL; this page gives it a proper title for links and tabs.
+import Base from "../../layouts/Base.astro";
+import App from "../../components/App.svelte";
+import Shell from "../../components/Shell.astro";
+import { LINE_NAMES } from "../../lib/trains";
+
+export function getStaticPaths() {
+  // the riders' names: /line/brown/, not CTA's code (brn)
+  return Object.values(LINE_NAMES).map((name) => ({ params: { rt: name.toLowerCase() }, props: { name } }));
+}
+const { name } = Astro.props;
+const description = `Every ${name} Line train, live, with CTA's own times at each station. Unofficial.`;
+---
+<Base title={`${name} Line trains, live | chitransit.fyi`} {description}>
+  <div class="about-page">
+    <h1>{name} Line trains, live</h1>
+    <p>{description}</p>
+  </div>
+  <Shell />
+  <App client:only="svelte" />
+  <noscript>The live map needs JavaScript</noscript>
+</Base>

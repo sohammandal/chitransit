@@ -9,7 +9,7 @@ test("live site: new build, live feed, nightly data, a route page", async ({ pag
 
   await page.goto("/");
   if (build) await expect(page.locator('meta[name="build"]')).toHaveAttribute("content", build);
-  await expect(page.getByText(/\d+ buses on the road/)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/\d+ buses/)).toBeVisible({ timeout: 20_000 });
   await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
 
   for (const f of ["routes.json", "headways.json", "report.json"]) {

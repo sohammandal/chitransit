@@ -13,9 +13,10 @@
   import type { Snippet } from "svelte";
 
   type Size = "peek" | "half" | "full";
-  let { size, onSize, children }: {
+  let { size, onSize, view = "", children }: {
     size: Size;
     onSize?: (size: Size) => void; // shown as the handle: a tap or drag settles on a size
+    view?: string; // what it shows: a new one starts at its top
     children: Snippet;
   } = $props();
 
@@ -23,7 +24,13 @@
   const FLICK = 0.4; // px/ms: a release this fast moves one size its way
 
   let el: HTMLElement;
+  let body: HTMLElement;
   let content: HTMLElement;
+  // a route opened from a scrolled list opened scrolled too, its first direction hidden (Oct 11)
+  $effect(() => {
+    void view;
+    if (body) body.scrollTop = 0;
+  });
   let phone = $state(false);
   let fullPx = $state(0); // "full" = as tall as the content, never under the top bar
   // h0: the sizes' heights, measured once when the drag starts (measuring on every move forces
@@ -169,7 +176,7 @@
       aria-label={size === "full" ? "Show less" : "Show more"}
     ><i></i></button>
   {/if}
-  <div class="body"><div class="content" bind:this={content}>{@render children()}</div></div>
+  <div class="body" bind:this={body}><div class="content" bind:this={content}>{@render children()}</div></div>
 </section>
 
 <style>

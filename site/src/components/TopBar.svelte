@@ -5,9 +5,13 @@
   import { untrack } from "svelte";
   import { plainClick, routeUrl } from "../lib/links";
   import { matchRoutes, toOpen } from "../lib/search";
+  import { LINE_NAMES, lineUrl, matchLines } from "../lib/trains";
+  import type { Lines, Mode } from "../lib/types";
   import Mark from "./Mark.svelte";
+  import Sep from "./Sep.svelte";
 
-  let { route, count, age, failed, downSince = null, names, onOpen, aboutOpen = false, onAbout }: {
+  let { route, count, age, failed, downSince = null, names, onOpen, aboutOpen = false, onAbout,
+    mode = "all", onMode = () => {}, trainCount = null, lines = null, onOpenLine = () => {} }: {
     count: number | null;
     age: number | null; // seconds since the feed was written
     failed: boolean;
@@ -17,7 +21,14 @@
     onOpen: (rt: string, replace: boolean) => void; // replace: swap the history entry
     aboutOpen?: boolean;
     onAbout: () => void;
+    // The 'L': what the map shows, the trains running, and a line opened from search
+    mode?: Mode;
+    onMode?: (mode: Mode) => void;
+    trainCount?: number | null;
+    lines?: Lines | null;
+    onOpenLine?: (rt: string) => void;
   } = $props();
+  const MODES: [Mode, string][] = [["all", "All"], ["bus", "Bus"], ["train", "Train"]];
 
   const PAUSE_MS = 400;
 
@@ -27,7 +38,14 @@
   let timer = 0;
 
   const matches = $derived(matchRoutes(query, names));
-  const showList = $derived(focused && query.trim() !== "" && matches.length > 0 && matches[0].rt !== opened);
+  const lineMatches = $derived(matchLines(query)); // lines first: "Blue" is the Blue Line
+  const showList = $derived(focused && query.trim() !== "" && (lineMatches.length > 0 || (matches.length > 0 && matches[0].rt !== opened)));
+  function openLine(rt: string) {
+    window.clearTimeout(timer);
+    [query, opened] = ["", null];
+    (document.activeElement as HTMLElement | null)?.blur();
+    onOpenLine(rt);
+  }
 
   $effect(() => {
     if (route !== untrack(() => opened)) [query, opened] = ["", null];
@@ -54,8 +72,10 @@
   function submit(e: SubmitEvent) {
     e.preventDefault();
     window.clearTimeout(timer);
-    const rt = toOpen(query, names) ?? matches[0]?.rt;
-    if (rt) open(rt, true);
+    const rt = toOpen(query, names);
+    if (!rt && lineMatches.length) return openLine(lineMatches[0]);
+    const pick = rt ?? matches[0]?.rt;
+    if (pick) open(pick, true);
   }
 </script>
 
@@ -81,12 +101,12 @@
            poller crashed), and its buses and claims are not live any more -->
       {@const old = (age ?? 0) > 90}
       <span class="dot" class:stale={failed || old}></span>
-      <span><strong>{count}</strong> buses on the road</span>
+      <span>{#if mode === "train"}{#if trainCount != null}<strong>{trainCount}</strong> trains{:else}Loading trains…{/if}{:else}<strong>{count}</strong> buses{#if mode === "all" && trainCount != null}<Sep /><strong>{trainCount}</strong> trains{/if}{/if}</span>
       <span class="updated">{failed ? "Reconnecting…" : old ? `Not updated for ${Math.round((age ?? 0) / 60)} min` : `Updated ${age ?? 0} s ago`}</span>
     {/if}
   </p>
   <form onsubmit={submit} role="search">
-    <label class="sr" for="route-q">Go to a route</label>
+    <label class="sr" for="route-q">Go to a route or line</label>
     <input
       id="route-q"
       type="search"
@@ -96,7 +116,7 @@
       oninput={typed}
       onfocus={() => (focused = true)}
       onblur={() => setTimeout(() => { focused = false; opened = null; }, 150)}
-      placeholder="Route number or name, e.g. 66"
+      placeholder="Route or line, e.g. 66"
       autocomplete="off"
       autocorrect="off"
       autocapitalize="characters"
@@ -105,8 +125,22 @@
       aria-controls="route-list"
       aria-expanded={showList}
     />
+    <!-- Both, or just buses or trains: remembered on this device -->
+    <div class="mode" role="radiogroup" aria-label="Show">
+      {#each MODES as [m, label] (m)}
+        <button type="button" role="radio" aria-checked={mode === m} onclick={() => onMode(m)}>{label}</button>
+      {/each}
+    </div>
     {#if showList}
       <ul id="route-list" class="list">
+        {#each lineMatches as rt (rt)}
+          {@const l = lines?.lines[rt]}
+          <li>
+            <a href={lineUrl(rt)} onmousedown={(e) => e.preventDefault()} onclick={(e) => { if (plainClick(e)) { e.preventDefault(); openLine(rt); } }}>
+              <span class="rt" style:background={l?.color} style:color={l?.text}>{LINE_NAMES[rt]}</span><span class="name">{LINE_NAMES[rt]} Line</span>
+            </a>
+          </li>
+        {/each}
         {#each matches as m (m.rt)}
           <li>
             <a href={routeUrl(m.rt)} onmousedown={(e) => e.preventDefault()} onclick={(e) => { if (plainClick(e)) { e.preventDefault(); open(m.rt, true); } }}>
@@ -127,7 +161,7 @@
     padding: 12px 14px; display: grid; gap: 8px;
   }
   .about-btn {
-    position: absolute; top: 10px; right: 10px; height: 32px; padding: 4px 12px 0; /* Overpass sits high: nudge */
+    position: absolute; top: 10px; right: 14px; /* on the content edge, over the mode switch */ height: 32px; padding: 4px 12px 0; /* Overpass sits high: nudge */
     display: inline-flex; align-items: center; line-height: 1;
     border: 1px solid var(--rule); border-radius: 999px; background: var(--surface);
     font: inherit; font-size: 13px; font-weight: 700; color: var(--fog); text-decoration: none; cursor: pointer;
@@ -155,7 +189,11 @@
   }
   input::-webkit-search-decoration, input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
   /* Suggestions float over the map: the bar keeps its height, so the map's fit doesn't shift. */
-  form { position: relative; }
+  form { position: relative; display: flex; gap: 8px; }
+  input { flex: 1; min-width: 0; }
+  .mode { display: flex; flex: none; gap: 2px; padding: 3px; border-radius: 10px; background: var(--concrete); border: 1.5px solid var(--rule); }
+  .mode button { min-width: 40px; padding: 3px 8px 0; /* Overpass sits high */ border: 0; border-radius: 7px; background: none; font: inherit; font-size: 13px; font-weight: 700; color: var(--fog); cursor: pointer; }
+  .mode button[aria-checked="true"] { background: var(--surface); color: var(--asphalt); box-shadow: 0 1px 3px rgb(0 0 0 / 0.12); }
   .list, .miss {
     position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 6px);
     background: var(--surface); border-radius: 12px; box-shadow: var(--shadow);

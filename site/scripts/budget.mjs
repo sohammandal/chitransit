@@ -1,10 +1,12 @@
 // Size budget: fail the build if the JavaScript a visitor downloads grows past the limit
 // (gzipped, as served). Baseline 2026-09-27: page 293 KB (mostly MapLibre), worker 141 KB.
 // Raise a limit only on purpose, in the same commit as the change that needs it.
+// 2026-10-11: page 320 -> 340 KB for the 'L' (trains on the map, line strips, station and train
+// cards: ~25 KB; 318 KB used then).
 import { readdirSync, readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 
-const BUDGET_KB = { page: 320, worker: 160 };
+const BUDGET_KB = { page: 340, worker: 160 };
 const dir = new URL("../dist/_astro/", import.meta.url);
 const sizes = readdirSync(dir)
   .filter((f) => f.endsWith(".js"))

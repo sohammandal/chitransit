@@ -1,6 +1,6 @@
 // The nightly data files, each fetched once per page view (they change daily), and the
 // poller's pattern files (live/patterns/), which the site reads first.
-import type { Headways, Pattern, Report, Stop } from "./types";
+import type { Headways, Lines, Pattern, Report, Stop } from "./types";
 
 const BASE = "/data/v1";
 const cache = new Map<string, Promise<unknown>>();
@@ -36,3 +36,13 @@ export function pattern(pid: number): Promise<Pattern> {
   return p;
 }
 export const stops = () => load<Stop[]>("stops.json");
+let linesFile: Promise<Lines> | null = null;
+/** The 'L' as drawn (l/lines.json, part of the site: no nightly behind it), loaded once, the
+ *  first time trains are shown. */
+export function lines(): Promise<Lines> {
+  if (!linesFile) {
+    linesFile = fetch("/l/lines.json").then((r) => (r.ok ? (r.json() as Promise<Lines>) : Promise.reject(new Error(`HTTP ${r.status}`))));
+    linesFile.catch(() => (linesFile = null));
+  }
+  return linesFile;
+}

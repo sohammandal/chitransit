@@ -2,9 +2,10 @@
 // both after each 30 s sweep, so the next fetch is timed to just after the next sweep lands
 // rather than a blind interval; a failed or overdue feed retries calmly (never a tight loop),
 // and polling pauses while the tab is hidden.
-import type { Feed, StopWaits } from "./types";
+import type { Feed, StationEtas, StopWaits, TrainFeed } from "./types";
 
 const SWEEP_MS = 30_000;
+const TRAIN_SWEEP_MS = 20_000; // CTA publishes Train Tracker every 20 s; the train sweep follows
 const RETRY_MS = 10_000;
 // When a new file can be fetched: the CDN served each new file 3.9-5.2 s (p50 4.3 s) after its
 // generated_at (11 sweeps, Oct 4). Asking 2 s after the next sweep's time, as before, nearly
@@ -20,7 +21,16 @@ export const pollFeed = (onFeed: (feed: Feed) => void, onError: () => void) =>
 export const pollStopWaits = (onWaits: (waits: StopWaits) => void) =>
   poll<StopWaits>("/live/stops.json", onWaits, () => {}); // none yet: the stop view says nothing
 
-function poll<T extends { generated_at: string }>(url: string, onData: (data: T) => void, onError: () => void): () => void {
+export const pollTrains = (onTrains: (feed: TrainFeed) => void, onError: () => void) =>
+  poll<TrainFeed>("/live/trains.json", onTrains, onError, TRAIN_SWEEP_MS);
+
+/** CTA's predictions at every station: fetched only while a station is open. */
+export const pollStations = (onEtas: (etas: StationEtas) => void) =>
+  poll<StationEtas>("/live/stations.json", onEtas, () => {}, TRAIN_SWEEP_MS);
+
+function poll<T extends { generated_at: string }>(
+  url: string, onData: (data: T) => void, onError: () => void, period = SWEEP_MS,
+): () => void {
   let timer = 0;
   let last: number | null = null;
 
@@ -39,7 +49,7 @@ function poll<T extends { generated_at: string }>(url: string, onData: (data: T)
     } catch {
       onError();
     }
-    timer = window.setTimeout(poll, nextFetch(last, ok, fresh, Date.now()) + Math.random() * 500);
+    timer = window.setTimeout(poll, nextFetch(last, ok, fresh, Date.now(), period) + Math.random() * 500);
   }
 
   const onVisibility = () => {
@@ -56,10 +66,10 @@ function poll<T extends { generated_at: string }>(url: string, onData: (data: T)
 
 /** ms until the next fetch, given the newest file's time (`last`), whether this fetch worked and
  *  brought a new file: just after the next file lands; soon again while it's still the old one. */
-export function nextFetch(last: number | null, ok: boolean, fresh: boolean, now: number): number {
+export function nextFetch(last: number | null, ok: boolean, fresh: boolean, now: number, period = SWEEP_MS): number {
   if (!ok || last == null) return RETRY_MS;
-  const due = last + SWEEP_MS + LANDS_MS - now;
-  if (due > 0) return Math.min(SWEEP_MS + LANDS_MS, due);
+  const due = last + period + LANDS_MS - now;
+  if (due > 0) return Math.min(period + LANDS_MS, due);
   if (!fresh && -due < STALE_FOR_MS) return STALE_RETRY_MS;
   return RETRY_MS;
 }

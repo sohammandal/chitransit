@@ -7,6 +7,7 @@
   --asphalt: #1c2227;    /* ink */
   --fog: #6c767e;        /* secondary text */
   --rule: #d8dde0;
+  --ring: #ffffff;       /* a train's ring on the map: white, apart from its own line's colour */
   --flag-blue: #1f86c0;  /* buses, brand (deepened from #2F9FD6 for contrast on light maps) */
   --flag-blue-soft: #d9edf8;
   --star-red: #d7262e;   /* trouble only */
@@ -28,6 +29,7 @@
     --asphalt: #eef1f3;
     --fog: #9aa5ae;
     --rule: #2c363e;
+    --ring: #eef1f3;
     --flag-blue: #5bb8e8;
     --flag-blue-soft: #16374b;
     --star-red: #ff5a60;

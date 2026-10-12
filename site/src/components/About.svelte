@@ -6,23 +6,23 @@
 
 <div class="sheet-head">
 <header>
-  <h2>Every CTA bus, live</h2>
+  <h2>Every CTA bus and train, live</h2>
   <span class="tag">Unofficial</span>
   {#if onClose}<button class="x" onclick={onClose} aria-label="Close">×</button>{/if}
 </header>
 </div>
-<p class="what">How Chicago's buses are really running, live and over time</p>
+<p class="what">How Chicago's buses and trains are really running, live and over time</p>
 <dl>
-  <dt>Search a route</dt>
+  <dt>Search a route or line</dt>
   <dd>Each direction as a line, with its gaps</dd>
-  <dt>Tap any bus</dt>
-  <dd>On the map, or on a route's line</dd>
-  <dt>Zoom in for stops</dt>
+  <dt>Tap any bus or train</dt>
+  <dd>On the map, or on a line</dd>
+  <dt>Zoom in for stops and stations</dt>
   <dd>Tap one to see what's coming</dd>
   <dt>Right now</dt>
   <dd>Long waits and bunching, judged against the schedule</dd>
   <dt>Live</dt>
-  <dd>Updates every 30 seconds. A position can be up to a minute old</dd>
+  <dd>Buses every 30 seconds, trains every 20 (placed by CTA's track sensors, not GPS). A position can be up to a minute old</dd>
 </dl>
 <div class="fine">
   <p>Data provided by Chicago Transit Authority</p>

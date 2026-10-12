@@ -48,7 +48,7 @@
   <span class="rt">{rt}</span>
   <div>
     <h2 class:long={(name?.length ?? 0) > 18}>{name ?? `Route ${rt}`}</h2>
-    <p class="sub">{buses.length} buses on the road</p>
+    <p class="sub">{buses.length} {buses.length === 1 ? "bus" : "buses"}</p>
   </div>
   <button class="x" onclick={onClose} aria-label="Back to all routes">×</button>
 </header>

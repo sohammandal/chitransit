@@ -35,6 +35,10 @@ async function setUp(page: Page, missing: string[] = [], f = feed) {
     const body = fixture(new URL(r.request().url()).pathname.slice(1));
     return body ? r.fulfill({ body, contentType: "application/json" }) : r.fulfill({ status: 404 });
   });
+  // the train sweep's files (live/trains.json, live/stations.json): the fixtures' live/ ones
+  for (const name of ["trains", "stations"]) {
+    await page.route(`**/live/${name}.json`, (r) => r.fulfill({ body: fixture(`live/${name}.json`)!, contentType: "application/json" }));
+  }
   await page.route("**/data/v1/**", (r) => {
     const name = new URL(r.request().url()).pathname.replace("/data/v1/", "");
     const body = missing.includes(name) ? null : fixture(name);
@@ -70,7 +74,7 @@ async function noSideScroll(page: Page) {
 test("city: live count, right-now list, buses on the map @both", async ({ page }) => {
   const errors = await setUp(page);
   await page.goto("/");
-  await expect(page.getByText(`${feed.vehicles.length} buses on the road`)).toBeVisible();
+  await expect(page.getByText(`${feed.vehicles.length} buses`)).toBeVisible();
   await expect(page.getByText("Updated 10 s ago")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
   expect(await page.locator(".sheet li").count()).toBeGreaterThan(0);
@@ -169,6 +173,14 @@ test("phone: dragging the handle resizes the sheet, and it settles on a size", a
   expect((await sheet.boundingBox())!.y).toBeGreaterThanOrEqual(bar.y + bar.height);
   await drag(400);
   await expect(sheet).toHaveClass(/peek/);
+  // the map re-frames for the bigger space it now has, then draws its new tiles: the flick below
+  // is timed by the page's own timers, which a busy map stretches (a finger's events carry the
+  // screen's own time), so it waits for the map to be idle (Oct 11)
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    const m = window.map as unknown as { once(e: string, f: () => void): void; triggerRepaint(): void };
+    m.once("idle", () => resolve());
+    m.triggerRepaint(); // idle after the next frame, even if it already was
+  }));
   // A short flick still moves one size. Sent from inside the page so its speed doesn't depend
   // on how busy the test machine is (a slow 60 px drag rightly snaps back).
   await grab.evaluate(async (g) => {
@@ -185,6 +197,43 @@ test("phone: dragging the handle resizes the sheet, and it settles on a size", a
   await expect(sheet).toHaveClass(/full/);
   await grab.click();
   await expect(sheet).toHaveClass(/peek/);
+});
+
+test("phone: the sheet settling at another height never makes the map jump; a framed route fits again (Oct 11)", async ({ page, isMobile }) => {
+  // Oct 11: the map's space changed at once as the sheet settled, and the whole map jumped
+  test.skip(!isMobile, "phone layout only");
+  const errors = await setUp(page);
+  await page.goto("/");
+  await busesDrawn(page);
+  const box = await searchBox(page);
+  await box.fill("66");
+  await box.press("Enter");
+  await expect(page.locator(".sheet")).toHaveClass(/half/);
+  // its lines drawn: with only a "loading" line the content fits and a tap would skip full size
+  await expect(page.locator(".sheet .line svg").first()).toBeVisible();
+  await page.locator(".sheet .grab").evaluate((g: HTMLElement) => g.click()); // full: the map keeps half's space
+  await expect(page.locator(".sheet")).toHaveClass(/full/);
+  await camera(page); // settled
+  // a place on the route, every frame, while the sheet steps down to its small size
+  const frames = await page.evaluate(async () => {
+    const m = window.map! as unknown as Map & { getPadding(): { bottom: number } };
+    const at: [number, number] = [-87.6553, 41.8961], out: { pad: number; y: number }[] = [];
+    const take = () => out.push({ pad: m.getPadding().bottom, y: m.project(at).y });
+    take();
+    document.querySelector<HTMLElement>(".sheet .grab")!.click();
+    for (const end = performance.now() + 1500; performance.now() < end;) {
+      await new Promise(requestAnimationFrame);
+      take();
+    }
+    return out;
+  });
+  await expect(page.locator(".sheet")).toHaveClass(/peek/);
+  const i = frames.findIndex((f) => f.pad !== frames[0].pad);
+  expect(i).toBeGreaterThan(0);
+  expect(Math.abs(frames[i].y - frames[i - 1].y)).toBeLessThan(10); // the space changed, the map didn't jump
+  const moved = frames.at(-1)!.y - frames[0].y, shift = (frames[0].pad - frames.at(-1)!.pad) / 2;
+  expect(moved).toBeGreaterThan(shift * 0.6); // then glided down, re-framed in the bigger space
+  expect(errors).toEqual([]);
 });
 
 test("phone: the title and tabs stay put and drag the sheet; only the rest scrolls", async ({ page, isMobile }) => {
@@ -377,7 +426,7 @@ test("search suggestions float over the map: the top bar keeps its height @both"
   await setUp(page);
   await page.goto("/");
   const bar = page.locator("header.bar");
-  await expect(bar.getByText(/buses on the road/)).toBeVisible(); // the app, not the static shell
+  await expect(bar.getByText(/\d+ buses/)).toBeVisible(); // the app, not the static shell
   const before = (await bar.boundingBox())!.height;
   // "western" fits several routes, so nothing auto-opens and the list stays up (a lone "6"
   // opens #6 after the pause and closes the list, which raced on slower CI machines).
@@ -658,7 +707,7 @@ test("the top bar doesn't move or change size from first paint to live @both", a
   await expect(page.getByText("Connecting to the live feed…")).toBeVisible();
   const connecting = (await page.locator("header.bar").boundingBox())!;
   release();
-  await expect(page.locator("header.bar").getByText(/buses on the road/)).toBeVisible();
+  await expect(page.locator("header.bar").getByText(/\d+ buses/)).toBeVisible();
   const live = (await page.locator("header.bar").boundingBox())!;
 
   for (const box of [connecting, live]) {
@@ -986,7 +1035,7 @@ test("when CTA's feed is down the header says so, not \"0 buses on the road\" (S
   const errors = await setUp(page, [], f);
   await page.goto("/");
   await expect(page.getByText("No live data from CTA since 12:40 PM")).toBeVisible();
-  await expect(page.getByText("buses on the road")).toHaveCount(0);
+  await expect(page.getByText(/\d+ buses/)).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
@@ -1210,7 +1259,7 @@ test("each page's HTML names it in a heading, before any script runs (Oct 5)", a
   const route = await (await request.get("/route/66/")).text();
   expect(route).toMatch(/<h1[^>]*>66 [^<]+ bus, live<\/h1>/);
   const home = await (await request.get("/")).text();
-  expect(home).toMatch(/<h1[^>]*>Chicago buses, live<\/h1>/);
+  expect(home).toMatch(/<h1[^>]*>Chicago buses and trains, live<\/h1>/);
 });
 
 test("about: outside links open in a new tab, leaving the map where it was (Oct 5)", async ({ page }) => {
@@ -1420,4 +1469,313 @@ test("right now: a long wait or bunch on a route CTA has rerouted says so, the w
     .map((e) => `${e.querySelector(".rt")!.textContent!.trim()} ${e.querySelector(".what span")!.textContent!.toLowerCase()}`));
   for (const t of tagged) expect(t.startsWith(`${rt} `) && t.includes(dir)).toBe(true); // only that route and direction
   await noSideScroll(page);
+});
+
+
+// ---------- the 'L' (Oct 11): CTA's own data, display only ----------
+
+const trainFixture = JSON.parse(readFileSync(new URL("live/trains.json", FIX), "utf8"));
+const trainsDrawn = (page: Page) => page.evaluate(() => window.map!.queryRenderedFeatures({ layers: ["train-dot"] }).length);
+const busesOnMap = (page: Page) => page.evaluate(() => window.map!.queryRenderedFeatures({ layers: ["bus-dot", "bus-sym"] }).length);
+
+test("trains: on the map in their line's colour; the switch shows buses, trains or both, remembered (Oct 11) @both", async ({ page }) => {
+  const errors = await setUp(page);
+  await page.goto("/");
+  await busesDrawn(page);
+  await expect.poll(() => trainsDrawn(page), { timeout: 15_000 }).toBeGreaterThan(20);
+  const show = page.getByRole("radiogroup", { name: "Show" });
+  await expect(show.getByRole("radio", { name: "All" })).toHaveAttribute("aria-checked", "true");
+
+  await show.getByRole("radio", { name: "Train" }).click();
+  await expect.poll(() => busesOnMap(page)).toBe(0);
+  expect(await trainsDrawn(page)).toBeGreaterThan(20);
+  await expect(page.getByText(`${trainFixture.trains.length} trains`).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "The 'L'" })).toBeVisible(); // the lines, not Right now
+  await expect(page.locator(".sheet .row")).toHaveCount(8);
+
+  await page.reload(); // remembered on this device
+  await expect(page.getByRole("radio", { name: "Train" })).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("radio", { name: "Bus" }).click();
+  await busesDrawn(page);
+  await expect.poll(() => trainsDrawn(page)).toBe(0);
+  await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
+  await page.getByRole("radio", { name: "All" }).click();
+  await expect.poll(() => trainsDrawn(page)).toBeGreaterThan(20);
+  expect(errors).toEqual([]);
+});
+
+test("line: search finds the Red Line; /line/red/ shows CTA's status and its trains by direction; Back returns (Oct 11)", async ({ page }) => {
+  const errors = await setUp(page);
+  await page.goto("/");
+  await (await searchBox(page)).fill("red");
+  const link = page.getByRole("link", { name: /Red Line/ });
+  await expect(link).toHaveAttribute("href", "/line/red/");
+  await link.click();
+  await expect(page).toHaveURL(/\/line\/red\/$/);
+  await expect(page.getByRole("heading", { name: "Red Line" })).toBeVisible();
+  const red = trainFixture.trains.filter((t: { rt: string }) => t.rt === "red");
+  await expect(page.locator(".sheet .sub")).toHaveText(`${red.length} trains`);
+  await expect(page.getByText(`CTA: ${trainFixture.status.red}`)).toBeVisible();
+  await expect(page.getByText("Toward Howard")).toBeVisible();
+  // each direction a strip, as a bus route's: its trains on it, stations named along it
+  const strip = page.locator(".sheet section svg").first();
+  await expect(strip.locator(".train")).not.toHaveCount(0);
+  expect(await strip.locator("text.name").count()).toBeGreaterThanOrEqual(3);
+  await expect.poll(async () => new Set(await page.evaluate(() =>
+    window.map!.queryRenderedFeatures({ layers: ["train-dot"] }).map((f) => f.properties.rt)))).toEqual(new Set(["red"]));
+  await page.goBack();
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/");
+  await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("train and station: a train's next station opens CTA's times there, by platform (Oct 11)", async ({ page }) => {
+  const errors = await setUp(page);
+  await page.goto("/line/red/");
+  await page.locator(".sheet .train").first().click();
+  await expect(page.getByRole("button", { name: /‹ Red Line/ })).toBeVisible();
+  await page.locator(".sheet .next").click();
+  await expect(page.locator(".sheet h2")).not.toHaveText("Red Line");
+  await expect(page.locator(".sheet .lab").first()).toBeVisible(); // a platform ("Service toward Howard")
+  await expect(page.locator(".sheet li .when").first()).toHaveText(/^(Due|\d+ min|Delayed)$/);
+  await page.getByRole("button", { name: "Close station" }).click(); // Back to the line
+  await expect(page).toHaveURL(/\/line\/red\/$/);
+  expect(errors).toEqual([]);
+});
+
+const stations = JSON.parse(readFileSync(new URL("../public/l/lines.json", import.meta.url), "utf8")).stations;
+
+/** Whether a station shows on the map: on the canvas, clear of the top bar and the sheet. */
+async function stationShown(page: Page, id: string) {
+  await page.waitForTimeout(800); // let any ease finish
+  return page.evaluate((at) => {
+    const p = window.map!.project(at), r = window.map!.getCanvas().getBoundingClientRect();
+    const x = r.left + p.x, y = r.top + p.y;
+    const under = (sel: string) => {
+      const b = document.querySelector(sel)?.getBoundingClientRect();
+      return !!b && x >= b.left && x <= b.right && y >= b.top && y <= b.bottom;
+    };
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom && !under(".bar") && !under(".sheet");
+  }, [stations[id].lon, stations[id].lat] as [number, number]);
+}
+
+test("trains: Back and Forward through a line, a train and its next station return each view as it was (Oct 11) @both", async ({ page }) => {
+  const errors = await setUp(page);
+  await page.goto("/");
+  await busesDrawn(page);
+  const city = await camera(page);
+  await (await searchBox(page)).fill("red");
+  await page.getByRole("link", { name: /Red Line/ }).click();
+  await expect(page).toHaveURL(/\/line\/red\/$/);
+  const red = await camera(page);
+  expect(red).not.toEqual(city);
+  await page.locator(".sheet .train").first().click(); // a train on the line's strip
+  await expect(page.getByRole("button", { name: /‹ Red Line/ })).toBeVisible();
+  const onTrain = await camera(page);
+  expect(Number(onTrain.zoom)).toBeGreaterThanOrEqual(15); // the map on it, as a bus tapped on its line
+  const next = await page.locator(".sheet .next b").innerText();
+  await page.locator(".sheet .next").click();
+  await expect(page.locator(".sheet h2")).toHaveText(next);
+  const id = await page.evaluate(() => history.state.station as string);
+  expect(await stationShown(page, id)).toBe(true);
+
+  await page.goBack(); // the train it was opened from, the map on it again
+  await expect(page).toHaveURL(/\/line\/red\/$/);
+  await expect(page.getByRole("button", { name: /‹ Red Line/ })).toBeVisible();
+  expect(await camera(page)).toEqual(onTrain);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
+  expect(await camera(page)).toEqual(city);
+
+  await page.goForward();
+  await expect(page.getByRole("button", { name: /‹ Red Line/ })).toBeVisible();
+  expect(await camera(page)).toEqual(onTrain);
+  await page.goForward();
+  await expect(page.locator(".sheet h2")).toHaveText(next);
+  expect(await stationShown(page, id)).toBe(true);
+
+  await page.getByRole("button", { name: "Close station" }).click(); // the train again
+  await page.getByRole("button", { name: /‹ Red Line/ }).click(); // closed in place: it stays closed
+  await page.goBack();
+  await page.goForward();
+  await expect(page.getByRole("heading", { name: "Red Line" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /‹ Red Line/ })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("an open line shows only trains; an open route only buses (Oct 11) @both", async ({ page }) => {
+  const errors = await setUp(page);
+  await page.goto("/line/red/");
+  await expect(page.getByText(/\d+ buses/)).toBeVisible(); // the bus feed is in
+  await page.waitForFunction(() => !!window.map?.loaded());
+  await expect.poll(() => trainsDrawn(page), { timeout: 15_000 }).toBeGreaterThan(0);
+  expect(await busesOnMap(page)).toBe(0);
+  await page.getByLabel("Back to the map").click();
+  await busesDrawn(page);
+  const box = await searchBox(page);
+  await box.fill("66");
+  await box.press("Enter");
+  await expect(page).toHaveURL(/\/route\/66\/$/);
+  await expect.poll(() => trainsDrawn(page)).toBe(0);
+  expect(await busesOnMap(page)).toBeGreaterThan(0);
+  expect(errors).toEqual([]);
+});
+
+test("a train's back link glides back to its whole line; the line's × to the view it was opened from (Oct 11) @both", async ({ page }) => {
+  // Oct 11: back from a train to its line stayed zoomed on the train; × from a line opened from
+  // the untouched city stayed on the line
+  const errors = await setUp(page);
+  await page.goto("/");
+  await busesDrawn(page);
+  const city = await camera(page);
+  await (await searchBox(page)).fill("red");
+  await page.getByRole("link", { name: /Red Line/ }).click();
+  await expect(page).toHaveURL(/\/line\/red\/$/);
+  const red = await camera(page);
+  await page.locator(".sheet .train").first().click();
+  expect(Number((await camera(page)).zoom)).toBeGreaterThanOrEqual(15);
+  await page.getByRole("button", { name: /‹ Red Line/ }).click();
+  await expect(page.getByRole("heading", { name: "Red Line" })).toBeVisible();
+  expect(await camera(page)).toEqual(red); // the whole line again
+  await page.getByLabel("Back to the map").click();
+  await expect(page.getByRole("heading", { name: "Right now" })).toBeVisible();
+  expect(await camera(page)).toEqual(city); // where the map was before the line
+  expect(errors).toEqual([]);
+});
+
+test("a station opened while its line is still being framed comes into view, and stays after a reload (Oct 11) @both", async ({ page }) => {
+  // the station's move cancelled the line's fit and was then cancelled itself; a reload framed the city
+  const errors = await setUp(page);
+  await page.goto("/");
+  await busesDrawn(page);
+  await (await searchBox(page)).fill("red");
+  await page.getByRole("link", { name: /Red Line/ }).click();
+  // a train and its next station at once, before the fit ends (a click() would wait for the sheet)
+  await page.evaluate(async () => {
+    document.querySelector(".sheet .train")!.dispatchEvent(new MouseEvent("click", { bubbles: true })); // an SVG strip's train
+    await new Promise((r) => setTimeout(r));
+    document.querySelector<HTMLElement>(".sheet .next")!.click();
+  });
+  const id = await page.evaluate(() => history.state.station as string);
+  expect(await stationShown(page, id)).toBe(true);
+  await page.reload();
+  await expect(page.locator(".sheet h2")).toHaveText(stations[id].name);
+  expect(await stationShown(page, id)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test("a station's name opens it too: a train at the station covers its circle (Oct 11) @both", async ({ page }) => {
+  const errors = await setUp(page);
+  await page.goto("/");
+  await page.getByRole("radio", { name: "Train" }).click(); // no buses or stops under the finger
+  await page.waitForFunction(() => !!window.map?.loaded());
+  const id = "40380"; // Clark/Lake
+  await page.evaluate((at) => window.map!.jumpTo({ center: at, zoom: 15 }), [stations[id].lon, stations[id].lat] as [number, number]);
+  // a spot on its name, clear of the circle and of any train
+  const spot = await page.waitForFunction((at) => {
+    const m = window.map! as unknown as Map & { queryRenderedFeatures(p: [number, number], o: object): { layer: { id: string } }[] };
+    const c = m.project(at), r = m.getCanvas().getBoundingClientRect();
+    for (let dx = -120; dx <= 120; dx += 4) for (let dy = -24; dy <= 24; dy += 4) {
+      const hits = m.queryRenderedFeatures([c.x + dx, c.y + dy], { layers: ["l-names", "l-stations-hit", "train-dot"] });
+      if (hits.length && hits.every((h) => h.layer.id === "l-names")) return { x: r.left + c.x + dx, y: r.top + c.y + dy };
+    }
+    return null;
+  }, [stations[id].lon, stations[id].lat] as [number, number]);
+  const { x, y } = (await spot.jsonValue())!;
+  await page.mouse.click(x, y);
+  await expect(page.locator(".sheet h2")).toHaveText("Clark/Lake");
+  expect(errors).toEqual([]);
+});
+
+test("no train feed yet: a line says Loading…, never that CTA shows no trains (Oct 11)", async ({ page }) => {
+  const errors = await setUp(page);
+  await page.route("**/live/trains.json", (r) => r.fulfill({ status: 404 })); // over setUp's
+  await page.goto("/line/red/");
+  await expect(page.getByRole("heading", { name: "Red Line" })).toBeVisible();
+  await expect(page.locator(".sheet .sub")).toHaveText("Loading…");
+  await expect(page.getByText(/no trains|0 trains/)).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("a view opened from a scrolled list starts at its top (Oct 11)", async ({ page }) => {
+  const errors = await setUp(page);
+  await page.goto("/");
+  await busesDrawn(page);
+  const body = page.locator(".sheet .body");
+  await body.evaluate((b) => (b.scrollTop = b.scrollHeight));
+  await expect.poll(() => body.evaluate((b) => b.scrollTop)).toBeGreaterThan(100);
+  await page.getByRole("link", { name: "About" }).click();
+  await expect(page).toHaveURL(/\/about\/$/);
+  expect(await body.evaluate((b) => b.scrollHeight > b.clientHeight)).toBe(true); // it can scroll
+  expect(await body.evaluate((b) => b.scrollTop)).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+test("a line's strip marks a long wait in red and trains together in amber, as a route's does (Oct 11) @both", async ({ page }) => {
+  const errors = await setUp(page); // the fixture: 820 in a 25 min wait; 817 together with 925
+  await page.goto("/line/red/");
+  const toHoward = page.locator(".sheet section").filter({ hasText: "Toward Howard" }).locator("svg");
+  await expect(toHoward.locator("line.wait")).toHaveCount(1);
+  await expect(toHoward.locator("text.min.long")).toHaveText("25 min");
+  await expect(toHoward.locator("rect.sq.together")).toHaveCount(2);
+  await expect(toHoward.locator("text.min.together")).toHaveText("1 min"); // ours (70 s), not CTA's
+  // the other gaps: the poller's minutes to the train ahead (CTA's times), in plain ink
+  await expect(toHoward.locator("text.min:not(.long):not(.together)")).toHaveText(["9 min", "13 min", "7 min"]);
+  await expect(page.locator(".sheet .key")).toContainText("Together");
+  await expect(page.locator(".sheet section").filter({ hasText: "Toward 95th" }).locator("line.wait")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("a station's tracked times are marked live; a timetable time is grey and unmarked (Oct 11)", async ({ page }) => {
+  // the eye caught "9 min" first and could miss its "Scheduled" tag (rider, Oct 11)
+  const errors = await setUp(page);
+  await page.goto("/");
+  await page.evaluate(() => history.replaceState({ station: "40010", prev: null }, "", "/"));
+  await page.reload(); // a reload keeps an open station
+  await expect(page.locator(".sheet h2")).toHaveText(stations["40010"].name);
+  await expect(page.locator(".sheet .src .live")).toHaveCount(1); // the legend: CTA's live times
+  const rows = page.locator(".sheet li");
+  await expect(rows.first()).toBeVisible();
+  const kinds = new Set<boolean>();
+  for (let i = 0; i < (await rows.count()); i++) {
+    const row = rows.nth(i), sch = (await row.locator(".tag", { hasText: "Scheduled" }).count()) > 0;
+    kinds.add(sch);
+    await expect(row.locator(".live")).toHaveCount(sch ? 0 : 1);
+    expect(await row.locator(".when").evaluate((e) => e.classList.contains("sch"))).toBe(sch);
+  }
+  expect(kinds).toEqual(new Set([true, false])); // both kinds on this board
+  // where the rider's eye put the mark (Oct 11; it sat 3.8 px low, then high): on a time, a pixel
+  // under the middle of the lowercase "min"; in the legend, on the middle of the capitals "CTA"
+  const offsets = await page.locator(".sheet .when:has(.live), .sheet .src").evaluateAll((els) => els.map((el) => {
+    const svg = el.querySelector<SVGSVGElement>(".live")!, box = svg.getBoundingClientRect();
+    let y0 = Infinity, y1 = -Infinity;
+    for (const p of svg.querySelectorAll<SVGPathElement>("path")) {
+      const b = p.getBBox();
+      [y0, y1] = [Math.min(y0, b.y - 0.75), Math.max(y1, b.y + b.height + 0.75)]; // with the stroke
+    }
+    const ink = box.top + ((y0 + y1) / 2) * (box.height / svg.viewBox.baseVal.height);
+    const text = el.matches(".src") ? el.querySelector("b")! : el;
+    const probe = document.createElement("span");
+    probe.style.cssText = "display:inline-block;width:0;height:0;vertical-align:baseline";
+    text.appendChild(probe);
+    const base = probe.getBoundingClientRect().top;
+    probe.remove();
+    const cs = getComputedStyle(text), ctx = document.createElement("canvas").getContext("2d")!;
+    ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    return el.matches(".src")
+      ? Math.abs(ink - (base - ctx.measureText("CTA").actualBoundingBoxAscent / 2))
+      : Math.abs(ink - (base - ctx.measureText("x").actualBoundingBoxAscent / 2) - 1);
+  }));
+  expect(offsets.length).toBeGreaterThan(1);
+  expect(Math.max(...offsets)).toBeLessThan(1);
+  expect(errors).toEqual([]);
+});
+
+test("each line has a page whose HTML names it, before any script runs (Oct 11)", async ({ request }) => {
+  const html = await (await request.get("/line/blue/")).text();
+  expect(html).toMatch(/<h1[^>]*>Blue Line trains, live<\/h1>/);
+  // riders' names in addresses, not CTA's codes
+  expect(await (await request.get("/line/brown/")).text()).toMatch(/<h1[^>]*>Brown Line trains, live<\/h1>/);
+  expect((await request.get("/l/lines.json")).ok()).toBe(true);
 });

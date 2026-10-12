@@ -10,7 +10,7 @@ const PROD = "https://www.chitransit.fyi";
 // this checkout expects, fill in what it lacks from local files so new UI can be tried
 // before the poller ships; today that's `near` (the nearest stop, from public/data patterns).
 // LIVE=local instead serves a local poller's feed from public/live (make poll with
-// LIVE_TARGET=site/public/live/vehicles.json).
+// LIVE_TARGET=site/public/live/vehicles.json); TRAINS=local only the train files.
 function liveFeedInDev() {
   const stops = new Map();
   const patternStops = (pid) => {
@@ -45,6 +45,16 @@ function liveFeedInDev() {
         res.setHeader("Content-Type", "application/json");
         res.end(r ? await r.text() : "");
       });
+      // the train sweep's files (ghost_ledger.live_trains), every 20 s; TRAINS=local serves
+      // public/live's instead (a local train poller's, or a replay of recorded calls)
+      for (const name of process.env.TRAINS === "local" ? [] : ["trains", "stations"]) {
+        server.middlewares.use(`/live/${name}.json`, async (_req, res) => {
+          const r = await fetch(`${PROD}/live/${name}.json`, { cache: "no-store" }).catch(() => null);
+          res.statusCode = r?.status ?? 502;
+          res.setHeader("Content-Type", "application/json");
+          res.end(r?.ok ? await r.text() : "");
+        });
+      }
       // the poller's pattern files, which the site reads first (the nightly's are the fallback)
       server.middlewares.use("/live/patterns/", async (req, res) => {
         const r = await fetch(`${PROD}/live/patterns${req.url}`, { cache: "no-store" }).catch(() => null);

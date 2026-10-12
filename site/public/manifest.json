@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "chitransit: Chicago buses, live",
+  "name": "chitransit: Chicago buses and trains, live",
   "short_name": "chitransit",
-  "description": "See every Chicago bus live: where riders are waiting far too long, where buses arrive bunched together, and how each route ran yesterday. Unofficial.",
+  "description": "Every Chicago bus and 'L' train, live: where riders wait far too long, where buses arrive bunched, and how each route ran yesterday. Unofficial.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
