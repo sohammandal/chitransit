@@ -98,12 +98,14 @@ HEALTH_CHECKS="${HEALTH_CHECKS:-12}"  # x 10 s: a healthy poller commits a sweep
 
 image_id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null || true; }
 
-# True once the poller has committed a sweep that finished after $1 (a SQL timestamp).
+# True once the poller has committed a bus sweep that finished after $1 (a SQL timestamp).
+# Bus only: the train poller's sweeps (feed 'train') must not pass a deploy whose bus poller
+# is broken.
 healthy() {
   local n
   for _ in $(seq 1 "$HEALTH_CHECKS"); do
     n=$(compose exec -T postgres psql -U ghost -d ghost_ledger -XAt \
-      -c "SELECT COUNT(*) FROM ops.sweeps WHERE finished_at > $1" 2>/dev/null || true)
+      -c "SELECT COUNT(*) FROM ops.sweeps WHERE feed = 'bus' AND finished_at > $1" 2>/dev/null || true)
     [ "${n:-0}" -gt 0 ] 2>/dev/null && return 0
     sleep 10
   done

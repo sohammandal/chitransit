@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Run on the laptop (`make prod-secrets`): write the box's secrets over SSH, then deploy.
-#   /etc/ghost-ledger/prod.env  GHOST_LEDGER_ENV, POSTGRES_PASSWORD, DATABASE_URL, CTA key,
+#   /etc/ghost-ledger/prod.env  GHOST_LEDGER_ENV, POSTGRES_PASSWORD, DATABASE_URL, CTA keys,
 #                               the box IAM user's access key, AWS_REGION   (mode 0600)
 #   /etc/ghost-ledger/ghcr.env  GHCR_USER, GHCR_TOKEN (read:packages) for pulling the image
 # Safe to re-run: it keeps the existing Postgres password (Postgres only reads it on first
 # start) and the existing AWS key while it is still active. Never prints a secret.
 #
-# Needs: CTA_BUS_TRACKER_API_KEY in the environment (~/.secrets), a GitHub token with
-# read:packages in $GHCR_TOKEN_FILE (default ~/.config/ghost-ledger/ghcr.token), AWS CLI
-# credentials for this account, and the box IP (terraform output box_ip).
+# Needs: CTA_BUS_TRACKER_API_KEY in the environment (~/.secrets; CTA_TRAIN_TRACKER_API_KEY
+# too, or the box keeps the one it has: without any, train collection stays off), a GitHub
+# token with read:packages in $GHCR_TOKEN_FILE (default ~/.config/ghost-ledger/ghcr.token),
+# AWS CLI credentials for this account, and the box IP (terraform output box_ip).
 set -euo pipefail
 
 BOX_IP="${1:?usage: push-secrets.sh <box-ip>}"
@@ -26,6 +27,9 @@ ssh_box() { ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new "ubuntu@$BOX_I
 # Current values on the box, if any (held in variables, never echoed)
 existing=$(ssh_box "sudo cat /etc/ghost-ledger/prod.env 2>/dev/null || true")
 get() { printf '%s\n' "$existing" | sed -n "s/^$1=//p" | head -1; }
+
+train_key="${CTA_TRAIN_TRACKER_API_KEY:-$(get CTA_TRAIN_TRACKER_API_KEY)}"
+[ -n "$train_key" ] || echo "no CTA_TRAIN_TRACKER_API_KEY: train collection stays off"
 
 pw=$(get POSTGRES_PASSWORD)
 if [ -z "$pw" ]; then
@@ -66,6 +70,7 @@ printf '%s\n' \
   "POSTGRES_PASSWORD=$pw" \
   "DATABASE_URL=postgresql://ghost:$pw@postgres:5432/ghost_ledger?sslmode=disable" \
   "CTA_BUS_TRACKER_API_KEY=$CTA_BUS_TRACKER_API_KEY" \
+  ${train_key:+"CTA_TRAIN_TRACKER_API_KEY=$train_key"} \
   "AWS_ACCESS_KEY_ID=$key_id" \
   "AWS_SECRET_ACCESS_KEY=$secret" \
   "AWS_REGION=$REGION" \

@@ -70,6 +70,17 @@ locals {
       periods = 15, missing = "notBreaching",
       text    = "After 10:00 CT the public report still lacks yesterday: the nightly didn't run or failed"
     }
+    # Trains (the train poller, feed 'train'): missing data is fine until it first sweeps
+    train-stale = {
+      metric  = "TrainMinutesSinceLastSweep", op = "GreaterThanThreshold", threshold = 5,
+      periods = 2, missing = "notBreaching",
+      text    = "No train sweep for 5+ minutes (train thread stopped?)"
+    }
+    train-call-success-low = {
+      metric  = "TrainCallSuccessRate15m", op = "LessThanThreshold", threshold = 0.95,
+      periods = 15, missing = "notBreaching",
+      text    = "Under 95% of Train Tracker calls succeeded over 15 minutes (outage, key or quota?)"
+    }
     cdc-slot-inactive = {
       metric  = "ReplicationSlotsInactive", op = "GreaterThanOrEqualToThreshold", threshold = 1,
       periods = 10, missing = "notBreaching",

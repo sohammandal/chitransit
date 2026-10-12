@@ -1,5 +1,5 @@
-"""The command line (env, routes, vehicles, poll, monitor, check-db). Every command runs
-against GHOST_LEDGER_ENV (default dev); see config.py.
+"""The command line (env, routes, vehicles, trains, poll, monitor, check-db). Every command
+runs against GHOST_LEDGER_ENV (default dev); see config.py.
 """
 
 import argparse
@@ -12,6 +12,8 @@ import psycopg
 from ghost_ledger.bustracker import BusTrackerClient, raise_for_error
 from ghost_ledger.config import (
     DAILY_CALL_QUOTA,
+    TRAIN_DAILY_CALL_QUOTA,
+    ConfigError,
     get_settings,
     redacted_url,
     require_bus_key,
@@ -41,6 +43,21 @@ def cmd_vehicles(args: argparse.Namespace) -> None:
         print("  " + "  ".join(f"{f}={v.get(f)}" for f in fields))
 
 
+def cmd_trains(_: argparse.Namespace) -> None:
+    from ghost_ledger.traintracker import TrainTrackerClient, as_list
+
+    settings = get_settings()
+    if not settings.train_api_key:
+        raise ConfigError("CTA_TRAIN_TRACKER_API_KEY is not set (it lives in ~/.secrets).")
+    with TrainTrackerClient(settings.train_api_key) as client:
+        result = client.positions()
+    if not result.ok:
+        raise SystemExit(f"Train Tracker: {result.error}")
+    print(f"HTTP {result.http_status} ({result.latency_ms} ms), CTA time {result.body.get('tmst')}")
+    for route in as_list(result.body.get("route")):
+        print(f"  {route.get('@name', '?'):<5} {len(as_list(route.get('train'))):3} trains")
+
+
 def cmd_env(_: argparse.Namespace) -> None:
     s = get_settings()
     calls = s.vehicle_calls_per_day()
@@ -52,6 +69,10 @@ def cmd_env(_: argparse.Namespace) -> None:
     print(f"poll routes              {','.join(s.poll_routes) if s.poll_routes else 'all'}")
     print(f"assignment grace         {s.assignment_grace_minutes} min")
     print(f"getvehicles calls/day    ~{calls:,} of {DAILY_CALL_QUOTA:,} key quota")
+    trains = "on" if s.train_poll else "off"
+    print(f"train poller             {trains}, every {s.train_poll_interval_seconds} s")
+    quota = f"{TRAIN_DAILY_CALL_QUOTA:,}"
+    print(f"train calls/day          at most {s.train_calls_per_day:,} of {quota} key quota")
 
 
 def cmd_check_db(_: argparse.Namespace) -> None:
@@ -79,6 +100,7 @@ def cmd_check_db(_: argparse.Namespace) -> None:
 
 
 def cmd_poll(args: argparse.Namespace) -> None:
+    from ghost_ledger.ingest import trains
     from ghost_ledger.ingest.poller import Poller
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -87,7 +109,14 @@ def cmd_poll(args: argparse.Namespace) -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())  # finish the current sweep, then exit
     with BusTrackerClient(require_bus_key(settings)) as client:
-        Poller(settings, client).run(stop=stop, max_sweeps=args.sweeps)
+        # the trains on their own thread and connection: neither feed can stall the other
+        train_thread = trains.start(settings, stop) if args.sweeps is None else None
+        try:
+            Poller(settings, client).run(stop=stop, max_sweeps=args.sweeps)
+        finally:
+            stop.set()
+            if train_thread is not None:
+                train_thread.join(timeout=30)  # let its sweep in flight commit
 
 
 def cmd_monitor(args: argparse.Namespace) -> None:
@@ -112,7 +141,12 @@ def main() -> None:
     vehicles = sub.add_parser("vehicles", help="Live buses for up to 10 routes")
     vehicles.add_argument("--rt", nargs="+", default=["79"])
     vehicles.set_defaults(func=cmd_vehicles)
-    poll = sub.add_parser("poll", help="Run the bus poller (Ctrl-C stops after the sweep)")
+    sub.add_parser("trains", help="Trains on every 'L' line now (checks the key)").set_defaults(
+        func=cmd_trains
+    )
+    poll = sub.add_parser(
+        "poll", help="Run the bus and train pollers (Ctrl-C stops after the sweep)"
+    )
     poll.add_argument("--sweeps", type=int, default=None, help="stop after N sweeps")
     poll.set_defaults(func=cmd_poll)
     mon = sub.add_parser("monitor", help="Publish timeliness metrics every 60 s")

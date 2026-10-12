@@ -45,6 +45,10 @@ class Snapshot:
     first_sweep_started_at: datetime | None = None
     # one entry per logical replication slot: (active, wal_status, lag_bytes or None)
     slots: tuple[tuple[bool, str | None, int | None], ...] = ()
+    # the train poller (feed 'train'): None until it has swept once
+    last_train_sweep_finished_at: datetime | None = None
+    train_calls_ok_15m: int = 0
+    train_calls_total_15m: int = 0
 
 
 @dataclass(frozen=True)
@@ -83,6 +87,13 @@ def compute_metrics(s: Snapshot, poll_interval_seconds: int, disk_used_pct: floa
     m.append(Metric("ReplicationSlotsLost", lost, "Count"))
     inactive = sum(1 for active, _, _ in s.slots if not active)
     m.append(Metric("ReplicationSlotsInactive", inactive, "Count"))
+    # Trains: published once the train poller has swept (its alarms treat missing as fine)
+    if s.last_train_sweep_finished_at is not None:
+        age = (s.now - s.last_train_sweep_finished_at).total_seconds() / 60
+        m.append(Metric("TrainMinutesSinceLastSweep", round(max(age, 0.0), 2), "None"))
+    if s.train_calls_total_15m:
+        rate = s.train_calls_ok_15m / s.train_calls_total_15m
+        m.append(Metric("TrainCallSuccessRate15m", round(rate, 4), "None"))
     return m
 
 
@@ -100,7 +111,12 @@ SELECT
         WHERE feed = 'bus' AND started_at > %(now)s - INTERVAL '10 minutes'),
     (SELECT COUNT(*) FROM ops.sweeps
         WHERE feed = 'bus' AND started_at > %(now)s - INTERVAL '10 minutes' AND vehicles > 0),
-    (SELECT MIN(started_at) FROM ops.sweeps WHERE feed = 'bus')
+    (SELECT MIN(started_at) FROM ops.sweeps WHERE feed = 'bus'),
+    (SELECT MAX(finished_at) FROM ops.sweeps WHERE feed = 'train'),
+    (SELECT COALESCE(SUM(calls_ok), 0) FROM ops.sweeps
+        WHERE feed = 'train' AND started_at > %(now)s - INTERVAL '15 minutes'),
+    (SELECT COALESCE(SUM(calls_total), 0) FROM ops.sweeps
+        WHERE feed = 'train' AND started_at > %(now)s - INTERVAL '15 minutes')
 """
 
 SLOTS_SQL = """
@@ -114,7 +130,11 @@ WHERE slot_type = 'logical'
 def read_snapshot(conn: psycopg.Connection, now: datetime) -> Snapshot:
     row = conn.execute(SNAPSHOT_SQL, {"now": now}).fetchone()
     slots = tuple((a, w, lag) for a, w, lag in conn.execute(SLOTS_SQL).fetchall())
-    return Snapshot(now, *row[:7], first_sweep_started_at=row[7], slots=slots)
+    return Snapshot(
+        now, *row[:7], first_sweep_started_at=row[7], slots=slots,
+        last_train_sweep_finished_at=row[8], train_calls_ok_15m=row[9],
+        train_calls_total_15m=row[10],
+    )  # fmt: skip
 
 
 def disk_used_pct(path: str = "/") -> float:

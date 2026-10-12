@@ -72,6 +72,35 @@ VALUES (
 RETURNING poll_id
 """
 
+# The train poller's sweeps and calls (ingest/trains.py): the same log, feed 'train'. Kept
+# apart from the bus statements so the bus write path stays exactly as it was.
+INSERT_TRAIN_SWEEP = """
+INSERT INTO ops.sweeps (feed, started_at, finished_at, calls_total, calls_ok, vehicles)
+VALUES ('train', %(started_at)s, %(finished_at)s, %(calls_total)s, %(calls_ok)s, %(vehicles)s)
+RETURNING sweep_id
+"""
+
+INSERT_TRAIN_RAW_POLL = """
+INSERT INTO ops.raw_polls (
+    sweep_id, feed, endpoint, request_params, fetched_at, latency_ms, attempts,
+    http_status, error, api_errors, vehicle_count, payload
+)
+VALUES (
+    %(sweep_id)s, 'train', %(endpoint)s, %(request_params)s, %(fetched_at)s, %(latency_ms)s,
+    %(attempts)s, %(http_status)s, %(error)s, NULL, %(vehicle_count)s, %(payload)s
+)
+RETURNING poll_id
+"""
+
+# Train Tracker calls (attempts) per minute since `since`: the train poller's call budget is
+# read back from the log at startup, so a restart can't reset its 24-hour count.
+LOAD_TRAIN_CALLS = """
+SELECT FLOOR(EXTRACT(EPOCH FROM fetched_at) / 60)::BIGINT AS minute, SUM(attempts)::INT
+FROM ops.raw_polls
+WHERE feed = 'train' AND endpoint LIKE 'tt%%' AND fetched_at > %(since)s
+GROUP BY 1
+"""
+
 # The response exactly as received, under the call's poll_id: the replayable input.
 INSERT_RAW_RESPONSE = """
 INSERT INTO ops.raw_responses (poll_id, fetched_at, body)

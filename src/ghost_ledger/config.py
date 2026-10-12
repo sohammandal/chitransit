@@ -28,6 +28,14 @@ MAX_VEHICLE_CALLS_PER_DAY = 60_000
 ROUTES_PER_CALL = 10
 ALL_ROUTES_ESTIMATE = 125
 
+# Train Tracker: its own key and daily quota (100,000 calls; errCd 102 past it, "reset at
+# midnight"), also shared by dev and prod, so dev doesn't poll trains unless TRAIN_POLL=on.
+# The train poller paces itself to TRAIN_CALLS_PER_DAY (ingest/trains.py, CallBudget).
+TRAIN_DAILY_CALL_QUOTA = 100_000
+MAX_TRAIN_CALLS_PER_DAY = 95_000
+TRAIN_CALLS_PER_DAY_PROD = 90_000
+TRAIN_CALLS_PER_DAY_DEV = 3_000
+
 
 LIVE_SCHEDULE_PROD = "s3://ghost-ledger-lake-354894954112/analytics/ops/stop_departures.json"
 
@@ -57,6 +65,12 @@ class Settings:
     # The nightly's live schedule (scheduled departures per stop) the feed judges waits by:
     # the lake file in prod, unset in dev unless LIVE_SCHEDULE points at a copy
     live_schedule: str | None = None
+    # The train poller (ingest/trains.py): on in prod, off in dev unless TRAIN_POLL=on (the
+    # key's quota is shared). It spends at most train_calls_per_day Train Tracker calls:
+    # positions every sweep, stations' arrivals with the rest.
+    train_poll: bool = False
+    train_poll_interval_seconds: int = 20  # CTA publishes every 20 s
+    train_calls_per_day: int = TRAIN_CALLS_PER_DAY_DEV
 
     @property
     def is_prod(self) -> bool:
@@ -65,6 +79,9 @@ class Settings:
     def vehicle_calls_per_day(self, n_routes: int | None = None) -> int:
         routes = n_routes or (len(self.poll_routes) if self.poll_routes else ALL_ROUTES_ESTIMATE)
         return math.ceil(routes / ROUTES_PER_CALL) * (86_400 // self.poll_interval_seconds)
+
+    def train_positions_per_day(self) -> int:
+        return 86_400 // self.train_poll_interval_seconds
 
 
 def _resolve(environ: Mapping[str, str], root: Path) -> dict[str, str]:
@@ -107,6 +124,20 @@ def get_settings(environ: Mapping[str, str] | None = None, root: Path = REPO_ROO
 
     routes = tuple(r.strip() for r in v.get("POLL_ROUTES", "").split(",") if r.strip())
 
+    train_flag = v.get("TRAIN_POLL", "on" if env == "prod" else "off").strip().lower()
+    if train_flag not in ("on", "off"):
+        raise ConfigError(f"TRAIN_POLL must be on or off, got {train_flag!r}.")
+    default_budget = TRAIN_CALLS_PER_DAY_PROD if env == "prod" else TRAIN_CALLS_PER_DAY_DEV
+    try:
+        train_interval = int(v.get("TRAIN_POLL_INTERVAL_SECONDS", "20"))
+        train_budget = int(v.get("TRAIN_CALLS_PER_DAY", str(default_budget)))
+    except ValueError as exc:
+        raise ConfigError(
+            f"TRAIN_POLL_INTERVAL_SECONDS and TRAIN_CALLS_PER_DAY must be integers: {exc}"
+        ) from None
+    if train_interval < 10:
+        raise ConfigError(f"TRAIN_POLL_INTERVAL_SECONDS={train_interval} is too fast.")
+
     sink = v.get("METRICS_SINK", "cloudwatch" if env == "prod" else "log").strip()
     if sink not in ("log", "cloudwatch"):
         raise ConfigError(f"METRICS_SINK must be log or cloudwatch, got {sink!r}.")
@@ -124,6 +155,9 @@ def get_settings(environ: Mapping[str, str] | None = None, root: Path = REPO_ROO
         live_target=v.get("LIVE_TARGET", "").strip() or None,
         live_schedule=v.get("LIVE_SCHEDULE", "").strip()
         or (LIVE_SCHEDULE_PROD if env == "prod" else None),
+        train_poll=train_flag == "on",
+        train_poll_interval_seconds=train_interval,
+        train_calls_per_day=train_budget,
     )
     calls = settings.vehicle_calls_per_day()
     if calls > MAX_VEHICLE_CALLS_PER_DAY:
@@ -131,6 +165,16 @@ def get_settings(environ: Mapping[str, str] | None = None, root: Path = REPO_ROO
             f"Polling would make ~{calls:,} getvehicles calls/day, over the "
             f"{MAX_VEHICLE_CALLS_PER_DAY:,} budget (key quota {DAILY_CALL_QUOTA:,}/day, shared "
             "by dev and prod). Raise POLL_INTERVAL_SECONDS or set POLL_ROUTES."
+        )
+    if train_budget > MAX_TRAIN_CALLS_PER_DAY:
+        raise ConfigError(
+            f"TRAIN_CALLS_PER_DAY={train_budget:,} is over {MAX_TRAIN_CALLS_PER_DAY:,} (the key's "
+            f"quota is {TRAIN_DAILY_CALL_QUOTA:,}/day, shared by dev and prod)."
+        )
+    if settings.train_poll and train_budget < settings.train_positions_per_day():
+        raise ConfigError(
+            f"TRAIN_CALLS_PER_DAY={train_budget:,} can't cover positions every "
+            f"{train_interval} s ({settings.train_positions_per_day():,} calls/day)."
         )
     return settings
 

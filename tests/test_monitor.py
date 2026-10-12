@@ -36,6 +36,18 @@ def test_healthy_poller():
     assert (v["ReplicationSlotLagMB"], v["ReplicationSlotsLost"]) == (0, 0)
 
 
+def test_train_metrics_appear_once_the_train_poller_has_swept():
+    v = values(snap())
+    assert "TrainMinutesSinceLastSweep" not in v and "TrainCallSuccessRate15m" not in v
+    v = values(snap(
+        last_train_sweep_finished_at=NOON - timedelta(minutes=6),
+        train_calls_ok_15m=1_140, train_calls_total_15m=1_200,
+    ))  # fmt: skip
+    assert v["TrainMinutesSinceLastSweep"] == 6.0  # the train thread stopped: train-stale
+    assert v["TrainCallSuccessRate15m"] == 0.95
+    assert v["MinutesSinceLastSweep"] == pytest.approx(0.33, abs=0.01)  # buses unaffected
+
+
 def test_staleness_is_minutes_since_the_last_sweep_and_absent_with_none_ever():
     v = values(snap(last_sweep_finished_at=NOON - timedelta(minutes=7)))
     assert v["MinutesSinceLastSweep"] == 7.0
