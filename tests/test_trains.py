@@ -220,3 +220,34 @@ def test_a_train_sweep_keeps_every_reply_raw_in_one_transaction(db):
     client.close()
     poller.conn.close()
     again.conn.close()
+
+
+def test_a_sweeps_calls_reach_the_live_files_and_a_failing_sink_never_raises(tmp_path):
+    settings = get_settings({"TRAIN_POLL": "on", "LIVE_TARGET": str(tmp_path / "vehicles.json")})
+    poller = TrainPoller(settings, client=None, connect=lambda: None)  # no calls, no database
+
+    def call(endpoint: str, params: dict, body: dict):
+        from ghost_ledger.bustracker import ApiResult
+        from ghost_ledger.ingest.poller import Call
+
+        return Call(endpoint, params, ApiResult(body=body, raw="{}", attempts=1), DAY)
+
+    positions = {"route": [{"@name": "red", "train": [{"rn": "812", "nextStaId": "40380"}]}]}
+    arrivals = {
+        "eta": [{"staId": "40380", "rn": "812", "rt": "Red", "arrT": "2026-10-12T15:02:00"}]
+    }
+    poller._publish([
+        call("ttpositions", {"rt": "red"}, positions),
+        call("ttarrivals", {"mapid": "40380"}, arrivals),
+    ])  # fmt: skip
+    trains = json.loads((tmp_path / "trains.json").read_text())
+    stations = json.loads((tmp_path / "stations.json").read_text())
+    assert [t["rn"] for t in trains["trains"]] == ["812"]
+    assert [e["rn"] for e in stations["stations"]["40380"]["eta"]] == ["812"]
+
+    class Broken:
+        def put_doc(self, name, doc):
+            raise OSError("S3 is down")
+
+    poller.live_sink = Broken()
+    poller._publish([call("ttpositions", {"rt": "red"}, positions)])  # logged, not raised

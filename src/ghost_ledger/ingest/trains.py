@@ -37,10 +37,12 @@ from zoneinfo import ZoneInfo
 import psycopg
 from psycopg.types.json import Jsonb
 
+from ghost_ledger import live
 from ghost_ledger.config import Settings
 from ghost_ledger.ingest import sql
 from ghost_ledger.ingest.poller import Call
 from ghost_ledger.l_stations import STATIONS
+from ghost_ledger.live_trains import LiveTrains
 from ghost_ledger.traintracker import (
     LINES,
     MAX_STATIONS_PER_CALL,
@@ -166,6 +168,9 @@ class TrainPoller:
         self.budget: CallBudget | None = None  # built from the log on the first sweep
         self._paused_until: datetime | None = None  # after CTA's "daily limit" (errCd 102)
         self._stop = threading.Event()  # run()'s: a shutdown ends a sweep's arrivals at once
+        # the live train feed (live_trains.py), beside the buses' vehicles.json
+        self.live = LiveTrains()
+        self.live_sink = live.make_sink(settings.live_target)
 
     def _ensure_connection(self) -> psycopg.Connection:
         if self.conn is None or self.conn.closed or self.conn.broken:
@@ -232,7 +237,20 @@ class TrainPoller:
             log.warning("train calls in the last 24 h at %d: positions paused", budget.used_24h())
         self._sample_line_status(calls)
         self._note_daily_limit(calls)
-        return self._write(started_at, calls, trains, sampled, t0)
+        summary = self._write(started_at, calls, trains, sampled, t0)
+        self._publish(calls)  # only a committed sweep reaches the public feed
+        return summary
+
+    def _publish(self, calls: list[Call]) -> None:
+        """Best-effort: the feed is a disposable view; a failure never touches the sweep."""
+        if self.live_sink is None:
+            return
+        try:
+            self.live.update(calls)
+            for name, doc in self.live.documents(self.now()):
+                self.live_sink.put_doc(name, doc)
+        except Exception:  # noqa: BLE001 - logged; the next sweep rewrites the files
+            log.exception("live train feed not published this sweep")
 
     def _paused(self) -> bool:
         if self._paused_until is not None and self.now() >= self._paused_until:

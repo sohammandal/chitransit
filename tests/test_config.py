@@ -106,3 +106,16 @@ def test_the_live_schedule_is_the_lake_file_in_prod_and_off_in_dev(tmp_path):
     assert get_settings(prod, root=tmp_path).live_schedule == LIVE_SCHEDULE_PROD
     local = get_settings({"LIVE_SCHEDULE": "data/stop_departures.json"}, root=tmp_path)
     assert local.live_schedule == "data/stop_departures.json"
+
+
+def test_trains_are_on_in_prod_and_off_in_dev_and_dev_can_turn_them_on(tmp_path):
+    prod = get_settings(
+        {"GHOST_LEDGER_ENV": "prod", "DATABASE_URL": "postgresql://x"}, root=tmp_path
+    )
+    assert prod.train_poll and prod.train_calls_per_day == 90_000
+    dev = get_settings({}, root=tmp_path)
+    assert not dev.train_poll
+    on = get_settings({"TRAIN_POLL": "on"}, root=tmp_path)  # the dev default covers positions
+    assert on.train_poll and on.train_calls_per_day >= on.train_positions_per_day()
+    with pytest.raises(ConfigError):
+        get_settings({"TRAIN_CALLS_PER_DAY": "99000"}, root=tmp_path)  # too near CTA's limit

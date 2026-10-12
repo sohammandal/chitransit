@@ -1140,6 +1140,7 @@ def active_detours(
 class Sink(Protocol):
     def put_pattern(self, pid: int, doc: str) -> None: ...
     def write(self, snapshot: dict[str, Any]) -> None: ...
+    def put_doc(self, name: str, doc: dict[str, Any]) -> None: ...  # another file beside them
 
 
 def documents(snapshot: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
@@ -1170,6 +1171,9 @@ class FileSink:
         for name, doc in documents(snapshot):
             path = self.path if name == "vehicles.json" else self.path.with_name(name)
             self.put(path, json.dumps(doc, separators=(",", ":")))
+
+    def put_doc(self, name: str, doc: dict[str, Any]) -> None:
+        self.put(self.path.with_name(name), json.dumps(doc, separators=(",", ":")))
 
 
 class S3Sink:
@@ -1202,6 +1206,10 @@ class S3Sink:
         for name, doc in documents(snapshot):
             key = self.key if name == "vehicles.json" else f"{self.key.rsplit('/', 1)[0]}/{name}"
             self.put(key, json.dumps(doc, separators=(",", ":")), CACHE_CONTROL)
+
+    def put_doc(self, name: str, doc: dict[str, Any]) -> None:
+        key = f"{self.key.rsplit('/', 1)[0]}/{name}"
+        self.put(key, json.dumps(doc, separators=(",", ":")), CACHE_CONTROL)
 
 
 def make_sink(target: str | None) -> Sink | None:

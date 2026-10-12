@@ -106,7 +106,7 @@ resource "aws_cloudfront_function" "index" {
     function handler(event) {
       var request = event.request;
       var uri = request.uri;
-      if (uri.startsWith("/live/") && !/^\/live\/(vehicles|stops|patterns\/[0-9]+)\.json$/.test(uri)) {
+      if (uri.startsWith("/live/") && !/^\/live\/(vehicles|stops|trains|stations|patterns\/[0-9]+)\.json$/.test(uri)) {
         return { statusCode: 404, statusDescription: "Not Found" };
       }
       if (uri.endsWith("/")) {
@@ -287,6 +287,8 @@ data "aws_iam_policy_document" "box_live" {
     resources = [
       "${aws_s3_bucket.site.arn}/live/vehicles.json",
       "${aws_s3_bucket.site.arn}/live/stops.json",      # every stop's own wait (ghost_ledger.live)
+      "${aws_s3_bucket.site.arn}/live/trains.json",     # every train, line status (live_trains)
+      "${aws_s3_bucket.site.arn}/live/stations.json",   # CTA's predictions per station
       "${aws_s3_bucket.site.arn}/live/patterns/*.json", # every pattern's shape and stops
     ]
   }
