@@ -1731,6 +1731,17 @@ test("a line's strip marks a long wait in red and trains together in amber, as a
   expect(errors).toEqual([]);
 });
 
+test("Purple's trains toward Howard run on a strip from Linden, not against the Express path's (Oct 12)", async ({ page }) => {
+  // 511 (the fixture), southbound on the Linden-Howard shuttle: its strip ran Clark/Lake -> Linden
+  const errors = await setUp(page);
+  await page.goto("/line/purple/");
+  const toHoward = page.locator(".sheet section").filter({ hasText: "Toward Howard" }).locator("svg").first();
+  await expect(toHoward).toHaveAttribute("aria-label", "1 train toward Howard, from Linden");
+  await expect(toHoward.locator(".train")).toHaveCount(1);
+  await expect(toHoward.locator("text.end").first()).toHaveText("Linden");
+  expect(errors).toEqual([]);
+});
+
 test("a station's tracked times are marked live; a timetable time is grey and unmarked (Oct 11)", async ({ page }) => {
   // the eye caught "9 min" first and could miss its "Scheduled" tag (rider, Oct 11)
   const errors = await setUp(page);

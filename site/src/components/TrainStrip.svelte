@@ -52,7 +52,7 @@
   const ends = $derived(fitEnds(first, dest, W - 2 * PAD, 30, (t) => t.length * 6.4));
 </script>
 
-<svg viewBox="0 0 {W} {endsY + 6}" role="img" aria-label="{s.trains.length} trains toward {dest}, from {first}">
+<svg viewBox="0 0 {W} {endsY + 6}" role="img" aria-label="{s.trains.length} {s.trains.length === 1 ? "train" : "trains"} toward {dest}, from {first}">
   <line x1={PAD} y1={Y} x2={W - PAD} y2={Y} class="track" />
   {#each s.at as a}<line x1={x(a)} y1={Y - 3} x2={x(a)} y2={Y + 3} class="tick" />{/each}
   {#each names as n}<line x1={n.x} y1={Y + 5} x2={n.x} y2={namesY - 10} class="name-tick" />{/each}

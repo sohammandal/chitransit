@@ -112,7 +112,8 @@ export type Strip = {
  *  real distances, and its trains between their last and next station (by CTA's position). A
  *  Loop line's out-and-back path is cut at the Loop: toward the Loop up to the end of the
  *  circuit, toward the terminal from its start. Of a line's paths, the one most of these trains
- *  are on (Green's branches: the other branch's trains are `off`). */
+ *  are on (Green's branches: the other branch's trains are `off`), then one that ends at their
+ *  destination (Purple's shuttle to Howard, not the Express path on past Howard to Linden). */
 export function strip(trains: Train[], rt: string, dest: string, lines: Lines | null): Strip | null {
   const line = lines?.lines[rt];
   if (!line || !lines) return null;
@@ -127,7 +128,8 @@ export function strip(trains: Train[], rt: string, dest: string, lines: Lines | 
   }).filter((run) => run.some(isDest));
   const mine = trains.filter((t) => t.rt === rt && t.dest === dest);
   const on = (run: string[]) => mine.filter((t) => run.includes(t.next)).length;
-  const seq = runs.sort((a, b) => on(b) - on(a) || b.length - a.length)[0];
+  const ends = (run: string[]) => (isDest(run.at(-1)!) ? 1 : 0);
+  const seq = runs.sort((a, b) => on(b) - on(a) || ends(b) - ends(a) || b.length - a.length)[0];
   if (!seq) return null;
   const pt = (s: string) => [lines.stations[s].lon, lines.stations[s].lat] as const;
   const cum = [0];

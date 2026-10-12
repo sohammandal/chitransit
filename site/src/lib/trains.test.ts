@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { etaText, gaps, lineDirections, lineOf, lineUrl, matchLines, nextText, platforms, stationsToGo, strip, together } from "./trains";
 import type { Eta, Lines, Train } from "./types";
+import drawn from "../../public/l/lines.json";
 
 const lines: Lines = {
   feed: "2026-09-14",
@@ -105,6 +106,17 @@ describe("trains", () => {
     expect(loop.seq).toEqual(["k", "m", "40380", "40260"]);
     expect(strip([at("5", "brn", "Kimball", "k", 41.95)], "brn", "Kimball", l)!.seq).toEqual(["40380", "40260", "m", "k"]);
     expect(strip([at("6", "red", "C", "zz", 41.9)], "red", "C", l)!.off).toBe(1); // not on its path: not placed
+  });
+
+  it("draws Purple's trains toward Howard on the Linden-Howard shuttle, not the Express path on past Howard (Oct 12)", () => {
+    // 511 at 01:00, southbound to Howard, next South Boulevard: both paths pass it, the Express
+    // one on toward Linden (the strip ran Clark/Lake -> Linden and the train went against it)
+    const real = drawn as unknown as Lines;
+    const t511 = { ...train("511", "p", "5", "Howard", "40840"), lat: 42.03346, lon: -87.67954, hdg: 157, app: true };
+    const s = strip([t511], "p", "Howard", real)!;
+    expect(real.stations[s.seq[0]].name).toBe("Linden");
+    expect(real.stations[s.seq.at(-1)!].name).toBe("Howard");
+    expect(s.trains.map((p) => p.t.rn)).toEqual(["511"]);
   });
 
   it("labels each gap with the poller's minutes to the train ahead, and our own measure where we make a claim", () => {
