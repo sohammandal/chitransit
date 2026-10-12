@@ -70,10 +70,13 @@ LONG_MARGIN_S = 60
 TOGETHER_MARGIN_S = 30
 
 
-def load_paths() -> dict[str, list[list[str]]]:
-    """Each line's paths as platforms in order (l_paths.json, from scripts/l_lines.py)."""
+Path = list[tuple[str, str]]  # (station, platform), in order
+
+
+def load_paths() -> dict[str, list[Path]]:
+    """Each line's paths as (station, platform) in order (l_paths.json, scripts/l_lines.py)."""
     doc = json.loads(resources.files("ghost_ledger").joinpath("l_paths.json").read_text())
-    return {rt: [[q for _, q in path] for path in ps] for rt, ps in doc["paths"].items()}
+    return {rt: [[(s, q) for s, q in path] for path in ps] for rt, ps in doc["paths"].items()}
 
 
 def local_epoch(value: Any, fetched_at: datetime) -> int | None:
@@ -172,7 +175,7 @@ class LiveTrains:
     def __init__(
         self,
         schedule: Callable[[], Schedule | None] = lambda: None,
-        paths: dict[str, list[list[str]]] | None = None,
+        paths: dict[str, list[Path]] | None = None,
         publish_claims: bool = False,
     ) -> None:
         # Our claims go out only once graded (300 per claim type, < 1% wrong, as for buses):
@@ -184,13 +187,16 @@ class LiveTrains:
         self.stations: dict[str, dict[str, Any]] = {}
         self.status: dict[str, str] = {}
         self.schedule = schedule  # the bus poller's live schedule (it carries rail platforms)
-        # (line, platform) -> the platforms after it, on each path through it
-        self.ahead: dict[tuple[str, str], list[list[str]]] = {}
+        # (line, platform) -> each path through it: what comes after it, and before it (nearest
+        # first)
+        self.ahead: dict[tuple[str, str], list[Path]] = {}
+        self.behind: dict[tuple[str, str], list[Path]] = {}
         for rt, ps in (load_paths() if paths is None else paths).items():
             for path in ps:
-                for i, platform in enumerate(path):
+                for i, (_, platform) in enumerate(path):
                     self.ahead.setdefault((rt, platform), []).append(path[i + 1 :])
-        self.where: dict[str, tuple[str, int]] = {}  # train -> (its next platform, seen at)
+                    self.behind.setdefault((rt, platform), []).append(path[:i][::-1])
+        self.where: dict[str, tuple[str, str, int]] = {}  # train -> (next platform, station, seen)
         self.passes: dict[tuple[str, str], deque[tuple[int, str, bool]]] = {}  # (t, train, bound)
         self.last_pass: dict[str, tuple[str, int, bool]] = {}  # train -> (platform, t, bound)
         self.doubt: dict[tuple[str, str], int] = {}  # a train may have passed it unseen by then
@@ -223,19 +229,32 @@ class LiveTrains:
             self.blind.append((self.seen_at, t))
         self.seen_at = t
         for tr in self.trains:
-            key, rt, platform = f"{tr['rt']}:{tr['rn']}", tr["rt"], tr["stop"]
+            key, rt, station, platform = f"{tr['rt']}:{tr['rn']}", tr["rt"], tr["next"], tr["stop"]
             was = self.where.get(key)
-            if platform:
-                self.where[key] = (platform, t)
-            if was is None or not platform or was[0] == platform:
+            if not platform:
                 continue
-            if t - was[1] > HOLE.total_seconds():
+            if was is None or was[1] == station:
+                # first seen, or the same station: on another track (Wilson's), the path's own
+                # platform stays; on one of ours (it turned at a terminal), it's that one now
+                keep = was is not None and (rt, platform) not in self.ahead
+                self.where[key] = (was[0] if keep else platform, station, t)
+                continue
+            if t - was[2] > HOLE.total_seconds():
                 self._doubt(rt, was[0], t)  # unseen a while: where it went is unknown
+                self.where[key] = (platform, station, t)
                 continue
-            route = next((rest[: rest.index(platform)] for rest in self.ahead.get((rt, was[0]), [])
-                          if platform in rest), None)  # fmt: skip
-            if route is None:
+            found = self._locate(rt, was[0], station, platform)
+            if found is None:
                 self._doubt(rt, was[0], t)  # onto no path we know
+                self.where[key] = (platform, station, t)
+                continue
+            route, ours, forward = found
+            self.where[key] = (ours, station, t)  # the path's own platform (Wilson's other track)
+            if not forward:
+                # back along its path (CTA's position had jumped ahead): the platforms it seemed to
+                # pass may not have been passed
+                for q in (ours, *route):
+                    self.doubt[(rt, q)] = t
                 continue
             bound = len(route) > MAX_SKIP
             for q in (was[0], *route):
@@ -246,13 +265,27 @@ class LiveTrains:
             while q and q[0][0] < old:
                 q.popleft()
         self.blind = [b for b in self.blind if b[1] >= old]
-        for key in [k for k, (_, seen) in self.where.items() if seen < old]:
+        for key in [k for k, (_, _, seen) in self.where.items() if seen < old]:
             self.where.pop(key, None)
             self.last_pass.pop(key, None)
 
+    def _locate(
+        self, rt: str, frm: str, station: str, platform: str
+    ) -> tuple[list[str], str, bool] | None:
+        """A move from platform frm to (station, platform), along a path through frm: (the
+        platforms between, the path's own platform there, forward or back). A platform not on
+        our paths at a station on them counts as that station's (CTA reports some trains on
+        another track: Wilson's 30385). None: the move is on no path we know."""
+        for way, forward in ((self.ahead, True), (self.behind, False)):
+            for rest in way.get((rt, frm), []):
+                for i, (s, q) in enumerate(rest):
+                    if q == platform or s == station:
+                        return [q2 for _, q2 in rest[:i]], q, forward
+        return None
+
     def _doubt(self, rt: str, platform: str, t: int) -> None:
         for rest in self.ahead.get((rt, platform), [[]]):
-            for q in (platform, *rest):
+            for q in (platform, *(q for _, q in rest)):
                 self.doubt[(rt, q)] = t
 
     def _unseen(self, rt: str, platform: str, since: int, until: int) -> bool:
@@ -268,7 +301,8 @@ class LiveTrains:
         on_line = {f"{t['rt']}:{t['rn']}": (t["rt"], t["dest"]) for t in self.trains}
         trains = {f"{t['rt']}:{t['rn']}": t for t in self.trains}
         for tr in self.trains:
-            key, rt, platform = f"{tr['rt']}:{tr['rn']}", tr["rt"], tr["stop"]
+            key, rt = f"{tr['rt']}:{tr['rn']}", tr["rt"]
+            platform = self.where.get(key, (tr["stop"],))[0]  # the path's own (another track's)
             last = self.passes.get((rt, platform))
             gap = last_t = last_by = None
             if last and not self._unseen(rt, platform, last[-1][0], t_now):

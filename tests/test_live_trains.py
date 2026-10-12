@@ -5,6 +5,7 @@ from ghost_ledger.ingest.poller import Call
 from ghost_ledger.live_trains import (
     LiveTrains,
     etas_from,
+    load_paths,
     local_epoch,
     status_from,
     trains_from,
@@ -151,7 +152,8 @@ def test_predictions_past_their_time_drop_out():
 
 
 # ---- passes, gaps and claims (as the buses': live.py) ----
-PATHS = {"red": [["p1", "p2", "p3", "p4", "p5", "p6"]]}  # one direction's platforms, in order
+# one direction's stations and platforms, in order (s1/p1 ... s6/p6)
+PATHS = {"red": [[(f"s{i}", f"p{i}") for i in range(1, 7)]]}
 T = datetime(2026, 10, 12, 2, 0, tzinfo=UTC)
 
 
@@ -172,9 +174,10 @@ def schedule(departures: list[tuple[str, datetime]], rt: str = "red"):
 def snap(live: LiveTrains, minute: float, *trains: tuple[str, str] | tuple[str, str, str]) -> None:
     """A positions snapshot `minute` minutes after T: (rn, next platform[, destination])."""
     live.trains = [
-        {"rt": "red", "rn": t[0], "stop": t[1], "dest": t[2] if len(t) > 2 else "Howard"}
+        {"rt": "red", "rn": t[0], "stop": t[1], "next": "s" + t[1][1:],
+         "dest": t[2] if len(t) > 2 else "Howard"}
         for t in trains
-    ]
+    ]  # fmt: skip
     live.passed(int((T + timedelta(minutes=minute)).timestamp()))
 
 
@@ -288,11 +291,17 @@ def cdt(hms: str) -> datetime:
     return datetime.fromisoformat(f"2026-10-11T{hms}-05:00")
 
 
+STATION_OF = {q: s for ps in load_paths().values() for path in ps for s, q in path}
+
+
 def replay(live: LiveTrains, rt: str, start: str, end: str, where) -> None:
     """Positions every 20 s, start to end (Chicago); where(t) -> [(rn, platform, dest)]."""
     t = cdt(start)
     while t <= cdt(end):
-        live.trains = [{"rt": rt, "rn": rn, "stop": q, "dest": d} for rn, q, d in where(t)]
+        live.trains = [
+            {"rt": rt, "rn": rn, "stop": q, "next": STATION_OF[q], "dest": d}
+            for rn, q, d in where(t)
+        ]
         live.passed(int(t.timestamp()))
         t += timedelta(seconds=20)
 
@@ -343,3 +352,23 @@ def test_claims_stay_unpublished_until_graded_but_the_measurements_go_out():
     b = by_rn(live, 30)["B"]
     assert b["gap_s"] == 19 * 60 + 40  # measured, published
     assert (b["long_wait"], b["together_with"]) == (False, None)  # the rule fires; not published
+
+
+def test_another_track_at_a_station_on_the_path_counts_as_the_paths_own_platform():
+    # Oct 12: a Red train reported Wilson on its other track (30385, on no path of ours), and the
+    # whole southbound line was put in doubt for a headway
+    live = LiveTrains(paths=PATHS)
+    run(live, [(1, [("A", "p1")]), (2, [("A", "x2")])])  # x2: s2 on another track
+    snap(live, 7 / 3, ("A", "x2"))
+    live.trains[0]["next"] = "s2"
+    live.passed(secs(7 / 3))
+    assert ("red", "p1") in live.passes and live.doubt == {}  # passed s1; nothing in doubt
+    assert live.where["red:A"][0] == "p2"  # the path's own platform at s2
+
+
+def test_a_train_jumping_back_puts_only_what_it_seemed_to_pass_in_doubt():
+    live = LiveTrains(paths=PATHS)
+    run(
+        live, [(1, [("A", "p1")]), (2, [("A", "p5")]), (3, [("A", "p3")])]
+    )  # p1 -> p5 -> back to p3
+    assert set(live.doubt) == {("red", "p3"), ("red", "p4")}  # not p5, p6 ahead
