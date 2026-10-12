@@ -1,10 +1,11 @@
-"""The live train feed, rewritten after each committed train sweep (ingest/trains.py). Display
-only: CTA's own data, as CTA sent it, no claims of ours (those wait for grading, as for
-buses). Two files beside vehicles.json:
+"""The live train feed, rewritten after each committed train sweep (ingest/trains.py): CTA's own
+data as CTA sent it, and our claims about gaps and bunching, decided here once as the buses'
+are in live.py (the same rules; graded before the site shows them). Two files beside
+vehicles.json:
 
   trains.json    {"generated_at": ISO, "build": commit, "data_at": epoch | None,
-                  "trains": [{"rn", "rt", "dir", "dest", "next", "next_name", "arr", "app",
-                              "dly", "lat", "lon", "hdg", "t"}],
+                  "trains": [{"rn", "rt", "dir", "dest", "next", "stop", "next_name", "arr",
+                              "app", "dly", "lat", "lon", "hdg", "t", ...the claims below}],
                   "status": {rt: CTA's words for the line}}
                  every train on the eight lines; fetched by the site every sweep.
   stations.json  {"generated_at": ISO, "stations": {mapid: {"at": epoch, "eta": [{"rn", "rt",
@@ -13,14 +14,43 @@ buses). Two files beside vehicles.json:
                  fetched only while a station is open.
 
 Times are epoch seconds (UTC). rt is the line's Train Tracker code in both files (red, blue,
-brn, g, org, p, pink, y). A train CTA can't place has lat/lon null (CTA sends "0").
+brn, g, org, p, pink, y). A train CTA can't place has lat/lon null (CTA sends "0"). stop is the
+platform of its next station (stpId: one side of a station, so one direction).
+
+Passes: a train passed a platform when CTA's next platform for it moves on (it left; known to
+one snapshot, 20 s). Between two snapshots a train can pass a close station unseen (2% of moves,
+Oct 11), so moves along a path are filled in from l_paths.json: up to MAX_SKIP stations over,
+timed; further (a jump: 1.4% of moves were onto no path we know or far along it), its passes
+are only bounds. A move onto no known path, or a train unseen for longer than HOLE, may have
+passed any platform after its last one unseen: those platforms are in doubt until a train
+passes them again. As for buses (live.py), measured at each train's next platform, all trains
+of the line counting:
+  gap_s          how long ago the last train passed it (a rider there has waited that long);
+                 None ("can't tell") with no pass seen, a doubt since, or snapshots missing
+                 (HOLE) since; last_pass: when (epoch); last_by: that train ("red:812")
+  ahead_s        seconds between it and that train, by CTA's own times: when each is due at the
+                 station the one ahead reaches next (both from CTA's last answer there); else
+                 when this one is due at its next station after the one ahead left it. The
+                 site's minutes between trains (so a line needs no stations.json)
+  long_wait      gap_s over twice the scheduled gap there now (by LONG_MARGIN_S), with at least
+                 2 departures due since the last pass (the nightly's live schedule, rail
+                 platforms keyed by line code)
+  together_with  the train just ahead at this train's last timed pass, when it passed that
+                 platform under a quarter of the scheduled gap before (by TOGETHER_MARGIN_S),
+                 within TOGETHER_FRESH, and is still on the line toward the same place;
+                 together_s: that headway
 """
 
+import json
 import os
+from collections import deque
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from importlib import resources
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from ghost_ledger.live import Schedule
 from ghost_ledger.traintracker import as_list
 
 CHICAGO = ZoneInfo("America/Chicago")
@@ -29,6 +59,21 @@ LINE_CODES = {"Red": "red", "Blue": "blue", "Brn": "brn", "G": "g", "Org": "org"
               "Pink": "pink", "Y": "y"}  # fmt: skip
 # A prediction this far past its time is dropped from stations.json (CTA drops it on arrival).
 STALE_ETA = timedelta(seconds=30)
+# Positions further apart than this (a failed call, the poller down) may hide passes.
+HOLE = timedelta(seconds=60)
+# Stations a train can pass between two snapshots and still be timed (close stations downtown).
+MAX_SKIP = 1
+TRAIL = timedelta(minutes=150)  # passes kept
+# The buses' margins (live.py): a pass is known to a snapshot, as a bus's to tens of seconds.
+TOGETHER_FRESH = timedelta(minutes=10)
+LONG_MARGIN_S = 60
+TOGETHER_MARGIN_S = 30
+
+
+def load_paths() -> dict[str, list[list[str]]]:
+    """Each line's paths as platforms in order (l_paths.json, from scripts/l_lines.py)."""
+    doc = json.loads(resources.files("ghost_ledger").joinpath("l_paths.json").read_text())
+    return {rt: [[q for _, q in path] for path in ps] for rt, ps in doc["paths"].items()}
 
 
 def local_epoch(value: Any, fetched_at: datetime) -> int | None:
@@ -83,6 +128,7 @@ def trains_from(body: dict[str, Any], fetched_at: datetime) -> list[dict[str, An
             out.append({
                 "rn": str(t.get("rn") or ""), "rt": rt, "dir": str(t.get("trDr") or ""),
                 "dest": t.get("destNm"), "next": str(t.get("nextStaId") or ""),
+                "stop": str(t.get("nextStpId") or ""),
                 "next_name": t.get("nextStaNm"), "arr": local_epoch(t.get("arrT"), fetched_at),
                 "app": flag(t.get("isApp")), "dly": flag(t.get("isDly")),
                 "lat": lat if placed else None, "lon": lon if placed else None,
@@ -120,13 +166,36 @@ def status_from(body: dict[str, Any]) -> dict[str, str]:
 
 class LiveTrains:
     """What the feed shows: the latest trains, each station's latest predictions (its own
-    arrivals call: one round covers every station in ~30 s by day) and the lines' status."""
+    arrivals call: one round covers every station in ~30 s by day) and the lines' status; and
+    the passes the claims are measured from."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        schedule: Callable[[], Schedule | None] = lambda: None,
+        paths: dict[str, list[list[str]]] | None = None,
+        publish_claims: bool = False,
+    ) -> None:
+        # Our claims go out only once graded (300 per claim type, < 1% wrong, as for buses):
+        # until then long_wait is False and together_with None; the measurements (gap_s,
+        # ahead_s) go out regardless.
+        self.publish_claims = publish_claims
         self.trains: list[dict[str, Any]] = []
         self.trains_ok = False  # this sweep's positions call worked: trains.json is due
         self.stations: dict[str, dict[str, Any]] = {}
         self.status: dict[str, str] = {}
+        self.schedule = schedule  # the bus poller's live schedule (it carries rail platforms)
+        # (line, platform) -> the platforms after it, on each path through it
+        self.ahead: dict[tuple[str, str], list[list[str]]] = {}
+        for rt, ps in (load_paths() if paths is None else paths).items():
+            for path in ps:
+                for i, platform in enumerate(path):
+                    self.ahead.setdefault((rt, platform), []).append(path[i + 1 :])
+        self.where: dict[str, tuple[str, int]] = {}  # train -> (its next platform, seen at)
+        self.passes: dict[tuple[str, str], deque[tuple[int, str, bool]]] = {}  # (t, train, bound)
+        self.last_pass: dict[str, tuple[str, int, bool]] = {}  # train -> (platform, t, bound)
+        self.doubt: dict[tuple[str, str], int] = {}  # a train may have passed it unseen by then
+        self.blind: list[tuple[int, int]] = []  # snapshots missing between these times
+        self.seen_at: int | None = None  # the last positions snapshot
 
     def update(self, calls: list[Any]) -> None:
         """Take in a committed sweep's calls (ingest.poller.Call)."""
@@ -138,6 +207,7 @@ class LiveTrains:
             if call.endpoint == "ttpositions":
                 self.trains = trains_from(r.body, call.fetched_at)
                 self.trains_ok = True
+                self.passed(int(call.fetched_at.timestamp()))
             elif call.endpoint == "ttarrivals":
                 found = etas_from(r.body, call.fetched_at)
                 at = int(call.fetched_at.timestamp())
@@ -146,6 +216,109 @@ class LiveTrains:
                     self.stations[mapid] = {"at": at, "eta": found.get(mapid, [])}
             elif call.endpoint == "routes":
                 self.status = status_from(r.body) or self.status
+
+    def passed(self, t: int) -> None:
+        """Note the platforms each train passed since the last snapshot (see the docstring)."""
+        if self.seen_at is not None and t - self.seen_at > HOLE.total_seconds():
+            self.blind.append((self.seen_at, t))
+        self.seen_at = t
+        for tr in self.trains:
+            key, rt, platform = f"{tr['rt']}:{tr['rn']}", tr["rt"], tr["stop"]
+            was = self.where.get(key)
+            if platform:
+                self.where[key] = (platform, t)
+            if was is None or not platform or was[0] == platform:
+                continue
+            if t - was[1] > HOLE.total_seconds():
+                self._doubt(rt, was[0], t)  # unseen a while: where it went is unknown
+                continue
+            route = next((rest[: rest.index(platform)] for rest in self.ahead.get((rt, was[0]), [])
+                          if platform in rest), None)  # fmt: skip
+            if route is None:
+                self._doubt(rt, was[0], t)  # onto no path we know
+                continue
+            bound = len(route) > MAX_SKIP
+            for q in (was[0], *route):
+                self.passes.setdefault((rt, q), deque()).append((t, key, bound))
+            self.last_pass[key] = (route[-1] if route else was[0], t, bound)
+        old = t - TRAIL.total_seconds()
+        for q in self.passes.values():
+            while q and q[0][0] < old:
+                q.popleft()
+        self.blind = [b for b in self.blind if b[1] >= old]
+        for key in [k for k, (_, seen) in self.where.items() if seen < old]:
+            self.where.pop(key, None)
+            self.last_pass.pop(key, None)
+
+    def _doubt(self, rt: str, platform: str, t: int) -> None:
+        for rest in self.ahead.get((rt, platform), [[]]):
+            for q in (platform, *rest):
+                self.doubt[(rt, q)] = t
+
+    def _unseen(self, rt: str, platform: str, since: int, until: int) -> bool:
+        """Could a train have passed this platform unseen between these times?"""
+        return self.doubt.get((rt, platform), 0) > since or any(
+            a < until and b > since for a, b in self.blind
+        )
+
+    def claims(self, now: datetime) -> None:
+        """Each train's gap and claims (see the docstring), on the trains as published."""
+        schedule = self.schedule()
+        t_now = int(now.timestamp())
+        on_line = {f"{t['rt']}:{t['rn']}": (t["rt"], t["dest"]) for t in self.trains}
+        trains = {f"{t['rt']}:{t['rn']}": t for t in self.trains}
+        for tr in self.trains:
+            key, rt, platform = f"{tr['rt']}:{tr['rn']}", tr["rt"], tr["stop"]
+            last = self.passes.get((rt, platform))
+            gap = last_t = last_by = None
+            if last and not self._unseen(rt, platform, last[-1][0], t_now):
+                last_t, last_by, _ = last[-1]
+                gap = t_now - last_t
+            sched = due = None
+            if schedule is not None and gap is not None:
+                sched, due = schedule.judge(rt, platform, now, datetime.fromtimestamp(last_t, UTC))
+            tr["gap_s"], tr["last_pass"], tr["last_by"] = gap, last_t, last_by
+            tr["ahead_s"] = self.ahead_s(tr, trains.get(last_by) if last_by else None, last_t)
+            long = bool(
+                sched and gap is not None and gap > 2 * sched + LONG_MARGIN_S and (due or 0) >= 2
+            )
+            tr["long_wait"] = self.publish_claims and long
+            tr["together_with"] = tr["together_s"] = None
+            if not self.publish_claims:
+                continue
+            mine = self.last_pass.get(key)  # its last timed pass, if fresh
+            if not mine or mine[2] or t_now - mine[1] > TOGETHER_FRESH.total_seconds():
+                continue
+            if schedule is None:
+                continue
+            q, t_b, _ = mine
+            before = [p for p in self.passes.get((rt, q), ()) if p[0] < t_b and p[1] != key]
+            if not before:
+                continue
+            t_a, front, bound = before[-1]
+            if bound or self._unseen(rt, q, t_a, t_b) or on_line.get(front) != (rt, tr["dest"]):
+                continue
+            sched_b, _ = schedule.judge(rt, q, datetime.fromtimestamp(t_b, UTC), None)
+            if sched_b and t_b - t_a < 0.25 * sched_b - TOGETHER_MARGIN_S:
+                tr["together_with"], tr["together_s"] = front, t_b - t_a
+
+    def ahead_s(
+        self, tr: dict[str, Any], ahead: dict[str, Any] | None, left: int | None
+    ) -> int | None:
+        """Seconds between a train and the one ahead of it (see ahead_s in the docstring)."""
+        if ahead is not None and ahead["rt"] == tr["rt"]:
+            due = self.stations.get(ahead.get("next", ""), {}).get("eta", [])
+
+            def when(t: dict[str, Any]) -> int | None:
+                return next((e["arr"] for e in due if e["rn"] == t["rn"] and e["rt"] == t["rt"]
+                             and not e["sch"] and e["arr"]), None)  # fmt: skip
+
+            a, b = when(ahead) or ahead.get("arr"), when(tr)
+            if a and b and b > a:
+                return b - a
+        if left is not None and tr.get("arr") and tr["arr"] > left:
+            return tr["arr"] - left
+        return None
 
     def documents(self, now: datetime) -> list[tuple[str, dict[str, Any]]]:
         """The files due: trains.json only after a sweep whose positions call worked (an old
@@ -158,6 +331,7 @@ class LiveTrains:
         }
         docs: list[tuple[str, dict[str, Any]]] = []
         if self.trains_ok:
+            self.claims(now)
             stamps = [t["t"] for t in self.trains if t["t"] is not None]
             docs.append(("trains.json", {
                 "generated_at": generated, "build": os.environ.get("GIT_SHA", "unknown"),

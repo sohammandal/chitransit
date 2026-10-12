@@ -34,6 +34,11 @@ models:
     columns:
       - name: pid
         data_tests: [unique, not_null]
+  - name: stg_gtfs_rail_trips
+    description: "'L' trips of every loaded GTFS feed; rt = the line's Train Tracker code. Grain (feed_id, trip_id)."
+    columns:
+      - name: rt
+        data_tests: [not_null]
   - name: stg_gtfs_bus_trips
     description: Bus trips of every loaded GTFS feed. Grain (feed_id, trip_id).
     columns:

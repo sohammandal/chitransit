@@ -109,10 +109,13 @@ def cmd_poll(args: argparse.Namespace) -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())  # finish the current sweep, then exit
     with BusTrackerClient(require_bus_key(settings)) as client:
-        # the trains on their own thread and connection: neither feed can stall the other
-        train_thread = trains.start(settings, stop) if args.sweeps is None else None
+        poller = Poller(settings, client)
+        # the trains on their own thread and connection: neither feed can stall the other; they
+        # judge gaps by the buses' live schedule (read through the poller: it reloads it)
+        schedule = lambda: poller.live.schedule  # noqa: E731 - read late: the poller reloads it
+        train_thread = trains.start(settings, stop, schedule) if args.sweeps is None else None
         try:
-            Poller(settings, client).run(stop=stop, max_sweeps=args.sweeps)
+            poller.run(stop=stop, max_sweeps=args.sweeps)
         finally:
             stop.set()
             if train_thread is not None:

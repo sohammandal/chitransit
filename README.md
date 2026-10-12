@@ -11,7 +11,7 @@
 
 > A replayable record of scheduled CTA service - which bus trips **ran**, which CTA **flagged as canceled**, and which **silently never showed up** - judged against the schedule that was in force each day.
 
-Public site: **[chitransit.fyi](https://chitransit.fyi)** - how CTA buses are really running, right now and on the record.
+Public site: **[chitransit.fyi](https://chitransit.fyi)** - how CTA buses and trains are really running, right now and on the record.
 
 *Not affiliated with the Chicago Transit Authority. Data provided by CTA.*
 
@@ -26,6 +26,7 @@ Riders experience the bus system at a stop: how long they wait, and how evenly t
 - **Right now:** every bus on one map; where riders are in a **long wait** (far longer than the schedule's gap since a bus last passed a stop) and where buses run **together**.
 - **Per route and stop:** each direction as a line with its gaps, the bus ahead and behind, and how long since a bus last passed a stop. Distances along the route, never forecasts.
 - **On the record:** every scheduled trip each day, marked **ran**, **flagged as canceled** by CTA, or **never showed up**, judged against the schedule in force that day.
+- **The 'L':** every train on the same map from CTA's Train Tracker (track sensors, every 20 s), each line as a strip with the minutes between its trains, and each station's arrival times as CTA's boards show them. Every snapshot is kept in the same log, for a trip record of the 'L' to come.
 
 Claims come only from what the GPS shows. When the data can't settle a question (a bus that stopped reporting, a detour), the site says it can't tell rather than guess.
 
@@ -40,6 +41,7 @@ The poller writes its data to exactly one place. Everything downstream is derive
 ```mermaid
 flowchart LR
     BT[CTA Bus Tracker API<br/>every 30 s] --> P
+    TT[CTA Train Tracker API<br/>every 20 s] --> P
     subgraph BOX[Lightsail box, 24/7]
         P[Poller] -->|one transaction per sweep| PG[(Postgres 17<br/>raw_responses, sweeps, raw_polls,<br/>bus_positions, assignments, patterns)]
         PG -->|logical replication| CDC[Debezium Server]
@@ -49,7 +51,7 @@ flowchart LR
     ING --> INT[Intermediate<br/>dbt-duckdb, nightly]
     INT --> AN[Analytics<br/>trip status, delivery, gaps, bunching]
     AN --> OUT[Parquet on S3 + ops dashboard]
-    P -->|after each committed sweep| LIVE[live/vehicles.json<br/>positions + measured gaps]
+    P -->|after each committed sweep| LIVE[live/vehicles.json, trains.json<br/>positions + measured gaps]
     AN -->|site_data.py, checked| DATA[data/v1/*.json<br/>routes, shapes, schedule gaps,<br/>report card]
     LIVE --> SITE[chitransit.fyi<br/>Astro + Svelte + MapLibre<br/>S3 + CloudFront]
     DATA --> SITE
@@ -61,7 +63,7 @@ flowchart LR
 | **Ingress** | The complete change log as Iceberg tables on S3 (Glue catalog): one row per change with its operation and log position. After two days it is the only copy, so it is protected and never rebuilt. |
 | **Intermediate** | Schedule and route-pattern versions (SCD2), scheduled trips, interpolated stop passes, flagged cancellations |
 | **Analytics** | `trip_status` (every scheduled trip: ran / flagged / silent / unknown), `route_hour_delivery`, `stop_hour_service` (headways, gaps, bunching), published as Parquet partitioned by service date |
-| **Site: live** | `live/vehicles.json`, rewritten by the poller after each committed sweep (a disposable view of the same sweep, never a second write path): every bus, and the measured time since the last bus passed its spot |
+| **Site: live** | `live/vehicles.json`, rewritten by the poller after each committed sweep (a disposable view of the same sweep, never a second write path): every bus, and the measured time since the last bus passed its spot. `live/trains.json` and `stations.json` likewise after each train sweep: every train, and CTA's predictions at every station |
 | **Site: nightly** | `data/v1/*.json` from the Analytics tables and their published history: route names and shapes, scheduled gaps for today and tomorrow, and the report card. Checked against the site's contract before upload |
 
 Each scheduled trip lands in one of three buckets: **ran**, **flagged canceled** (CTA's `dyn=1`), or **silent ghost** (never flagged, never seen), counted only when the feed was healthy. Trips on detour patterns are counted as unknown, never as ghosts.
@@ -72,8 +74,8 @@ Each scheduled trip lands in one of three buckets: **ran**, **flagged canceled**
 
 | Component | What it does | Why |
 |---|---|---|
-| **CTA Bus Tracker API** (+ Customer Alerts, GTFS) | Live bus positions, CTA's own announcements (canceled, will not stop), schedules | The only official, live, system-wide source |
-| **Python poller** (uv, Python 3.13) | Polls every bus every 30 s, samples predictions every 5 min, computes live waits in memory | Simple and reliable; the live math runs in milliseconds |
+| **CTA Bus Tracker and Train Tracker APIs** (+ Customer Alerts, GTFS) | Live bus and train positions, station predictions, CTA's own announcements (canceled, will not stop), schedules | The only official, live, system-wide sources |
+| **Python poller** (uv, Python 3.13) | Polls every bus every 30 s and every train every 20 s (one thread each), samples predictions, computes live waits in memory | Simple and reliable; the live math runs in milliseconds |
 | **PostgreSQL 17** | System of record: each sweep in one transaction; keeps about 2 days | Fast, safe writes and one ordered log (one writer, no dual writes) |
 | **Debezium (CDC)** | Streams Postgres's change log into the lake | An exact, ordered copy with no second write path to drift |
 | **Apache Iceberg on S3** (AWS Glue catalog) | The permanent lakehouse (Ingress), data files locked for 10 years | Cheap storage, atomic commits, time travel, schema evolution; any engine can read it (DuckDB today, Spark or Snowflake tomorrow) |
@@ -95,7 +97,8 @@ Total running cost: about $15–20 a month, and it stays flat as traffic grows: 
 | Source | Used for |
 |--------|----------|
 | [CTA Bus Tracker API v3](https://www.transitchicago.com/developers/bustracker/) | Live positions (`getvehicles`), route patterns (`getpatterns`), cancellation flags (`getpredictions`), detours (`getdetours`) |
-| [CTA static GTFS](https://www.transitchicago.com/developers/gtfs/) | The current schedule |
+| [CTA Train Tracker API](https://www.transitchicago.com/developers/traintracker/) | Live train positions (`ttpositions`), every station's predictions (`ttarrivals`); line status from the Customer Alerts API |
+| [CTA static GTFS](https://www.transitchicago.com/developers/gtfs/) | The current schedule; the 'L' lines' shapes and stations |
 | [CTA Customer Alerts API](https://www.transitchicago.com/developers/alerts/) | CTA's own announcements (reroutes, disruptions, including those announced ahead), as context for gaps |
 
 ---
@@ -106,9 +109,11 @@ Total running cost: about $15–20 a month, and it stays flat as traffic grows: 
 chitransit/
 ├── src/ghost_ledger/           # The one Python package
 │   ├── bustracker.py           # Bus Tracker v3 client: retries, DST-safe timestamps
+│   ├── traintracker.py         # Train Tracker client (https only; errors by code)
 │   ├── config.py               # dev/prod settings (GHOST_LEDGER_ENV), quota guard
 │   ├── ingest/                 # Poller: sweeps into Postgres, one transaction each
 │   ├── live.py                 # The site's live feed: positions and measured gaps after each sweep
+│   ├── live_trains.py          # The live train feed: trains, station predictions, measured gaps
 │   ├── monitor.py              # Timeliness metrics for CloudWatch alarms
 │   └── cli.py                  # ghost-ledger env | routes | vehicles | poll | monitor | check-db
 ├── infra/                      # Terraform (bootstrap, prod), box setup + deploy.sh; runbook in infra/README.md
@@ -142,6 +147,8 @@ Folders follow the pipeline and appear when their stage starts.
    ```bash
    export CTA_BUS_TRACKER_API_KEY="..."
    ```
+
+   Trains are optional: a Train Tracker key (`CTA_TRAIN_TRACKER_API_KEY`, from CTA's developer site) and `TRAIN_POLL=on` (off in dev: the key's daily quota is shared with prod).
 
    > In dev, environment variables win over `.env`, which wins over the committed `.env.dev`. See `.env.example` for every setting. Never commit keys.
 

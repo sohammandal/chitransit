@@ -1,6 +1,6 @@
 # Prod infrastructure runbook
 
-Prod is one Lightsail box (us-east-2) running Postgres, the poller, the monitor and Debezium
+Prod is one Lightsail box (us-east-2) running Postgres, the poller (buses and trains, a thread each), the monitor and Debezium
 (CDC to Iceberg on S3, Glue catalog), deployed by pulling `ghcr.io/sohammandal/ghost-ledger:main`.
 Everything in AWS is Terraform.
 
@@ -46,7 +46,9 @@ infra/
 9. **GitHub token for the box**: a fine-grained or classic token with `read:packages`, saved to
    `~/.config/ghost-ledger/ghcr.token` (mode 0600). The image is private.
 10. **Secrets + first deploy**: `make prod-secrets CONFIRM=prod`. Writes `/etc/ghost-ledger/prod.env`
-    and `ghcr.env` over SSH (never printed), creates the box's AWS key, and deploys.
+    and `ghcr.env` over SSH (never printed), creates the box's AWS key, and deploys. It takes
+    `CTA_BUS_TRACKER_API_KEY` and, if set, `CTA_TRAIN_TRACKER_API_KEY` (without it, train
+    collection stays off).
 11. **Check**: `make prod-status`, `make prod-logs`, and the `GhostLedger/prod` metrics in CloudWatch.
 12. **Alarm drill**: `make prod-ssh`, then pause the deploy timer first (it would restart the
     poller within 5 minutes, before the alarm fires):

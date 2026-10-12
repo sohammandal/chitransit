@@ -42,6 +42,7 @@ from ghost_ledger.config import Settings
 from ghost_ledger.ingest import sql
 from ghost_ledger.ingest.poller import Call
 from ghost_ledger.l_stations import STATIONS
+from ghost_ledger.live import Schedule
 from ghost_ledger.live_trains import LiveTrains
 from ghost_ledger.traintracker import (
     LINES,
@@ -151,6 +152,7 @@ class TrainPoller:
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Any] = time.sleep,
         wall: Callable[[], float] = time.time,
+        schedule: Callable[[], Schedule | None] = lambda: None,
     ) -> None:
         self.settings = settings
         self.wall = wall
@@ -168,8 +170,9 @@ class TrainPoller:
         self.budget: CallBudget | None = None  # built from the log on the first sweep
         self._paused_until: datetime | None = None  # after CTA's "daily limit" (errCd 102)
         self._stop = threading.Event()  # run()'s: a shutdown ends a sweep's arrivals at once
-        # the live train feed (live_trains.py), beside the buses' vehicles.json
-        self.live = LiveTrains()
+        # the live train feed (live_trains.py), beside the buses' vehicles.json; it judges gaps
+        # by the bus poller's live schedule (one copy in memory: it carries rail platforms too)
+        self.live = LiveTrains(schedule)
         self.live_sink = live.make_sink(settings.live_target)
 
     def _ensure_connection(self) -> psycopg.Connection:
@@ -390,7 +393,11 @@ class TrainPoller:
         return (PUBLISH_PHASE_SECONDS - self.wall()) % interval
 
 
-def start(settings: Settings, stop: threading.Event) -> threading.Thread | None:
+def start(
+    settings: Settings,
+    stop: threading.Event,
+    schedule: Callable[[], Schedule | None] = lambda: None,
+) -> threading.Thread | None:
     """The train poller on its own thread, if it's on and has a key; None otherwise."""
     if not settings.train_poll:
         log.info("train collection off (TRAIN_POLL)")
@@ -402,7 +409,7 @@ def start(settings: Settings, stop: threading.Event) -> threading.Thread | None:
 
     def work() -> None:
         with TrainTrackerClient(key) as client:
-            TrainPoller(settings, client).run(stop)
+            TrainPoller(settings, client, schedule=schedule).run(stop)
 
     thread = threading.Thread(target=work, name="trains", daemon=True)
     thread.start()
