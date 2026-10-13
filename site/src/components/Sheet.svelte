@@ -212,9 +212,13 @@
        touch-action: the drag moves the sheet, not the page. */
     .grab {
       position: relative; display: grid; place-items: center; width: 100%; height: 30px; flex: none;
-      border: 0; background: none; padding: 6px 0 0; cursor: grab; touch-action: none;
+      border: 0; background: var(--surface); padding: 6px 0 0; cursor: grab; touch-action: none;
     }
     .grab i { width: 44px; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--fog) 55%, var(--surface)); }
+    /* Safari can leave the sticky head a few px behind while the list scrolls: a strip of it showed
+       between the handle and the head on every phone sheet (Oct 13). A cap the sheet's colour over
+       the top of the scroll area, outside it so it never lags; clear of the head's text (8 px down) */
+    .grab::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 6px; z-index: 3; background: var(--surface); pointer-events: none; }
     .grab:hover i, .dragging .grab i { background: var(--fog); }
   }
   @media (prefers-reduced-motion: reduce) { .sheet { transition: none; } }
