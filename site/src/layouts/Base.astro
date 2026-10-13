@@ -73,5 +73,12 @@ const site = JSON.stringify({
   <body>
     <slot />
     <div class="status-scrim" aria-hidden="true"></div>
+    <script>
+      // Page views on every page, reports included (lib/count.ts: cookieless, our own beacon, the
+      // real site only). The live map counts its own moves too: the counter skips the page it has
+      // just counted, so its first view counts once
+      import { countView } from "../lib/count";
+      countView();
+    </script>
   </body>
 </html>
