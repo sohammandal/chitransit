@@ -82,7 +82,12 @@ test("report: on a phone a tap shows a time chart's card, a sideways drag moves 
   const touch = (type: "touchStart" | "touchMove" | "touchEnd", x: number) =>
     cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x, y: box.y + box.height / 2, id: 1 }] });
   await touch("touchStart", box.x + box.width * 0.3);
-  for (let k = 1; k <= 8; k++) await touch("touchMove", box.x + box.width * (0.3 + (0.5 * k) / 8));
+  // paced like a finger (~20 ms a move): sent at once, a slower runner merged them and the card
+  // stopped short (CI, Oct 13)
+  for (let k = 1; k <= 8; k++) {
+    await touch("touchMove", box.x + box.width * (0.3 + (0.5 * k) / 8));
+    await page.waitForTimeout(20);
+  }
   await touch("touchEnd", 0);
   const when = card(chart).locator(".when");
   await expect.poll(async () => binStart((await when.textContent())!)).toBeGreaterThan(before + 6 * 60); // half the chart on
@@ -230,7 +235,10 @@ test("report: icons, dots and bars sit on their text's centre, not the line box'
   await page.getByRole("link", { name: "Open source", exact: true }).hover(); // the footer's pill
   await page.locator("#route-pick").click(); // its list open: the picked row's tick
   await expect(page.locator("#route-list svg")).toBeVisible();
-  const off = await page.evaluate(async () => {
+  // within 1 px where the nudges were measured (macOS); Linux sets Overpass up to ~1.2 px
+  // differently (CI, Oct 13), so there 1.5 px: still well short of the 2 px misses this catches
+  const tol = process.platform === "darwin" ? 1 : 1.5;
+  const off = await page.evaluate(async (tol) => {
     await document.fonts.ready;
     const ctx = document.createElement("canvas").getContext("2d")!;
     const capMid = (el: Element) => {
@@ -266,8 +274,8 @@ test("report: icons, dots and bars sit on their text's centre, not the line box'
       out.push(["card dot", li.getBoundingClientRect().top + parseFloat(getComputedStyle(li, "::before").top) + 5 - capMid(li.querySelector("time")!)]);
     for (const li of document.querySelectorAll(".bars li"))
       out.push(["bar", mid(li.querySelector(".bar")!) - capMid(li.querySelector(".name")!)]);
-    return out.filter(([, d]) => Math.abs(d) > 1).map(([k, d]) => `${k}: ${d.toFixed(2)} px`);
-  });
+    return out.filter(([, d]) => Math.abs(d) > tol).map(([k, d]) => `${k}: ${d.toFixed(2)} px`);
+  }, tol);
   expect(off).toEqual([]);
   await reportClean(page, errors);
 });
