@@ -145,9 +145,11 @@ jobs:
 
       - name: Wait for prod to serve this commit
         run: |
-          # Pages are cached for up to 60 s at the edge.
+          # Pages are cached for up to 60 s at the edge: wait for the page the smoke test loads,
+          # not a cache-busted copy (that one was new at once while / still served the old build
+          # for the smoke test, which failed and rolled back; Oct 13)
           for i in $(seq 1 36); do
-            if curl -s "$URL/?v=$GITHUB_SHA" | grep -q "name=\"build\" content=\"$GITHUB_SHA\""; then
+            if curl -s "$URL/" | grep -q "name=\"build\" content=\"$GITHUB_SHA\""; then
               echo "live after ~$((i * 10)) s"; exit 0
             fi
             sleep 10
