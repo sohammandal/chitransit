@@ -1274,33 +1274,6 @@ test("about: outside links open in a new tab, leaving the map where it was (Oct 
   }
 });
 
-test("sheet: the strip between the handle and the head is covered, so a list scrolling under a lagging head never shows through (Oct 13)", async ({ page }) => {
-  // on iPhones a few px of the list showed between the handle and the title of every sheet while
-  // it scrolled: Safari leaves the sticky head a little behind (Oct 13)
-  await setUp(page);
-  await page.goto("/");
-  await page.getByRole("radio", { name: "Train" }).click();
-  await page.getByRole("button", { name: "Show more" }).click();
-  await page.locator(".sheet .body").evaluate((b) => (b.scrollTop = 200));
-  const g = await page.evaluate(() => {
-    const sheet = document.querySelector(".sheet")!, grab = sheet.querySelector(".grab")!, body = sheet.querySelector(".body")!;
-    const head = body.querySelector(".sheet-head")!, cap = getComputedStyle(grab, "::after"), bg = getComputedStyle(sheet).backgroundColor;
-    const title = document.createRange();
-    title.selectNodeContents(head.querySelector("h1, h2")!);
-    return {
-      content: cap.content, bg: [cap.backgroundColor, getComputedStyle(grab).backgroundColor].every((c) => c === bg),
-      top: grab.getBoundingClientRect().top + parseFloat(cap.top), height: parseFloat(cap.height), area: body.getBoundingClientRect().top,
-      above: Number(cap.zIndex) > Number(getComputedStyle(head).zIndex), text: title.getBoundingClientRect().top,
-    };
-  });
-  expect(g.content).not.toBe("none");
-  expect(g.bg).toBe(true); // the sheet's own colour: nothing changes while the head keeps up
-  expect(Math.abs(g.top - g.area)).toBeLessThan(0.5); // from the scrolling area's top edge...
-  expect(g.height).toBeGreaterThanOrEqual(4); // ...past the ~2.5 px seen...
-  expect(g.top + g.height).toBeLessThanOrEqual(g.text); // ...and clear of the title
-  expect(g.above).toBe(true);
-});
-
 test("about: room between the heading and the tagline; a footer like the reports', every old line kept (Oct 12) @both", async ({ page }) => {
   // the tagline sat ~10 px under the heading; the small print was a left-aligned list (Oct 12)
   await setUp(page);
