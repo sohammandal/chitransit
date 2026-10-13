@@ -76,6 +76,30 @@
     return () => { ro.disconnect(); narrow.removeEventListener("change", measure); window.removeEventListener("resize", measure); };
   });
 
+  // Phones: the head sits outside the scrolling list, under the handle (CSS below): the list
+  // starts below it, by its height (+ the 14 px gap it had in the flow). Re-found when the view
+  // changes, re-measured when it does
+  $effect(() => {
+    let head: HTMLElement | null = null;
+    const pad = () => {
+      body.style.setProperty("--head-pad", head ? `${head.getBoundingClientRect().height + 14}px` : ""); // exact: offsetHeight rounds
+      if (phone) fullPx = heights().full;
+    };
+    const ro = new ResizeObserver(pad);
+    const find = () => {
+      const h = content.querySelector<HTMLElement>(":scope > .sheet-head");
+      if (h === head) return;
+      if (head) ro.unobserve(head);
+      head = h;
+      if (head) ro.observe(head);
+      pad();
+    };
+    find();
+    const mo = new MutationObserver(find);
+    mo.observe(content, { childList: true });
+    return () => { ro.disconnect(); mo.disconnect(); };
+  });
+
   // Phones: the map's buttons ride just above the sheet (MapView reads --sheet), following
   // the finger while dragging (html[data-sheet-drag] turns their easing off).
   $effect(() => {
@@ -206,8 +230,13 @@
     /* Full: as tall as its content (the height is set inline), never under the top bar. */
     .full { min-height: 50dvh; max-height: calc(100dvh - var(--top-h, 180px) - 16px - var(--safe-top)); }
     .dragging { transition: none; }
-    .body { padding-top: 10px; padding-bottom: calc(18px + var(--safe-bottom)); }
-    .content > :global(.sheet-head) { top: -10px; margin-top: -10px; padding-top: 10px; touch-action: none; }
+    .body { padding-top: var(--head-pad, 10px); padding-bottom: calc(18px + var(--safe-bottom)); }
+    /* The head out of the scrolling list, held by the sheet under the handle: on iPhones (WebKit)
+       a sticky head trailed the list while it scrolled, and a strip of the list showed between
+       the handle and the title on every sheet (Oct 13). Not clipped or scrolled by .body: its
+       containing block is the sheet */
+    .content > :global(.sheet-head) { position: absolute; top: 0; left: 0; right: 0; margin: 0; padding: 10px 16px 0; box-shadow: none; touch-action: none; }
+    .grab + .body > .content > :global(.sheet-head) { top: 30px; }
     /* A 30 px handle band across the sheet, and the head below it, both resize the sheet.
        touch-action: the drag moves the sheet, not the page. */
     .grab {

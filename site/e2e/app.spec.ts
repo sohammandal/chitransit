@@ -1274,6 +1274,25 @@ test("about: outside links open in a new tab, leaving the map where it was (Oct 
   }
 });
 
+test("sheet: on a phone the head is held by the sheet under the handle, outside the scrolling list, so nothing scrolls between them (Oct 13)", async ({ page }) => {
+  // iPhones (WebKit: Safari and Chrome alike) let a sticky head trail its list while it scrolled:
+  // a strip of the list showed between the handle and the title on every sheet (Oct 13)
+  await setUp(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Show more" }).click();
+  const at = () => page.evaluate(() => {
+    const sheet = document.querySelector(".sheet")!, head = sheet.querySelector<HTMLElement>(".body .sheet-head")!;
+    const [h, g, first] = [head, sheet.querySelector(".grab")!, head.nextElementSibling!].map((e) => e.getBoundingClientRect());
+    return { held: head.offsetParent === sheet && getComputedStyle(head).position === "absolute", gap: h.top - g.bottom, below: first.top - h.bottom };
+  });
+  const rest = await at();
+  expect(rest.held).toBe(true); // not in the list's flow, so the list can't move it
+  expect(Math.abs(rest.gap)).toBeLessThan(0.01); // right under the handle
+  expect(rest.below).toBeCloseTo(14, 1); // the list starts where it did with the head in its flow
+  await page.locator(".sheet .body").evaluate((b) => (b.scrollTop = 200));
+  expect(Math.abs((await at()).gap)).toBeLessThan(0.01);
+});
+
 test("about: room between the heading and the tagline; a footer like the reports', every old line kept (Oct 12) @both", async ({ page }) => {
   // the tagline sat ~10 px under the heading; the small print was a left-aligned list (Oct 12)
   await setUp(page);
