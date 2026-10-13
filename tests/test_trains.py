@@ -224,7 +224,9 @@ def test_a_train_sweep_keeps_every_reply_raw_in_one_transaction(db):
 
 def test_a_sweeps_calls_reach_the_live_files_and_a_failing_sink_never_raises(tmp_path):
     settings = get_settings({"TRAIN_POLL": "on", "LIVE_TARGET": str(tmp_path / "vehicles.json")})
-    poller = TrainPoller(settings, client=None, connect=lambda: None)  # no calls, no database
+    # no calls, no database; the test's own clock (DAY, 3 PM): on the wall clock its 3:02 PM arrival
+    # went stale at 3:02 PM on Oct 12
+    poller = TrainPoller(settings, client=None, connect=lambda: None, now=lambda: DAY)
 
     def call(endpoint: str, params: dict, body: dict):
         from ghost_ledger.bustracker import ApiResult
