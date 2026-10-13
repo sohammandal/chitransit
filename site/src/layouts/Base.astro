@@ -6,8 +6,17 @@ import "../styles/tokens.css";
 interface Props {
   title: string;
   description: string;
+  /** A link preview's picture and kind: the app's own by default; an article brings its own. */
+  image?: { url: string; width: number; height: number; alt: string };
+  type?: "website" | "article";
 }
-const { title, description } = Astro.props;
+const APP_IMAGE = {
+  url: "https://chitransit.fyi/og.jpg",
+  width: 2400,
+  height: 1260,
+  alt: "The 9 Ashland route view: buses together in amber and long waits in red, beside the live map",
+};
+const { title, description, image = APP_IMAGE, type = "website" } = Astro.props;
 // One address per page for search engines and link previews (www serves the same site).
 const canonical = new URL(Astro.url.pathname, Astro.site).href;
 // What the site is, for search engines (schema.org): on the home page only.
@@ -31,15 +40,15 @@ const site = JSON.stringify({
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="description" content={description} />
     <link rel="canonical" href={canonical} />
-    <meta property="og:type" content="website" />
+    <meta property="og:type" content={type} />
     <meta property="og:site_name" content="chitransit" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
-    <meta property="og:image" content="https://chitransit.fyi/og.jpg" />
-    <meta property="og:image:width" content="2400" />
-    <meta property="og:image:height" content="1260" />
-    <meta property="og:image:alt" content="The 9 Ashland route view: buses together in amber and long waits in red, beside the live map" />
+    <meta property="og:image" content={image.url} />
+    <meta property="og:image:width" content={String(image.width)} />
+    <meta property="og:image:height" content={String(image.height)} />
+    <meta property="og:image:alt" content={image.alt} />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="theme-color" content="#f2f4f3" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#12181d" media="(prefers-color-scheme: dark)" />

@@ -12,6 +12,7 @@
   import * as data from "../lib/data";
   import { dashedStretches, withoutSpurs } from "../lib/project";
   import { routeStops } from "../lib/stops";
+  import { spread } from "../lib/trains";
   import type { Camera, Lines, Mode, Pattern, Stop, Train, Vehicle } from "../lib/types";
 
   maplibregl.setWorkerUrl(workerUrl);
@@ -136,6 +137,16 @@
     g.fillStyle = ink; g.lineJoin = "round"; g.strokeStyle = ink; g.lineWidth = 1; g.fill(); g.stroke();
     return g.getImageData(0, 0, s, s);
   }
+  // The picked train's ring (was a circle layer: radius 14 at icon-size 1, as the circle at zoom 13)
+  function ringIcon(ink: string) {
+    const r = 3, s = 36 * r, c = document.createElement("canvas");
+    c.width = c.height = s;
+    const g = c.getContext("2d")!;
+    g.translate(s / 2, s / 2);
+    g.scale(r, r);
+    g.beginPath(); g.arc(0, 0, 14, 0, Math.PI * 2); g.strokeStyle = ink; g.lineWidth = 2.5; g.stroke();
+    return g.getImageData(0, 0, s, s);
+  }
   // Our own names: the basemap sprite already has a "bus" image.
   function setImage(id: string, img: ImageData) {
     if (map!.hasImage(id)) map!.removeImage(id); // colours change with the light/dark theme
@@ -199,14 +210,18 @@
     trainImages(color("--ring"));
     map.addSource("trains", { type: "geojson", data: empty });
     const trainSize: maplibregl.ExpressionSpecification = ["interpolate", ["linear"], ["zoom"], 9, 0.5, 12, 0.8, ARROW_ZOOM, 1, 16, 1.2];
+    // trains at one spot stand apart (spread): `off` in the screen's frame for the square, which
+    // never turns; `aoff` in the arrow's own (turned to the heading: up is ahead)
     map.addLayer({ id: "train-dot", type: "symbol", source: "trains",
-      layout: { "icon-image": ["concat", "gl-train-", ["get", "rt"]], "icon-size": trainSize,
+      layout: { "icon-image": ["concat", "gl-train-", ["get", "rt"]], "icon-size": trainSize, "icon-offset": ["get", "off"],
         "icon-allow-overlap": true, "icon-ignore-placement": true } });
     map.addLayer({ id: "train-arrow", type: "symbol", source: "trains", minzoom: ARROW_ZOOM, filter: ["has", "hdg"],
-      layout: { "icon-image": ["concat", "gl-arrow-", ["get", "rt"]], "icon-size": trainSize, "icon-rotate": ["get", "hdg"],
+      layout: { "icon-image": ["concat", "gl-arrow-", ["get", "rt"]], "icon-size": trainSize, "icon-rotate": ["get", "hdg"], "icon-offset": ["get", "aoff"],
         "icon-rotation-alignment": "map", "icon-allow-overlap": true, "icon-ignore-placement": true } });
-    map.addLayer({ id: "train-selected", type: "circle", source: "trains", filter: ["==", ["get", "key"], ""],
-      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 9, 9, 13, 14, 16, 17], "circle-color": "transparent", "circle-stroke-color": ink, "circle-stroke-width": 2.5 } });
+    // the picked train's ring: an icon, so it moves with its train's square
+    map.addLayer({ id: "train-selected", type: "symbol", source: "trains", filter: ["==", ["get", "key"], ""],
+      layout: { "icon-image": "gl-train-ring", "icon-size": trainSize, "icon-offset": ["get", "off"],
+        "icon-allow-overlap": true, "icon-ignore-placement": true } });
     ready = true;
     draw(1);
     drawTrains(1);
@@ -214,6 +229,7 @@
   // a train's ring, white on either map (on a dark one the map's own colour hid it): its square
   // stands out from its own line, which is the same colour (rider, Oct 11)
   function trainImages(ring: string) {
+    setImage("gl-train-ring", ringIcon(color("--asphalt")));
     for (const [rt, l] of Object.entries(lines?.lines ?? {})) {
       setImage(`gl-train-${rt}`, trainIcon(l.color, ring));
       setImage(`gl-arrow-${rt}`, arrowIcon(l.text));
@@ -256,9 +272,14 @@
   }
   function drawTrains(k: number) {
     const features: GeoJSON.Feature[] = [];
-    for (const [key, g] of trainsAt) {
-      features.push({ type: "Feature", geometry: { type: "Point", coordinates: along(g, k) },
-        properties: { key, rt: g.x.rt, ...(g.x.hdg != null ? { hdg: g.x.hdg } : {}) } });
+    const at = [...trainsAt].map(([key, g]) => ({ key, g, p: along(g, k) }));
+    const apart = spread(at.map(({ key, g, p }) => ({ key, lon: p[0], lat: p[1], hdg: g.x.hdg ?? undefined })));
+    for (const { key, g, p } of at) {
+      // [right, ahead] turned from the heading into the screen's x and y (the map never rotates)
+      const [right, ahead] = apart.get(key) ?? [0, 0], h = ((g.x.hdg ?? 0) * Math.PI) / 180;
+      const off = [right * Math.cos(h) + ahead * Math.sin(h), right * Math.sin(h) - ahead * Math.cos(h)];
+      features.push({ type: "Feature", geometry: { type: "Point", coordinates: p },
+        properties: { key, rt: g.x.rt, off, aoff: [right, -ahead], ...(g.x.hdg != null ? { hdg: g.x.hdg } : {}) } });
     }
     source("trains")?.setData({ type: "FeatureCollection", features });
   }

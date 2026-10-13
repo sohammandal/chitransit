@@ -16,6 +16,11 @@ test("live site: new build, live feed, nightly data, a route page", async ({ pag
   for (const f of ["routes.json", "headways.json", "report.json"]) {
     expect((await request.get(`/data/v1/${f}`)).ok(), f).toBe(true);
   }
+  // the Marathon retro, its preview picture and the data its visuals fetch (published apart, Oct 12)
+  for (const f of ["/reports/marathon-2026/", "/reports/marathon-2026/og.jpg",
+    ...["stops", "course", "series", "timeline", "reroutes", "crossings"].map((n) => `/data/reports/marathon-2026/${n}.json`)]) {
+    expect((await request.get(f)).ok(), f).toBe(true);
+  }
   // every published file made it, hidden folders included (Oct 4: .well-known didn't)
   for (const f of ["/.well-known/security.txt", "/manifest.json", "/og.jpg", "/sitemap-index.xml", "/about/"]) {
     expect((await request.get(f)).ok(), f).toBe(true);

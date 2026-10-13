@@ -115,6 +115,13 @@ jobs:
               echo "::error::$URL/data/v1/$f returned $code: run the nightly first (data, then code)"; exit 1
             fi
           done
+          # the Marathon retro's files: published once by transform/reports/marathon_2026.py --publish
+          for f in stops course series timeline reroutes crossings; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$URL/data/reports/marathon-2026/$f.json")
+            if [ "$code" != 200 ]; then
+              echo "::error::$URL/data/reports/marathon-2026/$f.json returned $code: publish the report's data first"; exit 1
+            fi
+          done
 
       - uses: aws-actions/configure-aws-credentials@v6
         with:

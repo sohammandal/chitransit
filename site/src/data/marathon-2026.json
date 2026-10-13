@@ -1,0 +1,633 @@
+{
+ "alerts_window": [
+  "6:30 AM",
+  "4:00 PM"
+ ],
+ "back_after_flag_median_min": 29,
+ "buses_change": -3,
+ "buses_noise": 1.0,
+ "buses_pct": 97.0,
+ "cant_tell_stops": 52,
+ "clocks": {
+  "alerts": [
+   390,
+   960
+  ],
+  "city_reopen": [
+   630,
+   1080
+  ],
+  "detour_records": [
+   390,
+   1080
+  ],
+  "flags": [
+   367,
+   1063
+  ],
+  "stops": [
+   371,
+   1073
+  ]
+ },
+ "crossings": {
+  "dearborn": {
+   "last": "6:02 AM",
+   "next": "3:33 PM",
+   "normal_crossings": [
+    714,
+    824
+   ]
+  },
+  "loop_last": {
+   "at": "6:04 AM",
+   "rt": "56"
+  },
+  "reopen_lag_median_min": 149.5,
+  "reopen_lag_range_min": [
+   46,
+   273
+  ],
+  "reopen_lag_streets": 18,
+  "reopen_lags": [
+   {
+    "first_bus": "2:16 PM",
+    "lag": 46,
+    "planned": "1:30 PM",
+    "street": "Wells St"
+   },
+   {
+    "first_bus": "11:34 AM",
+    "lag": 64,
+    "planned": "10:30 AM",
+    "street": "Columbus Dr and Grand Ave"
+   },
+   {
+    "first_bus": "1:44 PM",
+    "lag": 75,
+    "planned": "12:30 PM",
+    "street": "Broadway, Sheridan to Briar"
+   },
+   {
+    "first_bus": "5:17 PM",
+    "lag": 78,
+    "planned": "4:00 PM",
+    "street": "Michigan Ave, 26th to 35th"
+   },
+   {
+    "first_bus": "5:51 PM",
+    "lag": 81,
+    "planned": "4:30 PM",
+    "street": "Michigan Ave, 31st to Roosevelt"
+   },
+   {
+    "first_bus": "5:08 PM",
+    "lag": 83,
+    "planned": "3:45 PM",
+    "street": "Wentworth Ave and 26th St"
+   },
+   {
+    "first_bus": "2:52 PM",
+    "lag": 97,
+    "planned": "1:15 PM",
+    "street": "Sedgwick St"
+   },
+   {
+    "first_bus": "2:40 PM",
+    "lag": 116,
+    "planned": "12:45 PM",
+    "street": "Broadway and Clark St"
+   },
+   {
+    "first_bus": "5:55 PM",
+    "lag": 146,
+    "planned": "3:30 PM",
+    "street": "Cermak Rd"
+   },
+   {
+    "first_bus": "5:48 PM",
+    "lag": 153,
+    "planned": "3:15 PM",
+    "street": "18th St and Halsted St"
+   },
+   {
+    "first_bus": "4:32 PM",
+    "lag": 153,
+    "planned": "2:00 PM",
+    "street": "Adams St"
+   },
+   {
+    "first_bus": "3:37 PM",
+    "lag": 157,
+    "planned": "1:00 PM",
+    "street": "Clark St, Fullerton to Webster"
+   },
+   {
+    "first_bus": "5:53 PM",
+    "lag": 174,
+    "planned": "3:00 PM",
+    "street": "Loomis St"
+   },
+   {
+    "first_bus": "5:37 PM",
+    "lag": 187,
+    "planned": "2:30 PM",
+    "street": "Jackson Blvd and Halsted St"
+   },
+   {
+    "first_bus": "5:59 PM",
+    "lag": 195,
+    "planned": "2:45 PM",
+    "street": "Taylor St"
+   },
+   {
+    "first_bus": "5:09 PM",
+    "lag": 205,
+    "planned": "1:45 PM",
+    "street": "Wacker Dr"
+   },
+   {
+    "first_bus": "2:57 PM",
+    "lag": 208,
+    "planned": "11:30 AM",
+    "street": "LaSalle St"
+   },
+   {
+    "first_bus": "3:33 PM",
+    "lag": 273,
+    "planned": "11:00 AM",
+    "street": "Dearborn St"
+   }
+  ],
+  "street_6_to_14": [
+   {
+    "at": "6:00 AM",
+    "mile": 2.6,
+    "rt": "60"
+   },
+   {
+    "at": "6:00 AM",
+    "mile": 4.5,
+    "rt": "72"
+   },
+   {
+    "at": "6:01 AM",
+    "mile": 17.0,
+    "rt": "8"
+   },
+   {
+    "at": "6:01 AM",
+    "mile": 12.1,
+    "rt": "66"
+   },
+   {
+    "at": "6:01 AM",
+    "mile": 1.8,
+    "rt": "60"
+   },
+   {
+    "at": "6:01 AM",
+    "mile": 3.5,
+    "rt": "66"
+   },
+   {
+    "at": "6:01 AM",
+    "mile": 13.9,
+    "rt": "8"
+   },
+   {
+    "at": "6:02 AM",
+    "mile": 3.5,
+    "rt": "66"
+   },
+   {
+    "at": "6:02 AM",
+    "mile": 1.9,
+    "rt": "56"
+   },
+   {
+    "at": "6:02 AM",
+    "mile": 16.0,
+    "rt": "9"
+   },
+   {
+    "at": "6:02 AM",
+    "mile": 20.6,
+    "rt": "8"
+   },
+   {
+    "at": "6:02 AM",
+    "mile": 11.0,
+    "rt": "72"
+   },
+   {
+    "at": "6:03 AM",
+    "mile": 14.9,
+    "rt": "9"
+   },
+   {
+    "at": "6:03 AM",
+    "mile": 2.5,
+    "rt": "56"
+   },
+   {
+    "at": "6:04 AM",
+    "mile": 13.2,
+    "rt": "56"
+   },
+   {
+    "at": "6:11 AM",
+    "mile": 23.3,
+    "rt": "35"
+   },
+   {
+    "at": "6:15 AM",
+    "mile": 11.6,
+    "rt": "70"
+   },
+   {
+    "at": "6:15 AM",
+    "mile": 7.7,
+    "rt": "146"
+   },
+   {
+    "at": "6:56 AM",
+    "mile": 4.0,
+    "rt": "70"
+   },
+   {
+    "at": "7:36 AM",
+    "mile": 0.9,
+    "rt": "147"
+   },
+   {
+    "at": "11:34 AM",
+    "mile": 0.9,
+    "rt": "151"
+   },
+   {
+    "at": "11:47 AM",
+    "mile": 6.9,
+    "rt": "146"
+   },
+   {
+    "at": "11:55 AM",
+    "mile": 0.9,
+    "rt": "151"
+   },
+   {
+    "at": "12:24 PM",
+    "mile": 6.9,
+    "rt": "146"
+   },
+   {
+    "at": "1:44 PM",
+    "mile": 8.3,
+    "rt": "152"
+   },
+   {
+    "at": "1:49 PM",
+    "mile": 8.3,
+    "rt": "152"
+   },
+   {
+    "at": "1:56 PM",
+    "mile": 7.7,
+    "rt": "152"
+   },
+   {
+    "at": "1:58 PM",
+    "mile": 7.4,
+    "rt": "152"
+   }
+  ],
+  "street_7_to_1130": {
+   "2026-09-27": 2187,
+   "2026-10-04": 2328,
+   "2026-10-11": 1
+  },
+  "under": {
+   "I-290 under Halsted St": 157,
+   "I-55 under Michigan Ave": 429,
+   "I-90/94 under 26th St": 1
+  },
+  "under_normal": 0
+ },
+ "cta_plan": {
+  "kept": 3400,
+  "kept_bus": 3392,
+  "skipped": 1073,
+  "skipped_no_bus": 1058
+ },
+ "cut_back_by_4pm": 224,
+ "cut_back_by_4pm_pct": 24,
+ "cut_back_median": "5:53 PM",
+ "cut_last_back": "9:10 PM",
+ "cut_never": 6,
+ "cut_never_routes": [
+  "10"
+ ],
+ "cut_route_stops": 937,
+ "cut_stops": 646,
+ "dark_median_race": 616,
+ "dark_noise_max": 150,
+ "dark_noise_median_race": 100,
+ "dark_peak": 657,
+ "dark_peak_at": [
+  "12:10 PM",
+  "12:30 PM"
+ ],
+ "dark_peak_offmap": 37,
+ "dark_peak_offmap_routes": {
+  "169,8": 2,
+  "34": 1,
+  "50": 1,
+  "8": 33
+ },
+ "dark_peak_since_7am_pct": 89,
+ "dark_ratio_min_race": 4.3,
+ "dark_stop_hours": {
+  "marathon": 6951,
+  "oct4": 929,
+  "sep27": 989
+ },
+ "dark_stops": 740,
+ "dark_stops_by_day": {
+  "marathon": 740,
+  "oct4": 189,
+  "sep27": 269
+ },
+ "detour_window": [
+  "6:30 AM",
+  "6:00 PM"
+ ],
+ "examples": [
+  {
+   "last": "5:13 AM",
+   "next": "5:47 PM",
+   "normal_buses": [
+    86,
+    103
+   ],
+   "routes": [
+    "10",
+    "146",
+    "29"
+   ],
+   "stop": "State & Randolph"
+  },
+  {
+   "last": "5:26 AM",
+   "next": "7:04 PM",
+   "normal_buses": [
+    71,
+    64
+   ],
+   "routes": [
+    "60"
+   ],
+   "stop": "Racine & Taylor"
+  }
+ ],
+ "flagged_at_alert_end": 22,
+ "flags_off_first": "1:40 PM",
+ "flags_off_last": "5:43 PM",
+ "flags_on": [
+  [
+   "6:07 AM",
+   [
+    "10"
+   ]
+  ],
+  [
+   "6:52 AM",
+   [
+    "12",
+    "124",
+    "126"
+   ]
+  ],
+  [
+   "6:55 AM",
+   [
+    "146"
+   ]
+  ],
+  [
+   "6:57 AM",
+   [
+    "147"
+   ]
+  ],
+  [
+   "6:59 AM",
+   [
+    "151",
+    "152"
+   ]
+  ],
+  [
+   "7:01 AM",
+   [
+    "18",
+    "20",
+    "21"
+   ]
+  ],
+  [
+   "7:04 AM",
+   [
+    "22",
+    "29"
+   ]
+  ],
+  [
+   "7:06 AM",
+   [
+    "3",
+    "35"
+   ]
+  ],
+  [
+   "7:08 AM",
+   [
+    "36",
+    "4",
+    "50"
+   ]
+  ],
+  [
+   "7:11 AM",
+   [
+    "56",
+    "6"
+   ]
+  ],
+  [
+   "7:13 AM",
+   [
+    "60"
+   ]
+  ],
+  [
+   "7:15 AM",
+   [
+    "62"
+   ]
+  ],
+  [
+   "7:18 AM",
+   [
+    "65",
+    "66",
+    "70"
+   ]
+  ],
+  [
+   "7:20 AM",
+   [
+    "72",
+    "73",
+    "74"
+   ]
+  ],
+  [
+   "7:22 AM",
+   [
+    "76"
+   ]
+  ],
+  [
+   "7:24 AM",
+   [
+    "8",
+    "80"
+   ]
+  ],
+  [
+   "7:26 AM",
+   [
+    "9"
+   ]
+  ],
+  [
+   "7:29 AM",
+   [
+    "J14"
+   ]
+  ],
+  [
+   "9:07 AM",
+   [
+    "77"
+   ]
+  ]
+ ],
+ "flags_still_on": [
+  "10",
+  "146",
+  "6",
+  "J14"
+ ],
+ "flags_text_order": true,
+ "hour_before_flag": {
+  "2026-09-27": 2326,
+  "2026-10-04": 2411,
+  "2026-10-11": 105
+ },
+ "load_data_reports": [
+  0,
+  3854631
+ ],
+ "loop_1240": {
+  "dark": 90,
+  "served_normally": 91
+ },
+ "navy_pier": {
+  "2026-09-27": {
+   "from": "5:31 AM",
+   "minutes": 16,
+   "to": "5:47 AM"
+  },
+  "2026-10-04": {
+   "from": "5:31 AM",
+   "minutes": 15,
+   "to": "5:47 AM"
+  },
+  "2026-10-11": {
+   "from": "6:51 AM",
+   "minutes": 532,
+   "to": "3:42 PM"
+  }
+ },
+ "no_bus_730_to_3": {
+  "marathon": 470,
+  "oct4": 19,
+  "sep27": 0
+ },
+ "ridership": {
+  "from": "2026-02-01",
+  "rerouted": 208000,
+  "share_pct": 58,
+  "sundays": 26,
+  "to": "2026-07-26"
+ },
+ "routes": 34,
+ "schedule": {
+  "bus_trips": {
+   "2026-09-27": 12094,
+   "2026-10-04": 12094,
+   "2026-10-11": 12094
+  },
+  "same_trips": true
+ },
+ "trips_on_reroutes": {
+  "2026-09-27": 2.4,
+  "2026-10-04": 3.4,
+  "2026-10-11": 73.3
+ },
+ "trips_run": {
+  "2026-09-27": 3338,
+  "2026-10-04": 3348,
+  "2026-10-11": 3311
+ },
+ "unseen_share": {
+  "2026-09-27": 4.3,
+  "2026-10-04": 3.3,
+  "2026-10-11": 8.9
+ },
+ "unseen_share_regular": {
+  "2026-09-27": 4.3,
+  "2026-10-04": 3.2,
+  "2026-10-11": 2.6
+ },
+ "unseen_share_reroute": {
+  "2026-09-27": 0.0,
+  "2026-10-04": 0.1,
+  "2026-10-11": 6.3
+ },
+ "visits_change": -24,
+ "visits_noise": 0.7,
+ "visits_pct": 76.4,
+ "waiting_hours": 282,
+ "waiting_normal": 0.8,
+ "waiting_places": 12,
+ "waiting_top": {
+  "hours": 82,
+  "name": "Dearborn & Ontario",
+  "routes": [
+   "22",
+   "36",
+   "146",
+   "147",
+   "151"
+  ]
+ },
+ "waits": {
+  "2026-09-27": 9.46,
+  "2026-10-04": 9.72,
+  "2026-10-11": 9.69,
+  "physical_stops": 2874,
+  "stops": 2968
+ }
+}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Sep from "./Sep.svelte";
+  import Mark from "./Mark.svelte";
   // onClose: the app's panel; without it, the text alone (pages/about.astro's copy in the HTML)
   let { onClose }: { onClose?: () => void } = $props();
 </script>
@@ -24,13 +24,18 @@
   <dt>Live</dt>
   <dd>Buses every 30 seconds, trains every 20 (placed by CTA's track sensors, not GPS). A position can be up to a minute old</dd>
 </dl>
-<div class="fine">
-  <p>Data provided by Chicago Transit Authority</p>
+<!-- as the reports' footer: the name, where else to go, then the small print -->
+<footer class="fine">
+  <span class="brand"><Mark /><span><span class="chi">chi</span>transit<b>.fyi</b></span></span>
+  <nav aria-label="More from chitransit.fyi">
+    <a href="/reports/marathon-2026/">Marathon report</a>
+    <a target="_blank" rel="noopener" href="https://github.com/sohammandal/chitransit">Open source</a>
+    <a target="_blank" rel="noopener" href="https://github.com/sohammandal/chitransit/issues">Feedback</a>
+  </nav>
+  <p>Data provided by Chicago Transit Authority. Official info: <a target="_blank" rel="noopener" href="https://www.transitchicago.com">transitchicago.com</a></p>
   <p>chitransit.fyi is an independent project. It is not affiliated with, made by, or endorsed by the CTA. Figures are our own estimates, and data may be delayed or incomplete</p>
-  <p>Official info: <a target="_blank" rel="noopener" href="https://www.transitchicago.com">transitchicago.com</a></p>
   <p>Privacy: no cookies, accounts or ads. Page views are counted without storing who you are, and "locate me" stays on your device</p>
-  <p>Feedback or a problem? <a target="_blank" rel="noopener" href="https://github.com/sohammandal/chitransit/issues">Open an issue</a><Sep /><a target="_blank" rel="noopener" href="https://github.com/sohammandal/chitransit">Source code</a></p>
-</div>
+</footer>
 
 <style>
   header { display: flex; align-items: center; gap: 10px; }
@@ -42,7 +47,14 @@
   dt { font-weight: 700; }
   dt:not(:first-child) { margin-top: 12px; }
   dd { margin: 0; color: var(--fog); }
-  .what { margin: -4px 0 0; font-size: 16px; line-height: 1.4; }
-  .fine { border-top: 1px solid var(--rule); padding-top: 12px; display: grid; gap: 6px; font-size: 13px; color: var(--fog); line-height: 1.45; }
+  .what { margin: 6px 0 0; font-size: 16px; line-height: 1.4; }
+  .fine { border-top: 1px solid var(--rule); padding-top: 18px; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; font-size: 13px; color: var(--fog); line-height: 1.45; }
   .fine p { margin: 0; }
+  .brand { display: flex; align-items: center; gap: 8px; color: var(--asphalt); font-size: 18px; font-weight: 800; letter-spacing: -0.01em; }
+  .brand b { font-weight: 400; color: var(--fog); }
+  .chi { color: var(--flag-blue); }
+  /* a pill on hover with room around the text, as the reports' footer */
+  nav { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 2px; margin-bottom: 2px; }
+  nav a { padding: 12.75px 12px 9.25px; /* text centred: Overpass sits high */ border-radius: 999px; color: var(--asphalt); font-weight: 600; font-size: 14px; text-decoration: none; }
+  nav a:hover { background: var(--surface2); }
 </style>

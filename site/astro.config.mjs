@@ -98,6 +98,13 @@ export default defineConfig({
   // to try a change to those files before the nightly publishes it.
   vite: {
     worker: { format: "es" }, // MapLibre starts its worker with type: "module"
+    // MapLibre is shared by the app and the reports' maps: a chunk of its own, named for what it is
+    // (left to Rollup it took the worker's name, and scripts/budget.mjs counted it as the worker, Oct 12)
+    build: {
+      rollupOptions: {
+        output: { manualChunks: (id) => (/node_modules\/maplibre-gl\//.test(id) && !/worker/.test(id) ? "maplibre" : undefined) },
+      },
+    },
     plugins: [liveFeedInDev()],
     server: {
       proxy: process.env.DATA === "local" ? {} : { "/data": { target: PROD, changeOrigin: true } },

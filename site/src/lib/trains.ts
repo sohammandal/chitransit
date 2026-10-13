@@ -180,3 +180,35 @@ export function together(s: Strip): Set<string> {
   const on = new Set(s.trains.map((p) => trainKey(p.t)));
   return new Set(s.trains.flatMap((p) => (p.t.together_with && on.has(p.t.together_with) ? [trainKey(p.t), p.t.together_with] : [])));
 }
+
+/** Trains at one spot, moved apart on the map: CTA gives every train at a station the station's
+ * point, so two (one each way) drew as one square with a star of two arrows (Oct 12). Each way's
+ * trains go to the right of their way when both ways are there, and trains going the same way stand
+ * one behind another along it. Offsets in icon pixels at icon-size 1: [to the right, ahead]. */
+export function spread(trains: { key: string; lon: number; lat: number; hdg?: number }[], near = 25, step = 10): Map<string, [number, number]> {
+  const out = new Map<string, [number, number]>();
+  const kx = 111320 * Math.cos((41.88 * Math.PI) / 180), ky = 110574; // metres a degree, Chicago
+  const placed = trains.filter((t) => t.hdg != null);
+  const seen = new Set<string>();
+  for (const t of placed) {
+    if (seen.has(t.key)) continue;
+    // every train within `near` of one already in the group
+    const group = [t];
+    seen.add(t.key);
+    for (let i = 0; i < group.length; i++)
+      for (const o of placed)
+        if (!seen.has(o.key) && Math.hypot((o.lon - group[i].lon) * kx, (o.lat - group[i].lat) * ky) < near) {
+          group.push(o);
+          seen.add(o.key);
+        }
+    if (group.length < 2) continue;
+    const turn = (a: number, b: number) => Math.abs(((a - b + 540) % 360) - 180); // degrees apart
+    const ways = [group.filter((o) => turn(o.hdg!, t.hdg!) <= 90), group.filter((o) => turn(o.hdg!, t.hdg!) > 90)];
+    const both = ways[0].length > 0 && ways[1].length > 0;
+    for (const way of ways) {
+      const sorted = [...way].sort((a, b) => a.key.localeCompare(b.key));
+      sorted.forEach((o, i) => out.set(o.key, [both ? step : 0, (i - (sorted.length - 1) / 2) * 2 * step]));
+    }
+  }
+  return out;
+}

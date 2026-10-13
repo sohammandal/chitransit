@@ -10,7 +10,7 @@ const prod = process.env.BASE_URL;
 
 export default defineConfig({
   testDir: "e2e",
-  testMatch: prod ? "smoke.spec.ts" : "app.spec.ts",
+  testMatch: prod ? "smoke.spec.ts" : ["app.spec.ts", "report-*.spec.ts"],
   timeout: 45_000,
   fullyParallel: true, // the tests are independent: spread them over the workers
   workers: process.env.CI ? 1 : undefined, // more starve CI's 2 CPUs: software WebGL map tests time out

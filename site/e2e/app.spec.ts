@@ -1274,6 +1274,41 @@ test("about: outside links open in a new tab, leaving the map where it was (Oct 
   }
 });
 
+test("about: room between the heading and the tagline; a footer like the reports', every old line kept (Oct 12) @both", async ({ page }) => {
+  // the tagline sat ~10 px under the heading; the small print was a left-aligned list (Oct 12)
+  await setUp(page);
+  await page.goto("/");
+  await page.getByRole("link", { name: "About" }).click();
+  const sheet = page.locator(".sheet");
+  const head = (await sheet.getByRole("heading", { name: "Every CTA bus and train, live" }).boundingBox())!;
+  const tagline = (await sheet.locator(".what").boundingBox())!;
+  expect(tagline.y - (head.y + head.height)).toBeGreaterThanOrEqual(16);
+  const foot = sheet.locator("footer.fine");
+  await foot.scrollIntoViewIfNeeded();
+  await expect(foot.locator(".brand")).toHaveText("chitransit.fyi");
+  await expect(foot.getByRole("link")).toHaveText(["Marathon report", "Open source", "Feedback", "transitchicago.com"]);
+  for (const line of ["Data provided by Chicago Transit Authority", "not affiliated with, made by, or endorsed by the CTA", "data may be delayed or incomplete", "Privacy: no cookies, accounts or ads"])
+    await expect(foot).toContainText(line);
+  // centred in the panel (phone and computer alike): the name, the links' row, each line of print
+  const off = await foot.evaluate((f) => {
+    const sheet = f.closest(".sheet")!, sb = sheet.getBoundingClientRect();
+    const mid = sb.left + sheet.clientLeft + sheet.clientWidth / 2;
+    const words = (el: Element) => { const r = document.createRange(); r.selectNodeContents(el); const b = r.getBoundingClientRect(); return b.left + b.width / 2; };
+    const links = [...f.querySelectorAll("nav a")].map((a) => a.getBoundingClientRect());
+    return [words(f.querySelector(".brand")!), (links[0].left + links[links.length - 1].right) / 2, ...[...f.querySelectorAll("p")].map(words)].map((x) => Math.abs(x - mid));
+  });
+  for (const d of off) expect(d).toBeLessThan(1);
+  for (const a of await foot.locator("nav a").all()) {
+    const room = await a.evaluate((el) => {
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      const [b, t] = [el.getBoundingClientRect(), r.getBoundingClientRect()];
+      return Math.min(t.left - b.left, b.right - t.right);
+    });
+    expect(room).toBeGreaterThanOrEqual(10);
+  }
+});
+
 test("about: its own address; Back and × return to what was open under it, bus and all (Oct 11)", async ({ page }) => {
   const errors = await setUp(page);
   await page.goto("/route/66/");
@@ -1477,6 +1512,30 @@ test("right now: a long wait or bunch on a route CTA has rerouted says so, the w
 const trainFixture = JSON.parse(readFileSync(new URL("live/trains.json", FIX), "utf8"));
 const trainsDrawn = (page: Page) => page.evaluate(() => window.map!.queryRenderedFeatures({ layers: ["train-dot"] }).length);
 const busesOnMap = (page: Page) => page.evaluate(() => window.map!.queryRenderedFeatures({ layers: ["bus-dot", "bus-sym"] }).length);
+
+test("trains: two at one spot stand apart, one each way either side of it, one behind the other the same way (Oct 12) @both", async ({ page }) => {
+  // CTA gives every train at a station the station's point: two Red Line trains, one each way,
+  // drew as one square with a star of two arrows (Oct 12). The fixture has both kinds of pair
+  const errors = await setUp(page);
+  await page.goto("/");
+  await busesDrawn(page);
+  await expect.poll(() => trainsDrawn(page), { timeout: 15_000 }).toBeGreaterThan(20);
+  const drawnAt = (lon: number, lat: number) => page.evaluate(async ([lon, lat]) => {
+    type Spot = { x: number; y: number };
+    const m = (window as unknown as { map: { jumpTo(o: object): void; once(e: string, f: (v?: unknown) => void): void; project(p: [number, number]): Spot;
+      queryRenderedFeatures(p: [number, number], o: object): { properties: { key: string } }[] } }).map;
+    m.jumpTo({ center: [lon, lat], zoom: 16 });
+    await new Promise((r) => m.once("idle", r));
+    const c = m.project([lon, lat]);
+    const at = (dx: number, dy: number) => m.queryRenderedFeatures([c.x + dx, c.y + dy], { layers: ["train-dot"] }).map((f) => f.properties.key).sort();
+    return { above: at(0, -16), below: at(0, 16) };
+  }, [lon, lat]);
+  // westbound 817 to the right of its way (north, above), eastbound 841 to the right of its (below)
+  expect(await drawnAt(-87.65493, 41.95377)).toEqual({ above: ["red:817"], below: ["red:841"] });
+  // Green and Orange northbound on their shared track: one ahead of the other
+  expect(await drawnAt(-87.62659, 41.86744)).toEqual({ above: ["org:717"], below: ["g:012"] });
+  expect(errors).toEqual([]);
+});
 
 test("trains: on the map in their line's colour; the switch shows buses, trains or both, remembered (Oct 11) @both", async ({ page }) => {
   const errors = await setUp(page);
@@ -1793,4 +1852,116 @@ test("each line has a page whose HTML names it, before any script runs (Oct 11)"
   // riders' names in addresses, not CTA's codes
   expect(await (await request.get("/line/brown/")).text()).toMatch(/<h1[^>]*>Brown Line trains, live<\/h1>/);
   expect((await request.get("/l/lines.json")).ok()).toBe(true);
+});
+
+
+// ---------- the Marathon retro (Oct 12): a data story on its own page ----------
+
+const REPORT = "/reports/marathon-2026/";
+
+/** The report's data files (published apart from the site): the fixtures' reports/ ones. */
+async function reportData(page: Page) {
+  await page.route("**/data/reports/**", (r) => {
+    const body = fixture(new URL(r.request().url()).pathname.replace("/data/", ""));
+    return body ? r.fulfill({ body, contentType: "application/json" }) : r.fulfill({ status: 404 });
+  });
+}
+
+test("report: the Marathon retro's text is in the HTML, with a link preview of its own and a place in the sitemap (Oct 12) @both", async ({ request }) => {
+  const html = await (await request.get(REPORT)).text();
+  expect(html).toContain("How CTA buses ran on Marathon Sunday</h1>");
+  expect(html).toMatch(/stops were in a gap of 90 minutes or more between their usual buses/);
+  expect(html).toContain("not affiliated with");
+  // a number written into the text keeps its spaces: Astro drops a line break next to an expression
+  // ("came at5:47 PM", "692stops", "the last#10", Oct 12)
+  const text = html.slice(html.indexOf("<article"), html.indexOf("</article>")).replace(/<script[\s\S]*?<\/script>/g, "").replace(/<[^>]+>/g, " ");
+  expect(text).not.toMatch(/[a-z][0-9]|[0-9][a-z]{3,}|[a-z]#[0-9]/);
+  expect(html).toContain('property="og:type" content="article"');
+  expect(html).toContain('content="https://chitransit.fyi/reports/marathon-2026/og.jpg"');
+  expect(await (await request.get("/sitemap-0.xml")).text()).toContain("https://chitransit.fyi/reports/marathon-2026/");
+  // the app's pages keep the app's preview
+  expect(await (await request.get("/")).text()).toContain('content="https://chitransit.fyi/og.jpg"');
+});
+
+test("report: the timelapse opens at a linked moment, still; charts and the reroutes map draw; no side scroll (Oct 12) @both", async ({ page }) => {
+  const errors = await setUp(page);
+  await reportData(page);
+  await page.goto(`${REPORT}?at=12:40`);
+  const readout = page.locator(".timelapse .readout");
+  await expect(readout.locator("strong")).toHaveText("12:40 PM");
+  await expect(readout).toContainText(/\d+ stops without their buses/);
+  await expect(page.getByRole("button", { name: "Play" })).toBeVisible(); // a linked moment doesn't play
+  await expect(page.getByRole("img", { name: /buses out stayed near 100% of a normal Sunday/ })).toBeVisible();
+  await expect(page.getByRole("img", { name: /Buses crossing the Marathon course every 15 minutes/ })).toBeVisible();
+  await expect(page.getByRole("img", { name: /34 rerouted routes. CTA's race-day alerts said 6:30 AM to 4 PM/ })).toBeVisible();
+  await page.locator(".reroutes").scrollIntoViewIfNeeded(); // its map is made when scrolled near
+  await page.getByRole("combobox", { name: "Your route", exact: true }).click();
+  await page.getByRole("option", { name: "#22 Clark", exact: true }).click();
+  await expect(page.locator("#route-explorer .cut")).toHaveText("63 of its 152 stops cut off");
+  // the card leads to the route's live page
+  await expect(page.getByRole("link", { name: "See the #22 live now" })).toHaveAttribute("href", "/route/22/");
+  await noSideScroll(page);
+  expect(errors).toEqual([]);
+});
+
+test("report: dragging the timelapse's slider moves the clock and the count (Oct 12)", async ({ page }) => {
+  await setUp(page);
+  await reportData(page);
+  await page.goto(`${REPORT}?at=6:00`);
+  const readout = page.locator(".timelapse .readout strong");
+  await expect(readout).toHaveText("6 AM");
+  await page.getByLabel("Time of day").fill("46"); // 5 AM + 46 x 10 min
+  await expect(readout).toHaveText("12:40 PM");
+});
+
+test("report: \"How we measured this\" shows it can be opened, and opens; the live map is a link at the top and the bottom (Oct 12) @both", async ({ page }) => {
+  // a summary laid out as a flex box loses its disclosure triangle: the closed section read as a
+  // heading over nothing ("the how we measured is blank", Oct 12)
+  await setUp(page);
+  await reportData(page);
+  await page.goto(REPORT);
+  const method = page.locator("details.method");
+  await expect(method).not.toHaveAttribute("open");
+  const marker = await method.locator("summary").evaluate((e) => {
+    const m = getComputedStyle(e, "::before");
+    return { content: m.content, w: parseFloat(m.width) + parseFloat(m.borderRightWidth), h: parseFloat(m.height) + parseFloat(m.borderBottomWidth) };
+  });
+  expect(marker.content).not.toBe("none");
+  expect(marker.w).toBeGreaterThan(5);
+  expect(marker.h).toBeGreaterThan(5);
+  await expect(method.locator("dd").first()).toBeHidden();
+  await method.getByText("How we measured this").click();
+  await expect(method.locator("dd").first()).toBeVisible();
+  await expect(method.locator("dd").first()).toContainText("every 30 seconds");
+  // the way to the live map: the header's pill and the band at the end
+  await expect(page.getByRole("link", { name: "See every bus live" })).toHaveAttribute("href", "/");
+  await expect(page.getByRole("link", { name: "Open chitransit.fyi" })).toHaveAttribute("href", "/");
+});
+
+test("report: a reroutes-map ring says when its stop missed its first bus, and that none came back (Oct 12)", async ({ page }) => {
+  // MapLibre drops null properties: a stop that had no bus all morning arrived with no `from`,
+  // and the popup read "from 12 PM" (278 of 980 rings). Now `from` is its first missed bus: #10
+  // starts after 8:45 AM on a Sunday
+  await setUp(page);
+  await reportData(page);
+  await page.goto(REPORT);
+  await page.locator(".reroutes").scrollIntoViewIfNeeded();
+  await page.getByRole("combobox", { name: "Your route", exact: true }).click(); // the route explorer's picker
+  await page.getByRole("option", { name: "#10 Obama Presidential Center/Museum of Science & Industry Express", exact: true }).click();
+  await page.waitForFunction(() => {
+    const m = (window as unknown as { reroutesMap?: { loaded(): boolean; getLayer(id: string): unknown } }).reroutesMap;
+    return !!m && m.loaded() && !!m.getLayer("skipped");
+  }, undefined, { timeout: 30_000 });
+  await page.locator(".reroutes .map").scrollIntoViewIfNeeded(); // the route's card above it pushes it down
+  const at = await page.evaluate(() => {
+    const m = (window as unknown as { reroutesMap: { jumpTo(o: object): void; project(p: [number, number]): { x: number; y: number }; getContainer(): HTMLElement } }).reroutesMap;
+    m.jumpTo({ center: [-87.62772, 41.87707], zoom: 16 });
+    const p = m.project([-87.62772, 41.87707]);
+    const r = m.getContainer().getBoundingClientRect();
+    return { x: r.left + p.x, y: r.top + p.y };
+  });
+  await page.waitForTimeout(500);
+  await page.mouse.click(at.x, at.y);
+  const popup = page.locator(".maplibregl-popup-content");
+  await expect(popup).toContainText("State & Van Buren: no #10 southbound bus from 9:04 AM to the end of the day");
 });

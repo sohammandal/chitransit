@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { etaText, gaps, lineDirections, lineOf, lineUrl, matchLines, nextText, platforms, stationsToGo, strip, together } from "./trains";
+import { etaText, gaps, lineDirections, lineOf, lineUrl, matchLines, nextText, platforms, spread, stationsToGo, strip, together } from "./trains";
 import type { Eta, Lines, Train } from "./types";
 import drawn from "../../public/l/lines.json";
 
@@ -156,5 +156,21 @@ describe("trains", () => {
     // a terminal's arrivals after the platforms riders board at
     const t = platforms([eta("4", "Howard (Red Line Terminal Arrival)", 50), eta("5", "Service toward Linden", 900)]);
     expect(t.map((x) => x.label)).toEqual(["Service toward Linden", "Howard (Red Line Terminal Arrival)"]);
+  });
+});
+
+describe("spread: trains at one spot drawn apart", () => {
+  const at = (key: string, hdg?: number, dlat = 0) => ({ key, lon: -87.65493, lat: 41.95377 + dlat, hdg });
+  it("one each way at a station: each to the right of its own way (fixture: red 817 and 841, Oct 12)", () => {
+    expect([...spread([at("red:817", 271), at("red:841", 91)])]).toEqual([["red:817", [10, 0]], ["red:841", [10, 0]]]);
+  });
+  it("the same way (Green and Orange on their shared track): one behind the other along it", () => {
+    expect(spread([at("org:717", 357), at("g:012", 357)])).toEqual(new Map([["g:012", [0, -10]], ["org:717", [0, 10]]]));
+  });
+  it("two one way and one the other: each way to its right, the pair one behind the other", () => {
+    expect(spread([at("a", 0), at("b", 5), at("c", 180)])).toEqual(new Map([["a", [10, -10]], ["b", [10, 10]], ["c", [10, 0]]]));
+  });
+  it("leaves alone a train with no one near, and one without a heading", () => {
+    expect(spread([at("a", 0), at("b", 180, 0.001), at("c", undefined), at("d", 90, 0.002)]).size).toBe(0);
   });
 });

@@ -1,0 +1,211 @@
+---
+// The Marathon retro: a data story, not the app. Its prose and numbers are in the HTML (search
+// engines, link previews, readers without JavaScript): every number comes from
+// src/data/marathon-2026.json, written by transform/reports/marathon_2026.py beside the files the
+// visuals fetch from /data/reports/marathon-2026/.
+import Base from "../../layouts/Base.astro";
+import Mark from "../../components/Mark.svelte";
+import Timelapse from "../../components/marathon/Timelapse.svelte";
+import SameBuses from "../../components/marathon/SameBuses.svelte";
+import RouteExplorer from "../../components/marathon/RouteExplorer.svelte";
+import Clocks from "../../components/marathon/Clocks.svelte";
+import Crossings from "../../components/marathon/Crossings.svelte";
+import Clockface from "../../components/marathon/Clockface.svelte";
+import Bars from "../../components/marathon/Bars.svelte";
+import { clock } from "../../lib/marathon";
+import f from "../../data/marathon-2026.json";
+
+const n = (v: number) => v.toLocaleString("en-US");
+const t = (s: string) => s.replace(":00 ", " "); // "4:00 PM" -> "4 PM"
+const M = "2026-10-11", S1 = "2026-09-27", S2 = "2026-10-04";
+const drop = -f.visits_change; // whole %, rounded from the exact ratio in the pipeline
+const reroutePct = Math.round(f.trips_on_reroutes[M]);
+const [r1, r2] = [f.trips_on_reroutes[S1], f.trips_on_reroutes[S2]].map((v) => Math.round(v)).sort((a, b) => a - b);
+const wait = (d: string) => (f.waits as Record<string, number>)[d];
+const share = (o: Record<string, number>, d: string) => o[d];
+const x = f.crossings;
+const streetNormal = Math.round((x.street_7_to_1130[S1] + x.street_7_to_1130[S2]) / 2 / 100) * 100;
+// "about 2½ hours": to the half hour
+const lag = (m: number) => { const h = Math.round(m / 30) / 2; return `about ${Math.floor(h)}${h % 1 ? "½" : ""} hours`; };
+
+const title = "How CTA buses ran on Marathon Sunday | chitransit.fyi";
+const description = `On Chicago Marathon Sunday, CTA kept ${Math.round(f.buses_pct)}% of its usual buses out on the ${f.routes} routes it rerouted, but at ${f.dark_peak_at[0]} ${f.dark_peak} stops were in a gap of 90 minutes or more between their usual buses. Every bus, every 30 seconds, compared with the two Sundays before.`;
+---
+<Base {title} {description} type="article"
+  image={{ url: "https://chitransit.fyi/reports/marathon-2026/og.jpg", width: 2400, height: 1260,
+    alt: `Map of Chicago on Marathon Sunday at ${f.dark_peak_at[0]}: ${f.dark_peak} bus stops in red, each in a gap of 90 minutes or more between its usual buses, most of them near the course` }}>
+  <header class="site">
+    <a class="brand" href="/" aria-label="chitransit.fyi home">
+      <Mark />
+      <span><span class="chi">chi</span>transit<b>.fyi</b></span>
+    </a>
+    <nav><a class="live" href="/"><i aria-hidden="true"></i>See every bus live</a></nav>
+  </header>
+
+  <main>
+    <article>
+      <p class="kicker">Chicago Marathon, Oct 11, 2026</p>
+      <h1>How CTA buses ran on Marathon Sunday</h1>
+      <p class="dek">The Marathon closed 26 miles of streets on Oct 11. CTA kept {Math.round(f.buses_pct)}% of its usual buses running on the {f.routes} routes it rerouted, and where buses still came, waits were normal. But the reroutes left hundreds of stops near the course without their usual buses for hours. We compared every bus, every 30 seconds, with the two Sundays before.</p>
+
+      <section class="figure-wide" aria-label="Timelapse map">
+        <Timelapse client:only="svelte" />
+        <noscript><p>The map and most charts on this page need JavaScript.</p></noscript>
+      </section>
+      <p class="caption">Bus stops near the course, 10 minutes a frame. Red: in a gap of 90 minutes or more between its usual buses. Amber: where the runners were, from the race plan. The count is citywide, so it includes a few dozen stops beyond this map, almost all on #8 Halsted. Search for a stop below the map to see its day.</p>
+
+      <h2 id="your-route">Look up your route</h2>
+      <p>Buses mostly stuck to CTA's posted reroutes. Pick a route to see its reroute and when its cut-off stops got buses back.</p>
+      <figure class="figure-wide">
+        <RouteExplorer client:only="svelte" />
+      </figure>
+
+      <h2>Almost no buses crossed the course all morning</h2>
+      <p>Between 7 and 11:30 AM, {x.street_7_to_1130[M] === 1 ? "one bus" : `${x.street_7_to_1130[M]} buses`} crossed the course at street level, against about {n(streetNormal)} on a normal Sunday. To get across, buses went under it on I-55 and I-290.</p>
+      <figure class="chart">
+        <Crossings client:only="svelte" />
+      </figure>
+
+      <h2>Most trips ran on reroutes</h2>
+      <p>{reroutePct}% of the trips on the {f.routes} routes scheduled between 6:30 AM and 6 PM ran on reroutes ({r1} to {r2}% on a normal Sunday). Reroutes skip stops, so the number of buses held up while visits to the regular stops fell {drop}%.</p>
+      <figure class="chart">
+        <SameBuses client:only="svelte" />
+      </figure>
+
+      <h2>{n(f.no_bus_730_to_3.marathon)} stops got none of their buses from 7:30 AM to 3 PM</h2>
+      <p>On the two Sundays before, it was {f.no_bus_730_to_3.sep27} and {f.no_bus_730_to_3.oct4}. Where buses still came, people waited about as long as usual.</p>
+      <div class="bars-pair">
+        <Bars title="Stops with none of their buses, 7:30 AM to 3 PM"
+          label="Stops that saw none of their usual buses from 7:30 AM to 3 PM"
+          rows={[{ label: "Sep 27", value: f.no_bus_730_to_3.sep27 }, { label: "Oct 4", value: f.no_bus_730_to_3.oct4 }, { label: "Marathon Sunday", value: f.no_bus_730_to_3.marathon, highlight: true }]} />
+        <Bars title="Average wait for a bus, 7 AM to 4 PM" unit="min" tone="blue"
+          label="Average wait for a bus from 7 AM to 4 PM at the stops that kept theirs, in minutes"
+          rows={[{ label: "Sep 27", value: wait(S1) }, { label: "Oct 4", value: wait(S2) }, { label: "Marathon Sunday", value: wait(M), highlight: true }]} />
+      </div>
+      <p class="caption">Waits for someone arriving at a random time, at the {n(f.waits.physical_stops)} stops ({n(f.waits.stops)} stop-and-route pairs) that had a bus every hour on all three Sundays. Near State & Madison at 12:40 PM, {f.loop_1240.dark} of {f.loop_1240.served_normally} stops were in a gap of 90 minutes or more.</p>
+
+      <h2>When buses came back</h2>
+      <p>Half of the cut-off stops had a bus again by {t(f.cut_back_median)}. On all {x.reopen_lag_streets} busy course streets, the first bus came after the city's planned reopening time, a median of {lag(x.reopen_lag_median_min)} after. Bus data can't say why: police reopen the streets, and when they did isn't published.</p>
+      <Clockface label={`Half the cut-off stops had missed a bus by ${clock(f.clocks.stops[0])} and half had one again by ${clock(f.clocks.stops[1])}, while CTA's race-day alerts said ${clock(f.clocks.alerts[0])} to ${clock(f.clocks.alerts[1])}`}
+        rows={[
+          { label: "City's plan: streets close, then reopen behind the last runners", from: 360, to: f.clocks.city_reopen[1], fade: f.clocks.city_reopen[0], tone: "fog", note: `Reopening street by street from ${clock(f.clocks.city_reopen[0])}, the finish area last at ${clock(f.clocks.city_reopen[1])}` },
+          { label: "CTA's race-day alerts", from: f.clocks.alerts[0], to: f.clocks.alerts[1], tone: "blue" },
+          { label: "Bus Tracker showed detours", from: Math.min(f.clocks.flags[0], f.clocks.detour_records[0]), to: Math.max(f.clocks.flags[1], f.clocks.detour_records[1]), tone: "blue" },
+          { label: "Cut-off stops: when half had missed a bus, and when half had one again", from: f.clocks.stops[0], to: f.clocks.stops[1], tone: "red" },
+        ]} />
+      <figure class="chart">
+        <Clocks client:only="svelte" />
+        <figcaption>Each rerouted route: its detour flag (thin line), and its cut-off stops from the first missed bus until half had a bus again (red) and until all did (line).</figcaption>
+      </figure>
+
+      <h2>What this data can't show</h2>
+      <ul class="cant">
+        <li>CTA announced shuttles to Navy Pier, the Museum Campus and along Clark St, but they never appeared in Bus Tracker. Their {f.cant_tell_stops} stops are left out of the counts.</li>
+        <li>Bus Tracker lost track of more buses than usual: {share(f.unseen_share, M)}% of bus time on the {f.routes} routes from 7 AM to 6 PM, against {share(f.unseen_share, S2)} to {share(f.unseen_share, S1)}% normally.</li>
+      </ul>
+
+      <details class="method">
+        <summary>How we measured this</summary>
+        <dl>
+          <dt>Data</dt><dd>Every CTA bus every 30 seconds from Bus Tracker, with CTA's detour records and alerts. Normal Sundays: Sep 27 and Oct 4, same schedule. Buses out and visits are counted 6:30 AM to 6 PM.</dd>
+          <dt>Bus visits</dt><dd>A bus's GPS track passes within 40 meters of the stop. This is stricter than our live map, which uses CTA's distance along the route: that was wrong for detoured buses.</dd>
+          <dt>Gap</dt><dd>90 minutes or more between a stop's usual buses, where both normal Sundays had at least 3.</dd>
+          <dt>Cut off</dt><dd>No bus of the route from 10 AM to noon, where both normal Sundays had 2 or more.</dd>
+          <dt>Sources</dt><dd>Ridership: City of Chicago data portal. Course: © OpenStreetMap contributors (ODbL). Runner positions: the organizers' plan. <a href="https://github.com/sohammandal/chitransit/blob/main/transform/reports/marathon_2026.py" target="_blank" rel="noopener">Code</a>.</dd>
+        </dl>
+      </details>
+    </article>
+
+    <aside class="cta">
+      <p><strong>Where's your bus right now?</strong> chitransit.fyi shows every CTA bus and 'L' train live on one map.</p>
+      <a href="/">Open chitransit.fyi</a>
+    </aside>
+
+    <footer class="credits">
+      <a class="brand" href="/" aria-label="chitransit.fyi home">
+        <Mark />
+        <span><span class="chi">chi</span>transit<b>.fyi</b></span>
+      </a>
+      <nav class="foot-links" aria-label="More from chitransit.fyi">
+        <a href="/">Live map</a>
+        <a href="/about/">About</a>
+        <a href="https://github.com/sohammandal/chitransit" target="_blank" rel="noopener">Open source</a>
+        <a href="https://github.com/sohammandal/chitransit/issues" target="_blank" rel="noopener">Feedback</a>
+      </nav>
+      <p>Data provided by Chicago Transit Authority. chitransit.fyi is an independent project, not affiliated with, made by, or endorsed by the CTA or the Chicago Marathon. Figures are our own estimates from CTA's public data.</p>
+    </footer>
+  </main>
+</Base>
+
+<style>
+  :global(html), :global(body) { height: auto; }
+  /* one column for the header, the text and the visuals, so they share their edges */
+  .site { max-width: 1100px; margin: 0 auto; }
+  article, .credits { max-width: 1068px; margin: 0 auto; } /* the header's width less its padding */
+  .site {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: calc(12px + var(--safe-top)) 16px 12px;
+  }
+  /* as the app's top bar (TopBar.svelte) */
+  .brand { display: flex; align-items: center; gap: 8px; color: var(--asphalt); text-decoration: none; font-size: 19px; font-weight: 800; letter-spacing: -0.01em; }
+  .brand b { font-weight: 400; color: var(--fog); }
+  .chi { color: var(--flag-blue); }
+  .site nav { display: flex; align-items: center; gap: 4px; }
+  .site nav a { padding: 12px 10px 10px; color: var(--asphalt); text-decoration: none; font-weight: 600; font-size: 15px; border-radius: 999px; }
+  .site nav a:hover { background: var(--surface2); }
+  /* the way to the live map, as the mockups had it: a pill with a live dot */
+  .site nav .live { display: inline-flex; align-items: center; gap: 8px; padding: 11.4px 16px 7.6px; background: var(--asphalt); color: var(--concrete); font-weight: 700; }
+  .site nav .live:hover { background: var(--asphalt); opacity: 0.9; }
+  /* text centred in the pill and the dot on the text, measured in Chrome: Overpass sits ~1.4-1.9 px high */
+  .live i { translate: 0 -1.9px; width: 8px; height: 8px; border-radius: 50%; background: var(--flag-blue); animation: live 2s ease-out infinite; }
+  @keyframes live { 0% { box-shadow: 0 0 0 0 var(--flag-blue); } 70%, 100% { box-shadow: 0 0 0 6px transparent; } }
+  @media (prefers-reduced-motion: reduce) { .live i { animation: none; } }
+  main { padding: 0 16px calc(32px + var(--safe-bottom)); }
+  article .kicker { margin: 24px 0 6px; color: var(--star-red); font-weight: 700; font-size: 14px; letter-spacing: 0.02em; text-transform: uppercase; }
+  h1 { margin: 0; font-size: clamp(32px, 8vw, 48px); line-height: 1.06; letter-spacing: -0.015em; }
+  /* (article p's margin outranks a bare class here) */
+  article .dek { margin: 24px 0 32px; font-size: 19px; line-height: 1.45; }
+  article h2[id] { scroll-margin-top: 16px; }
+  article p, article li { font-size: 18px; line-height: 1.6; }
+  article p { margin: 0 0 18px; }
+  article ul { margin: 0 0 22px; padding-left: 20px; }
+  article li { margin-bottom: 10px; }
+  article h2 { font-size: 25px; line-height: 1.2; margin: 44px 0 12px; }
+  /* the maps run edge to edge on a phone, and at the column's width above that */
+  .figure-wide { margin: 0 -16px 8px; }
+  @media (min-width: 720px) { .figure-wide { margin: 0 0 8px; } }
+  .caption { font-size: 14px !important; line-height: 1.45 !important; color: var(--fog); margin: 0 0 28px !important; }
+  .chart { margin: 8px 0 28px; }
+  .chart figcaption { font-size: 14px; line-height: 1.45; color: var(--fog); margin-top: 8px; }
+  .bars-pair { display: grid; gap: 26px; margin: 8px 0 12px; }
+  @media (min-width: 720px) { .bars-pair { grid-template-columns: 1fr 1fr; gap: 40px; } }
+  .method { margin: 36px 0 0; border-top: 1px solid var(--rule); padding-top: 6px; }
+  /* a summary that is a flex box loses its marker: draw one, so it reads as something to open */
+  .method summary { cursor: pointer; font-weight: 700; font-size: 17px; min-height: 44px; display: flex; align-items: center; gap: 10px; list-style: none; }
+  .method summary::-webkit-details-marker { display: none; }
+  /* on the text's cap-height centre, measured: Overpass sets letters ~2 px high in the line, and
+     the open "v" draws all below its box's centre (another 2.5 px) */
+  .method summary::before { content: ""; width: 7px; height: 7px; border: solid var(--asphalt); border-width: 0 2px 2px 0; transform: translateY(-2px) rotate(-45deg); transition: transform 0.15s; }
+  .method[open] summary::before { transform: translateY(-4.5px) rotate(45deg); }
+  .method summary:hover { color: var(--flag-blue); }
+  .method dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 18px; margin: 6px 0 4px; font-size: 16px; line-height: 1.5; }
+  .method dt { font-weight: 700; color: var(--asphalt); }
+  .method dd { margin: 0; color: var(--fog); }
+  @media (max-width: 480px) { .method dl { grid-template-columns: 1fr; gap: 2px; } .method dd { margin-bottom: 10px; } }
+  .cta { max-width: 1068px; margin: 48px auto 0; display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: center; justify-content: space-between; background: var(--asphalt); color: var(--concrete); border-radius: 16px; padding: 22px 24px; }
+  .cta p { margin: 0; font-size: 18px; line-height: 1.45; flex: 1 1 320px; }
+  /* 19 px bold is large text: white on the brand blue passes (4:1) */
+  .cta a { background: var(--flag-blue); color: #fff; text-decoration: none; font-weight: 800; font-size: 19px; border-radius: 999px; padding: 13.2px 22px 9.8px; white-space: nowrap; }
+  .cta a:hover { filter: brightness(1.08); }
+  /* dark: a raised panel, and dark ink on the lighter blue (8:1) */
+  @media (prefers-color-scheme: dark) {
+    .cta { background: var(--surface); color: var(--asphalt); border: 1px solid var(--rule); }
+    .cta a { color: var(--concrete); }
+  }
+  .credits { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 40px; padding-top: 28px; border-top: 1px solid var(--rule); text-align: center; color: var(--fog); font-size: 14px; line-height: 1.5; }
+  /* a pill on hover with room around the text (the header's leaked in with 2 px sides, Oct 12) */
+  .foot-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 4px; }
+  .foot-links a { padding: 12.75px 14px 9.25px; /* text centred: Overpass sits high */ border-radius: 999px; color: var(--asphalt); font-weight: 600; font-size: 15px; text-decoration: none; }
+  .foot-links a:hover { background: var(--surface2); }
+  .credits p { margin: 4px 0 0; }
+</style>
