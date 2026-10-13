@@ -100,10 +100,17 @@ test("report: on a phone a tap shows a time chart's card, a sideways drag moves 
   await expect(card(chart)).toBeVisible();
   await chart.locator("xpath=..").locator(".title").tap();
   await expect(card(chart)).toBeHidden();
-  // a vertical swipe on the chart still scrolls the page
-  const y0 = await page.evaluate(() => scrollY);
-  await cdp.send("Input.synthesizeScrollGesture", { x: box.x + box.width / 2, y: box.y + box.height / 2, yDistance: -200, gestureSourceType: "touch", speed: 1200 });
-  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(y0 + 50);
+  // a vertical swipe on the chart still scrolls the page, as one on its title does. Headless Linux
+  // (CI) fakes no touch scroll at all, there the title's doesn't move either: then this proves
+  // nothing and is skipped (CI, Oct 13; the paced drag above was a misread of that failure)
+  const swipe = async (on: Locator) => {
+    const b = (await on.boundingBox())!, y0 = await page.evaluate(() => scrollY);
+    await cdp.send("Input.synthesizeScrollGesture", { x: b.x + b.width / 2, y: b.y + b.height / 2, yDistance: -200, gestureSourceType: "touch", speed: 1200 });
+    await page.waitForTimeout(400);
+    return (await page.evaluate(() => scrollY)) - y0;
+  };
+  await chart.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  if ((await swipe(chart.locator("xpath=..").locator(".title"))) > 50) expect(await swipe(chart)).toBeGreaterThan(50);
   await reportClean(page, errors);
 });
 
