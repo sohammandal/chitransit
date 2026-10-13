@@ -137,6 +137,13 @@ const description = `On Chicago Marathon Sunday, CTA kept ${Math.round(f.buses_p
   </main>
 </Base>
 
+<script>
+  // Page views, as the live map counts them (lib/count.ts: cookieless, our own beacon, the real
+  // site only); the report wasn't counted at all (Oct 13)
+  import { countView } from "../../lib/count";
+  countView();
+</script>
+
 <style>
   :global(html), :global(body) { height: auto; }
   /* one column for the header, the text and the visuals, so they share their edges */
