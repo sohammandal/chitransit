@@ -117,6 +117,9 @@ jobs:
         run: uv run --group transform python transform/dashboard.py --src "$LAKE/analytics" --out ops-site/index.html
 
       - name: Scheduled gaps and departures for today and tomorrow (the "right now" rules)
+        # Schedule only: a failed data test above mustn't leave the live claims without today's
+        # schedule (Oct 18-19: no long waits or bunching shown for a day)
+        if: ${{ !cancelled() }}
         working-directory: transform
         run: |
           # Schedule only (GTFS, no Ingress). Rebuilds int_scheduled_trips for these two days in
@@ -127,6 +130,9 @@ jobs:
             --vars "{start_date: '$today', end_date: '$tomorrow'}"
 
       - name: Live schedule for the poller (every scheduled departure per stop, today and tomorrow)
+        # Schedule only: a failed data test above mustn't leave the live claims without today's
+        # schedule (Oct 18-19: no long waits or bunching shown for a day)
+        if: ${{ !cancelled() }}
         # Private (analytics/ops/, only the box reads it); checked before writing. The poller
         # reloads it hourly and keeps its last good copy if this step fails.
         run: |
