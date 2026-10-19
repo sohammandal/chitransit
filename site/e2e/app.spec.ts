@@ -1532,6 +1532,16 @@ const trainFixture = JSON.parse(readFileSync(new URL("live/trains.json", FIX), "
 const trainsDrawn = (page: Page) => page.evaluate(() => window.map!.queryRenderedFeatures({ layers: ["train-dot"] }).length);
 const busesOnMap = (page: Page) => page.evaluate(() => window.map!.queryRenderedFeatures({ layers: ["bus-dot", "bus-sym"] }).length);
 
+test("a route opened by its address shows its buses even with Train remembered (Oct 19) @both", async ({ page }) => {
+  // /route/20/ with the toggle left on Train: the map drew no route and no buses (Oct 19)
+  const errors = await setUp(page);
+  await page.addInitScript(() => localStorage.setItem("mode", "train"));
+  await page.goto("/route/22/");
+  await busesDrawn(page);
+  await expect(page.getByRole("radiogroup", { name: "Show" }).getByRole("radio", { name: "All" })).toHaveAttribute("aria-checked", "true");
+  expect(errors).toEqual([]);
+});
+
 test("trains: two at one spot stand apart, one each way either side of it, one behind the other the same way (Oct 12) @both", async ({ page }) => {
   // CTA gives every train at a station the station's point: two Red Line trains, one each way,
   // drew as one square with a star of two arrows (Oct 12). The fixture has both kinds of pair

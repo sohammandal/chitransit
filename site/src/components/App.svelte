@@ -219,6 +219,13 @@
     if ((m === "bus" && (line || trainSel || station)) || (m === "train" && (route || stop))) go(null);
   }
 
+  // What's open is always shown: a route, bus or stop opened by its address or Back/Forward
+  // (not through go()) kept a remembered Train mode and the map drew none of its buses (Oct 19)
+  $effect(() => {
+    if (mode === "train" && (route || selected || stop)) setMode("all");
+    else if (mode === "bus" && (line || trainSel || station)) setMode("all");
+  });
+
   // Phones: the map's buttons sit just above the sheet (MapView reads --sheet, which the
   // sheet sets while it's shown).
   $effect(() => {
