@@ -271,6 +271,8 @@ class Poller:
             self._next_schedule_load = self.now() + SCHEDULE_LOAD_EVERY
             if not self.live.schedule.covers(self.now()):
                 log.warning("live schedule doesn't cover today: no schedule fields until it does")
+                # look again soon: a late nightly's schedule waited up to an hour (Oct 19)
+                self._next_schedule_load = self.now() + SCHEDULE_RETRY_EVERY
         except Exception:  # noqa: BLE001 - logged; the feed goes on without schedule fields
             log.exception("live schedule not loaded")
             self._next_schedule_load = self.now() + SCHEDULE_RETRY_EVERY
