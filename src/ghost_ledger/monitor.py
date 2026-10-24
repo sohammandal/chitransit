@@ -171,6 +171,28 @@ def fetch_report_days() -> list[str]:
     return httpx.get(REPORT_URL, timeout=10).raise_for_status().json()["days"]
 
 
+# The live map's claims (long waits, bunching) need the schedule: with none covering today the
+# buses still move but nothing is judged, and every other alarm stays green (Oct 18-19: the
+# nightly failed, the schedule ran out, found by opening the app). Judged = has sched_s.
+LIVE_URL = "https://www.chitransit.fyi/live/vehicles.json"
+LIVE_CHECK_EVERY = timedelta(minutes=5)
+LIVE_HOURS = range(6, 22)  # 06:00-21:59 CT: buses on scheduled trips
+LIVE_MIN_BUSES = 100  # fewer: early morning or an outage (other alarms), too few to judge
+LIVE_MIN_JUDGED = 0.25  # normally ~80% (Oct 20, Oct 23); 0 when the schedule ran out
+
+
+def live_unjudged(buses: int, judged: int, now: datetime) -> Metric:
+    """1 in the day when most buses on the live map have no schedule to be judged against."""
+    day = now.astimezone(CHICAGO).hour in LIVE_HOURS
+    bad = day and buses >= LIVE_MIN_BUSES and judged < LIVE_MIN_JUDGED * buses
+    return Metric("LiveUnjudgedDaytime", 1.0 if bad else 0.0, "None")
+
+
+def fetch_live_counts() -> tuple[int, int]:
+    vehicles = httpx.get(LIVE_URL, timeout=10).raise_for_status().json()["vehicles"]
+    return len(vehicles), sum(1 for v in vehicles if v.get("sched_s") is not None)
+
+
 class CloudWatchSink:
     def __init__(self, env: str) -> None:
         import boto3  # only needed in prod
@@ -210,6 +232,8 @@ def run(
         glue = boto3.client("glue")
     report_days: list[str] | None = None  # the public report's days, refreshed every 10 min
     report_checked: datetime | None = None
+    live_counts: tuple[int, int] | None = None  # the live map's (buses, judged), every 5 min
+    live_checked: datetime | None = None
     log.info("monitor started: env=%s sink=%s", settings.env, type(sink).__name__)
     conn: psycopg.Connection | None = None
     metrics: list[Metric] = []
@@ -237,6 +261,15 @@ def run(
                         log.exception("could not read the public report")
                 if report_days is not None:  # re-judged every minute: 10:00 CT can pass between
                     metrics.append(report_stale(report_days, at))
+                if live_checked is None or at - live_checked >= LIVE_CHECK_EVERY:
+                    live_checked = at
+                    try:
+                        live_counts = fetch_live_counts()
+                    except Exception:
+                        live_counts = None  # publish nothing: a site outage isn't this alarm
+                        log.exception("could not read the live feed")
+                if live_counts is not None:
+                    metrics.append(live_unjudged(*live_counts, at))
             sink.send(metrics, at)
         except psycopg.Error:
             # Publish nothing: missing data is what trips the poller-alive alarm.

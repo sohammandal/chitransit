@@ -24,15 +24,18 @@ locals {
       periods = 2, missing = "breaching",
       text    = "No sweep for 5+ minutes, or the monitor stopped reporting (box down?)"
     }
+    # CTA's own outages (Oct 14, 21, 22: refused connections and timeouts, 20-40 min) aren't
+    # ours to fix and paged twice each. Ours (key, quota, network) last hours: the call alarms
+    # wait 45 minutes, and coverage pages at 85% (Oct 22's outage took it to 86.7%).
     coverage-low = {
-      metric  = "SweepCoverage1h", op = "LessThanThreshold", threshold = 0.95,
+      metric  = "SweepCoverage1h", op = "LessThanThreshold", threshold = 0.85,
       periods = 15, missing = "notBreaching",
-      text    = "Under 95% of the last hour's sweeps happened (a patch reboot costs ~3 sweeps)"
+      text    = "Under 85% of the last hour's sweeps happened (sweeps failing or running long?)"
     }
     call-success-low = {
       metric  = "CallSuccessRate15m", op = "LessThanThreshold", threshold = 0.95,
-      periods = 15, missing = "notBreaching",
-      text    = "Under 95% of Bus Tracker calls succeeded over 15 minutes (outage or quota?)"
+      periods = 45, missing = "notBreaching",
+      text    = "Under 95% of Bus Tracker calls succeeded for 45+ minutes (key, quota, or a long CTA outage?)"
     }
     zero-buses-daytime = {
       metric  = "ZeroBusesDaytime", op = "GreaterThanOrEqualToThreshold", threshold = 1,
@@ -70,6 +73,13 @@ locals {
       periods = 15, missing = "notBreaching",
       text    = "After 10:00 CT the public report still lacks yesterday: the nightly didn't run or failed"
     }
+    # The live map judges buses against the schedule; with none covering today it flags nothing
+    # while everything else looks healthy (Oct 18-19). Missing data: a site outage, not this.
+    live-unjudged = {
+      metric  = "LiveUnjudgedDaytime", op = "GreaterThanOrEqualToThreshold", threshold = 1,
+      periods = 20, missing = "notBreaching",
+      text    = "In the day, under 25% of the live map's buses have a schedule: no long waits or bunching shown (live schedule stale?)"
+    }
     # Trains (the train poller, feed 'train'): missing data is fine until it first sweeps
     train-stale = {
       metric  = "TrainMinutesSinceLastSweep", op = "GreaterThanThreshold", threshold = 5,
@@ -78,8 +88,8 @@ locals {
     }
     train-call-success-low = {
       metric  = "TrainCallSuccessRate15m", op = "LessThanThreshold", threshold = 0.95,
-      periods = 15, missing = "notBreaching",
-      text    = "Under 95% of Train Tracker calls succeeded over 15 minutes (outage, key or quota?)"
+      periods = 45, missing = "notBreaching",
+      text    = "Under 95% of Train Tracker calls succeeded for 45+ minutes (key, quota, or a long CTA outage?)"
     }
     cdc-slot-inactive = {
       metric  = "ReplicationSlotsInactive", op = "GreaterThanOrEqualToThreshold", threshold = 1,

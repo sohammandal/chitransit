@@ -131,3 +131,15 @@ def test_site_report_is_stale_only_after_10_ct_without_yesterday():
     assert report_stale(has_yesterday, at(15)).value == 0
     assert report_stale([], at(11)).value == 1  # an empty report is stale too
     assert report_stale(missing_it, at(10)).name == "SiteReportStale"
+
+
+def test_live_map_is_unjudged_only_by_day_with_most_buses_lacking_a_schedule():
+    from ghost_ledger.monitor import live_unjudged
+
+    assert live_unjudged(721, 577, NOON).value == 0  # Oct 23 20:15: 80% judged
+    assert live_unjudged(900, 0, NOON).value == 1  # Oct 19: the schedule had run out
+    assert live_unjudged(900, 224, NOON).value == 1  # under a quarter
+    assert live_unjudged(900, 225, NOON).value == 0
+    assert live_unjudged(99, 0, NOON).value == 0  # too few buses to tell (outage: other alarms)
+    assert live_unjudged(900, 0, NIGHT).value == 0  # 03:00: owl buses, not judged here
+    assert live_unjudged(900, 0, NOON).name == "LiveUnjudgedDaytime"
