@@ -1,7 +1,7 @@
 """Per-UTC-day counts of the day-partitioned tables in Ingress: the prune gate's evidence.
 
 Usage: uv run --group transform python transform/ingress_counts.py
-    --to s3://ghost-ledger-lake-.../analytics/ops/ingress_day_counts.json [--days 7]
+    --to s3://ghost-ledger-lake-.../analytics/ops/ingress_day_counts.json [--days 14]
 
 For bus_positions (partitioned by observed_at) and raw_responses (by fetched_at): rows,
 distinct keys and the highest LSN per UTC day, for the last `days` complete UTC days. The
@@ -29,7 +29,9 @@ TABLES = {
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--to", required=True, help="s3://bucket/key.json or a local path")
-    p.add_argument("--days", type=int, default=7)
+    # the box prunes a day once it's 2 days old; 14 leaves days to catch up after a missed prune
+    # (with 7, Oct 11-15 aged out unpruned and the gate kept them for good)
+    p.add_argument("--days", type=int, default=14)
     p.add_argument("--until", help="first UTC day NOT counted (YYYY-MM-DD); default today")
     args = p.parse_args()
     now = datetime.now(UTC)
