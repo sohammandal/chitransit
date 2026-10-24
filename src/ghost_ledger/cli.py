@@ -100,6 +100,7 @@ def cmd_check_db(_: argparse.Namespace) -> None:
 
 
 def cmd_poll(args: argparse.Namespace) -> None:
+    from ghost_ledger import prune
     from ghost_ledger.ingest import trains
     from ghost_ledger.ingest.poller import Poller
 
@@ -114,6 +115,9 @@ def cmd_poll(args: argparse.Namespace) -> None:
         # judge gaps by the buses' live schedule (read through the poller: it reloads it)
         schedule = lambda: poller.live.schedule  # noqa: E731 - read late: the poller reloads it
         train_thread = trains.start(settings, stop, schedule) if args.sweeps is None else None
+        # prod: drops the days Ingress provably holds, once a day (the gate in prune.py)
+        if args.sweeps is None:
+            prune.start(settings, stop)
         try:
             poller.run(stop=stop, max_sweeps=args.sweeps)
         finally:

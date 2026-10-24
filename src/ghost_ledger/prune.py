@@ -1,6 +1,7 @@
 """Prune gate: drop a day's Postgres partition only when Ingress provably has all of it.
 
 Usage (on the box): docker exec ghost-ledger-poller-1 python -m ghost_ledger.prune [--apply]
+In prod the poller also runs it once a day (`start`, after the nightly's manifest), applying.
 
 Postgres keeps ~2 days; Ingress (Iceberg) holds the full log and is never rebuilt. A UTC day
 of bus_positions / raw_responses may be dropped only when all of these hold (fail closed:
@@ -19,13 +20,16 @@ publication never sees a TRUNCATE). Dry-run by default: it prints what it would 
 import argparse
 import json
 import logging
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import psycopg
 
-from ghost_ledger.config import get_settings
+from ghost_ledger.config import Settings, get_settings
 
 log = logging.getLogger("ghost_ledger.prune")
 
@@ -44,6 +48,14 @@ INNER JOIN pg_namespace AS n ON p.relnamespace = n.oid
 WHERE n.nspname = 'ops' AND p.relname = %s
 ORDER BY c.relname
 """
+# The daily run: after the nightly writes the manifest (06:23 CT, backups by ~09:00), retried
+# hourly until a run completes. A DETACH waits for the sweep in flight; the timeout stops it
+# queueing in front of the next sweep's inserts (it tries again the next hour).
+CHICAGO = ZoneInfo("America/Chicago")
+DAILY_AFTER_HOUR = 10
+RETRY_EVERY = timedelta(hours=1)
+LOCK_TIMEOUT = "5s"
+
 SLOT_LSN = """
 SELECT (confirmed_flush_lsn - '0/0'::PG_LSN)::BIGINT
 FROM pg_replication_slots WHERE slot_name = %s
@@ -127,6 +139,55 @@ def drop(conn: psycopg.Connection, v: Verdict) -> None:
         conn.execute(f"DROP TABLE ops.{v.partition}")
 
 
+def prune(conn: psycopg.Connection, manifest: dict[str, Any] | None, apply: bool) -> int:
+    """Run the gate and (with apply) drop what passes; the number of partitions dropped."""
+    dropped = 0
+    for v in gate(conn, manifest, datetime.now(UTC).date()):
+        action = ("DROP" if apply else "would drop") if v.drop else "keep"
+        log.info("%s %s %s: %s", action, v.table, v.day, v.reason)
+        if v.drop and apply:
+            drop(conn, v)
+            dropped += 1
+    return dropped
+
+
+def due(now: datetime, last_done: date | None) -> bool:
+    """The daily run is due once it's past DAILY_AFTER_HOUR in Chicago and today's hasn't run."""
+    local = now.astimezone(CHICAGO)
+    return local.hour >= DAILY_AFTER_HOUR and last_done != local.date()
+
+
+def run_daily(
+    settings: Settings,
+    stop: threading.Event,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> None:
+    """Once a day, the gate with --apply. Any failure keeps everything and tries again in an
+    hour; a prune that never succeeds shows as disk-high (80%) weeks before the disk fills."""
+    last_done: date | None = None
+    while not stop.is_set():
+        at = now()
+        if due(at, last_done):
+            try:
+                with psycopg.connect(settings.database_url, autocommit=True) as conn:
+                    conn.execute(f"SET lock_timeout = '{LOCK_TIMEOUT}'")
+                    n = prune(conn, load_manifest(MANIFEST), apply=True)
+                log.info("daily prune: dropped %d partitions", n)
+                last_done = at.astimezone(CHICAGO).date()
+            except Exception:
+                log.exception("daily prune failed; keeping everything, retrying in an hour")
+        stop.wait(RETRY_EVERY.total_seconds())
+
+
+def start(settings: Settings, stop: threading.Event) -> threading.Thread | None:
+    """The daily prune on its own thread and connection, in prod only."""
+    if not settings.is_prod:
+        return None
+    thread = threading.Thread(target=run_daily, args=(settings, stop), name="prune", daemon=True)
+    thread.start()
+    return thread
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     p = argparse.ArgumentParser()
@@ -136,11 +197,7 @@ def main() -> None:
     settings = get_settings()
     manifest = load_manifest(args.manifest)
     with psycopg.connect(settings.database_url, autocommit=True) as conn:
-        for v in gate(conn, manifest, datetime.now(UTC).date()):
-            action = ("DROP" if args.apply else "would drop") if v.drop else "keep"
-            log.info("%s %s %s: %s", action, v.table, v.day, v.reason)
-            if v.drop and args.apply:
-                drop(conn, v)
+        prune(conn, manifest, args.apply)
 
 
 if __name__ == "__main__":

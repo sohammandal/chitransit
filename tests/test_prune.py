@@ -83,3 +83,62 @@ def test_only_apply_drops_and_an_unreadable_manifest_keeps_everything(monkeypatc
     (tmp_path / "bad.json").write_text("{not json")
     assert prune.load_manifest(str(tmp_path / "none.json")) is None
     assert prune.load_manifest(str(tmp_path / "bad.json")) is None
+
+
+def test_the_daily_run_is_due_once_a_day_after_10_ct():
+    from ghost_ledger.prune import due
+
+    # 14:59 UTC = 09:59 CDT; 15:00 UTC = 10:00 CDT
+    assert not due(datetime(2026, 10, 24, 14, 59, tzinfo=UTC), None)  # the manifest may be late
+    assert due(datetime(2026, 10, 24, 15, 0, tzinfo=UTC), None)
+    assert not due(datetime(2026, 10, 24, 20, 0, tzinfo=UTC), date(2026, 10, 24))  # done today
+    assert due(datetime(2026, 10, 25, 15, 0, tzinfo=UTC), date(2026, 10, 24))
+    # 03:00 UTC Oct 25 is still Oct 24 in Chicago: today's run is done
+    assert not due(datetime(2026, 10, 25, 3, 0, tzinfo=UTC), date(2026, 10, 24))
+
+
+def test_the_daily_run_applies_retries_a_failure_and_runs_only_in_prod(monkeypatch):
+    import threading
+
+    import ghost_ledger.prune as prune
+
+    calls = []
+    outcomes = iter([RuntimeError("Postgres down"), 3])
+    stop = threading.Event()
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql):
+            calls.append(sql)
+
+    def fake_prune(conn, manifest, apply):
+        assert apply  # the daily run drops what passes; the CLI stays a dry run by default
+        out = next(outcomes)
+        if isinstance(out, Exception):
+            raise out
+        return out
+
+    waits = []
+
+    def wait(seconds):
+        waits.append(seconds)
+        if len(waits) == 3:
+            stop.set()
+        return stop.is_set()
+
+    monkeypatch.setattr(prune.psycopg, "connect", lambda *a, **k: Conn())
+    monkeypatch.setattr(prune, "load_manifest", lambda url: {})
+    monkeypatch.setattr(prune, "prune", fake_prune)
+    monkeypatch.setattr(stop, "wait", wait)
+    clock = iter(datetime(2026, 10, 24, h, 0, tzinfo=UTC) for h in (15, 16, 17))
+    settings = type("S", (), {"database_url": "x", "is_prod": True})()
+    prune.run_daily(settings, stop, now=lambda: next(clock))
+    # 10:00 failed (kept everything), 11:00 succeeded, 12:00 not due again (done today)
+    assert calls == ["SET lock_timeout = '5s'"] * 2
+    assert waits == [3600] * 3
+    assert prune.start(type("S", (), {"is_prod": False})(), stop) is None
