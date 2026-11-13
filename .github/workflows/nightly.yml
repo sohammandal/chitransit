@@ -155,20 +155,24 @@ jobs:
 
       # Last, under its own role (the transform role can't write Ingress): lock the day's data
       # files for 10 years, tag each finished day's snapshot, trim untagged history (metadata
-      # only; that role can't delete anything). transform/lake_maintenance.py.
+      # only; that role can't delete anything). transform/lake_maintenance.py. Ingress needs
+      # none of the models: it runs whatever failed above (a model error skipped it Nov 11-12).
       - uses: aws-actions/configure-aws-credentials@v6
+        if: ${{ !cancelled() }}
         with:
           role-to-assume: ${{ vars.AWS_LAKE_MAINTENANCE_ROLE_ARN }}
           aws-region: us-east-2
 
       - name: Ingress upkeep (compact, lock, tag, trim)
+        if: ${{ !cancelled() }}
         run: |
           # Compact finished days (one file a day instead of ~300; each verified row for row
           # before its commit), then lock every data file written lately (the new ones too).
           # A failed compaction commits nothing and never skips the locking; the run still fails.
           status=0
           uv run --group transform python transform/compact_ingress.py --apply || status=$?
-          uv run --group transform python transform/lake_maintenance.py --apply
+          # 7 days of locking: the overlap covers a week of missed nights (re-locking is idempotent)
+          uv run --group transform python transform/lake_maintenance.py --apply --days 7
           exit $status
 
       - uses: actions/upload-artifact@v7
