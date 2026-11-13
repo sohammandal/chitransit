@@ -160,10 +160,12 @@ REPORT_DUE_HOUR = 10
 
 
 def report_stale(days: list[str], now: datetime) -> Metric:
-    """1 when it's past 10:00 CT and the public report still lacks yesterday (Chicago)."""
+    """1 when the public report lacks the latest day it's due to have: yesterday from 10:00 CT,
+    the day before until then (so a broken nightly stays one alarm, not an OK every midnight)."""
     local = now.astimezone(CHICAGO)
-    yesterday = (local.date() - timedelta(days=1)).isoformat()
-    stale = local.hour >= REPORT_DUE_HOUR and max(days, default="") < yesterday
+    behind = 1 if local.hour >= REPORT_DUE_HOUR else 2
+    due = (local.date() - timedelta(days=behind)).isoformat()
+    stale = max(days, default="") < due
     return Metric("SiteReportStale", 1.0 if stale else 0.0, "None")
 
 

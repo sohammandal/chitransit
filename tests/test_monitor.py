@@ -131,6 +131,10 @@ def test_site_report_is_stale_only_after_10_ct_without_yesterday():
     assert report_stale(has_yesterday, at(15)).value == 0
     assert report_stale([], at(11)).value == 1  # an empty report is stale too
     assert report_stale(missing_it, at(10)).name == "SiteReportStale"
+    # a nightly still broken after midnight stays stale (Nov 11-12 sent ALARM then OK each day)
+    two_behind = ["2026-09-25"]
+    assert report_stale(two_behind, datetime(2026, 9, 28, 5, 1, tzinfo=UTC)).value == 1  # 00:01
+    assert report_stale(missing_it, datetime(2026, 9, 28, 5, 1, tzinfo=UTC)).value == 0
 
 
 def test_live_map_is_unjudged_only_by_day_with_most_buses_lacking_a_schedule():
