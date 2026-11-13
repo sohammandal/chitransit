@@ -77,8 +77,8 @@ predicted_buses as (
     inner join {{ ref('stg_predictions') }} as p
         on
             u.rt = p.rt and p.dyn = 0 and p.vid is not null
-            and (case when p.stst >= 86400 then p.stsd + 1 else p.stsd end) = u.service_date
-            and u.start_s - (case when p.stst >= 86400 then p.stst - 86400 else p.stst end)
+            and {{ trip_service_date('p.stsd', 'p.stst') }} = u.service_date
+            and u.start_s - {{ trip_start_s('p.stsd', 'p.stst') }}
             between 0 and {{ var('rule_start_tolerance_s') }}
     inner join {{ ref('int_scheduled_departures') }} as d
         on u.service_date = d.service_date and u.trip_id = d.trip_id and p.stpid = d.stop_id

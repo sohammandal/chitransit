@@ -1,11 +1,11 @@
 -- One row per trip the feed showed: (rt, pid, stsd, stst) with the after-midnight rule
--- applied. Buses report trips after midnight as stst >= 86,400 on the previous stsd, while
--- CTA's GTFS lists them on the next date (it never starts a trip at or after 24:00).
+-- and DST rules applied (macros/trip_start.sql). Buses report trips after midnight as stst >=
+-- 86,400 on the previous stsd; CTA's GTFS lists them on the next date (never at or after 24:00).
 with keyed as (
     select
         *,
-        case when stst >= 86400 then stsd + 1 else stsd end as service_date,
-        case when stst >= 86400 then stst - 86400 else stst end as start_s
+        {{ trip_service_date('stsd', 'stst') }} as service_date,
+        {{ trip_start_s('stsd', 'stst') }} as start_s
     from {{ ref('stg_bus_positions') }}
     where stsd is not null and stst is not null and pid is not null
 )

@@ -6,8 +6,8 @@
 with keyed as (
     select
         *,
-        case when stst >= 86400 then stsd + 1 else stsd end as service_date,
-        case when stst >= 86400 then stst - 86400 else stst end as start_s,
+        {{ trip_service_date('stsd', 'stst') }} as service_date,
+        {{ trip_start_s('stsd', 'stst') }} as start_s,
         replace(rtdir, 'bound', '') as direction
     from {{ ref('stg_predictions') }}
     where stsd is not null and stst is not null

@@ -485,3 +485,42 @@ unit_tests:
       rows:
         - {service_date: "2026-10-12", trip_id: "B1", rt: "9", stop_id: "1", departs_at: "2026-10-12 08:00:00-05"}
         - {service_date: "2026-10-12", trip_id: "R1", rt: "red", stop_id: "30001", departs_at: "2026-10-12 08:00:00-05"}
+
+  - name: predictions_parse_only_successful_calls
+    description: >
+      A failed call's body is whatever CTA sent: on Nov 10 an HTTP 500 came back as an HTML
+      page and failed every nightly until this. Only calls the poller recorded without an
+      error are parsed.
+    model: stg_predictions
+    overrides:
+      vars: {start_date: "2026-11-10", end_date: "2026-11-10"}
+    given:
+      - input: ref('stg_prediction_polls')
+        rows:
+          - {poll_id: 1, fetched_at: "2026-11-10 14:00:00-06", request_params: '{"stpid": "100"}', error: null}
+          - {poll_id: 2, fetched_at: "2026-11-10 14:11:13-06", request_params: '{"stpid": "100"}', error: "HTTP 500"}
+      - input: source('ingress', 'ghost_ops_raw_responses')
+        rows:
+          - {poll_id: 1, fetched_at: "2026-11-10 14:00:00-06", body: '{"bustime-response": {"prd": [{"stpid": "100", "rt": "9", "rtdir": "Northbound", "vid": "1234", "typ": "A", "dyn": 1, "stsd": "2026-11-10", "stst": 50400}]}}'}
+          - {poll_id: 2, fetched_at: "2026-11-10 14:11:13-06", body: '<!doctype html><html lang="en"><head><title>HTTP Status 500</title></head></html>'}
+    expect:
+      rows:
+        - {poll_id: 1, fetched_at: "2026-11-10 14:00:00-06", stpid: "100", rt: "9", rtdir: "Northbound", vid: "1234", typ: "A", dyn: 1, stsd: "2026-11-10", stst: 50400}
+
+  - name: observed_trips_count_cta_seconds_on_dst_days
+    description: >
+      On Nov 1, 2026 (fall back at 2 AM) CTA's stst counted real seconds since midnight, an
+      hour more than GTFS's clock time after 2 AM: a trip starting 08:00 CST reported 32,400.
+      A 23:30 trip (stst 88,200) stays on Nov 1: the shift comes before the after-midnight rule.
+    model: int_observed_trips
+    overrides:
+      vars: {start_date: "2026-11-01", end_date: "2026-11-01"}
+    given:
+      - input: ref('stg_bus_positions')
+        rows:
+          - {vid: "1", observed_at: "2026-11-01 08:00:30-06", rt: "9", pid: 10, pdist: 100, stsd: "2026-11-01", stst: 32400}
+          - {vid: "2", observed_at: "2026-11-01 23:30:30-06", rt: "9", pid: 10, pdist: 100, stsd: "2026-11-01", stst: 88200}
+    expect:
+      rows:
+        - {service_date: "2026-11-01", rt: "9", pid: 10, start_s: 28800, n_reports: 1, n_buses: 1, min_pdist: 100, max_pdist: 100}
+        - {service_date: "2026-11-01", rt: "9", pid: 10, start_s: 84600, n_reports: 1, n_buses: 1, min_pdist: 100, max_pdist: 100}

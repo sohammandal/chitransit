@@ -25,8 +25,8 @@ with reports as (
         rt,
         pid,
         pdist,
-        case when stst >= 86400 then stsd + 1 else stsd end as service_date,
-        case when stst >= 86400 then stst - 86400 else stst end as start_s
+        {{ trip_service_date('stsd', 'stst') }} as service_date,
+        {{ trip_start_s('stsd', 'stst') }} as start_s
     from {{ ref('stg_bus_positions') }}
     where pid is not null and stst is not null and stsd is not null and pdist is not null
 ),
