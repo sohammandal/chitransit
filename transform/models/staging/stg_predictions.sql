@@ -10,8 +10,12 @@
     post_hook="SET threads = {{ env_var('DBT_DUCKDB_THREADS', '24') }}",
 ) }}
 with polls as (
+    -- successful calls only: a failed call's body is whatever CTA sent (an HTML error page on
+    -- an HTTP 500, Nov 10 20:11 UTC, failed every nightly from Nov 11), and the poller already
+    -- marked it failed
     select poll_id, fetched_at
     from {{ ref('stg_prediction_polls') }}
+    where error is null
 ),
 
 responses as (
